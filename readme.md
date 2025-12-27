@@ -3,10 +3,11 @@
 *js-dependency-graph* node app for interactive static analysis of JS/Typescript web-apps (using dependency graphs for navigation).
 
 ## Features
+![screenshot](assets/logo.png)
+
 - Entrypoint-based dependency graph
 - LOC + heuristic complexity
-- D3.js visualization
-- Browser UI
+
 
 ## What it does
 
@@ -36,5 +37,3 @@ will be rendered by d3.js
 ## Future
 - external package nodes (`package:express`)
 - tsconfig path alias resolution
-- run history (`/output/runs/<id>`)
-- SSE progress streaming
