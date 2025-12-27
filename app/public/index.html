@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NodeAnalyzer</title>
+
+  <!-- Bootstrap -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+
+  <!-- app -->
+  <link href="/assets/css/style.css" rel="stylesheet" />
+
+
+</head>
+
+<body class="p-3 p-lg-4">
+  <div class="container-fluid">
+
+    <div class="d-flex align-items-center justify-content-between mb-3">
+      <div>
+        <h2 class="fs-4 fw-semibold mb-0">NodeAnalyzer</h2>
+        <div class="small text-secondary">Dependency graph and file diagnostics</div>
+      </div>
+      <span id="status" class="small text-secondary"></span>
+    </div>
+
+    <div class="row g-3 g-lg-4 align-items-start">
+      <!-- LEFT: graph -->
+      <main class="col-12 col-lg-7 col-xl-8">
+        <div class="card shadow-sm">
+          <div class="card-header py-2 d-flex align-items-center justify-content-between">
+            <span class="small fw-semibold">Graph</span>
+            <span class="small text-secondary">Click a node to inspect</span>
+          </div>
+          <div class="card-body p-2">
+            <svg id="codeStructureSvg" width="1200" height="800"></svg>
+          </div>
+        </div>
+      </main>
+
+      <!-- RIGHT: apps + panels -->
+      <aside class="col-12 col-lg-5 col-xl-4">
+        <div class="sidePanels">
+
+          <!-- Apps list -->
+          <div class="card shadow-sm">
+            <div class="card-header py-2 d-flex align-items-center justify-content-between">
+              <span class="small fw-semibold">Apps</span>
+          
+            </div>
+
+            <div class="card-body p-2">
+              <div id="appList" class="appsList appsScroll" role="list">
+                <div class="text-secondary small px-2 py-2">Loading…</div>
+              </div>
+             
+              <!-- Hidden state used by runAnalysis() -->
+              <input type="hidden" id="appSelect" value="" />
+            </div>
+
+            <div class="card-footer py-2 d-flex gap-2 align-items-center">
+              <button id="run" type="button" class="btn btn-primary btn-sm">Analyze</button>
+              <button type="button" class="btn btn-outline-secondary btn-sm" id="helpBtn">Help</button>
+            </div>
+          </div>
+
+          <!-- Selection panel -->
+          <div class="card shadow-sm">
+            <div class="card-header py-2">
+              <span class="small fw-semibold">Selection</span>
+            </div>
+            <div class="card-body panelScroll" id="graphInfoPanel"></div>
+          </div>
+
+          <!-- README panel -->
+          <div class="card shadow-sm">
+            <div class="card-header py-2">
+              <span class="small fw-semibold">README</span>
+            </div>
+            <div class="card-body panelScroll" id="readmePanel"></div>
+          </div>
+
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- libs -->
+  <script src="/assets/js/d3.v7.min.js"></script>
+
+  <!-- codeGraph modules -->
+  <script src="/assets/js/codeGraph/data.js"></script>
+  <script src="/assets/js/codeGraph/ui.js"></script>
+  <script src="/assets/js/codeGraph/interactions.js"></script>
+  <script src="/assets/js/codeGraph/hulls.js"></script>
+
+  <!-- renderer -->
+  <script src="/assets/js/d3_codeStructure.js"></script>
+
+  <!-- Markdown rendering -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+
+  <!-- app glue -->
+  <script src="/assets/js/app.js"></script>
+
+  <!-- clear panels button -->
+  <script>
+    document.getElementById("clearPanelsBtn")?.addEventListener("click", () => {
+      document.getElementById("graphInfoPanel")?.replaceChildren();
+      document.getElementById("readmePanel")?.replaceChildren();
+    });
+  </script>
+
+
+  <div id="helpPanel" class="help-panel d-none" role="dialog" aria-label="Help">
+    <div class="help-panel__header" id="helpPanelHeader">
+      <div class="help-panel__title">Help</div>
+      <div class="help-panel__actions">
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="helpReloadBtn">Reload</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="helpCloseBtn">Close</button>
+      </div>
+    </div>
+    <div class="help-panel__body" id="helpPanelBody">
+      <div class="text-secondary small p-2">Loading…</div>
+    </div>
+  </div>
+</body>
+
+</html>

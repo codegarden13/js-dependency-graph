@@ -1,0 +1,19 @@
+{
+  "name": "node-analyzer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Entrypoint-based Node.js code analyzer with D3 visualization",
+  "scripts": {
+    "start": "node app/server.js",
+    "dev": "node app/server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "@babel/parser": "^7.24.7",
+    "@babel/traverse": "^7.24.7"
+  }
+}
