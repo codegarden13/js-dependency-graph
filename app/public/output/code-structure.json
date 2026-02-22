@@ -2,293 +2,389 @@
   "meta": {
     "entry": "app/server.js",
     "urlInfo": {
-      "url": "http://localhost:3000",
+      "url": "http://localhost:3003",
       "status": 200,
-      "contentType": "text/html; charset=utf-8"
+      "contentType": "text/html; charset=UTF-8"
     }
   },
   "nodes": [
     {
       "id": "app/server.js",
       "file": "app/server.js",
-      "lines": 120,
-      "complexity": 4,
-      "comment": "app/server.js\n\nServer entrypoint\n- Express app + route registration\n- Server logfile per start (via createServerLogger)\n- HTTP access logging to logfile\n- UI log ingestion endpoint: POST /api/log\n- Graceful shutdown (server close + exiftool end)"
-    },
-    {
-      "id": "app/routes/camera.js",
-      "file": "app/routes/camera.js",
-      "lines": 41,
-      "complexity": 5,
-      "comment": "app/routes/camera.js\n\nResponsibilities:\n- GET /api/camera: return current camera connection state\n- Keep response shape stable for the frontend poller\n\nResponse (200):\n  { connected: boolean, label: string, mountPoint?: string, dcimPath?: string }\nResponse (500):\n  { connected: false, error: string, details: { message, code } }"
-    },
-    {
-      "id": "app/routes/exposure.js",
-      "file": "app/routes/exposure.js",
-      "lines": 78,
-      "complexity": 18,
-      "comment": "routes/exposure.js\n\nResponsibilities:\n- Provide exposure metadata for a given file path\n- Read EXIF via exiftool-vendored\n- Return a small, stable JSON payload for the UI\n\nRoute:\n- GET /api/exposure?path=..."
-    },
-    {
-      "id": "app/routes/scan.js",
-      "file": "app/routes/scan.js",
-      "lines": 139,
-      "complexity": 18,
-      "comment": "routes/scan.js\n\nResponsibilities:\n- GET  /api/scan/progress  (polled by frontend)\n- POST /api/scan\n  - Detect camera + profile\n  - Walk DCIM for supported files\n  - Extract timestamps (EXIF or fallback via getDateTime)\n  - Return:\n    - items:    [{ path, ts }] sorted by ts asc  (frontend source-of-truth for gap slider regrouping)\n    - sessions: server-default grouping for instant initial render\n\nHardening:\n- Validates camera detection output (prevents ERR_INVALID_ARG_TYPE)\n- Returns helpful 4xx for “not mounted / not supported”\n- Keeps progress state consistent on all exits"
-    },
-    {
-      "id": "app/routes/preview.js",
-      "file": "app/routes/preview.js",
-      "lines": 24,
-      "complexity": 5,
-      "comment": ""
-    },
-    {
-      "id": "app/routes/import.js",
-      "file": "app/routes/import.js",
-      "lines": 244,
-      "complexity": 33,
-      "comment": "routes/import.js: Import API Route (Server-Side)\n\nEndpoint:\n  POST /api/import\n\nPurpose:\n  Persist a client-selected photo session from a mounted camera volume into a\n  stable, software-agnostic archive structure under CONFIG.targetRoot.\n\nResponsibilities:\n  - Validate and normalize request payload (files + session timestamp + title)\n  - Enforce supported platforms (macOS/Linux)\n  - Verify targetRoot exists and is writable (mount-safe; never mkdir root)\n  - Create session folder structure:\n      <targetRoot>/<YYYY>/<MM>/<YYYY-MM-DD <title>__<camera>>/{originals,exports}\n  - Copy files into /originals idempotently (skip if destination exists)\n  - Prefix copied filenames with camera label to prevent collisions:\n      <camera>__<originalName>\n  - Write an import log into the session folder (.import.log)\n\nNotes:\n  - The first image timestamp determines the YYYY/MM and session date.\n  - Camera label is used to (a) suffix the session folder and (b) prefix files.\n  - Errors are mapped to HTTP-ish statuses and a stable \"code\" field."
-    },
-    {
-      "id": "app/routes/delete.js",
-      "file": "app/routes/delete.js",
-      "lines": 54,
-      "complexity": 11,
-      "comment": ""
-    },
-    {
-      "id": "app/routes/config.js",
-      "file": "app/routes/config.js",
-      "lines": 20,
+      "lines": 100,
       "complexity": 0,
-      "comment": "app/routes/config.js\n\nGET /api/config\nExposes only UI-relevant configuration (no secrets)."
+      "headerComment": "NodeAnalyzer HTTP Server\n=======================\n\nResponsibilities\n----------------\n- Serve the browser-based UI (index.html + JS/CSS assets)\n- Expose API routes for:\n    - /analyze   → trigger static analysis\n    - /apps      → list known applications\n    - /readme    → resolve nearest README.md\n- Serve generated analysis output as static JSON\n\nDesign Notes\n------------\n- This server is intentionally \"thin\":\n  no business logic lives here.\n- All filesystem access and analysis logic\n  is delegated to /routes and /lib.\n- Static serving is configured BEFORE API routes\n  to avoid accidental shadowing or 404 fallbacks.",
+      "kind": "file"
     },
     {
-      "id": "app/routes/target.js",
-      "file": "app/routes/target.js",
-      "lines": 101,
-      "complexity": 18,
-      "comment": "routes/target.js"
-    },
-    {
-      "id": "app/lib/logger.js",
-      "file": "app/lib/logger.js",
-      "lines": 78,
-      "complexity": 12,
-      "comment": "app/lib/logger.js\n\nServer logger:\n- creates a new logfile on each server start\n- writes logs to file (+ optionally console)\n- provides an Express handler for /api/log that accepts UI log batches"
-    },
-    {
-      "id": "app/lib/camera.js",
-      "file": "app/lib/camera.js",
-      "lines": 61,
-      "complexity": 18,
-      "comment": "lib/camera.js\n\nResponsibilities:\n- Detect a mounted camera volume by name under known volume roots\n- Validate camera profile\n- Return a consistent shape used by /api/camera and /api/scan\n\nReturns: { label, mountPoint, dcimPath, profile } | null"
-    },
-    {
-      "id": "app/lib/scan.js",
-      "file": "app/lib/scan.js",
-      "lines": 171,
-      "complexity": 24,
-      "comment": "lib/scan.js\n\nResponsibilities:\n- Walk a camera/DCIM directory and collect supported files\n- Extract a reliable timestamp per file (EXIF preferred, filesystem fallback)\n- Never block indefinitely on EXIF reads\n\nDesign notes:\n- Iterative directory walk (no recursion depth risk)\n- Per-file EXIF timeout to avoid scan hangs\n- Skips common system folders on removable volumes\n- Robust EXIF timestamp extraction (handles ExifDateTime/Date/string)\n- Optional debug logging for EXIF fallbacks (off by default)"
-    },
-    {
-      "id": "app/lib/sessions.js",
-      "file": "app/lib/sessions.js",
-      "lines": 25,
-      "complexity": 4,
-      "comment": ""
-    },
-    {
-      "id": "app/config.js",
-      "file": "app/config.js",
-      "lines": 116,
-      "complexity": 16,
-      "comment": "app/config.js\n\nGoals:\n- Single source of truth (CONFIG) with clear defaults per platform\n- macOS + Linux supported; Windows explicitly unsupported (but app can still start)\n- Minimal, predictable ENV overrides (trimmed + optional)\n- Camera profiles are immutable and validated via helpers"
-    },
-    {
-      "id": "app/lib/progress.js",
-      "file": "app/lib/progress.js",
-      "lines": 15,
-      "complexity": 0,
-      "comment": ""
-    },
-    {
-      "id": "app/lib/fsutil.js",
-      "file": "app/lib/fsutil.js",
-      "lines": 22,
+      "id": "app/config/config.js",
+      "file": "app/config/config.js",
+      "lines": 28,
       "complexity": 2,
-      "comment": ""
+      "headerComment": "Server / Path Configuration\n==========================\n\nCentral place for:\n- PORT\n- PROJECT_ROOT\n- PUBLIC_ROOT\n- OUTPUT_ROOT\n\nKeeps server.js clean and prevents path drift during refactors.",
+      "kind": "file"
     },
     {
-      "id": "app/lib/preview.js",
-      "file": "app/lib/preview.js",
-      "lines": 33,
-      "complexity": 6,
-      "comment": ""
+      "id": "app/config",
+      "file": "app/config",
+      "lines": 0,
+      "complexity": 0,
+      "headerComment": "",
+      "kind": "dir"
     },
     {
-      "id": "app/lib/import.js",
-      "file": "app/lib/import.js",
-      "lines": 231,
-      "complexity": 21,
-      "comment": "lib/import.js\n\nResponsibilities:\n- Provide safe, reusable import primitives for the server\n- Treat targetRoot as an existing mount (do NOT mkdir targetRoot)\n- Build YYYY/MM/YYYY-MM-DD Title/{originals,exports} under targetRoot\n- Copy files idempotently (skip if already exists)\n- Provide clear errors for non-existent / non-writable roots"
+      "id": "app/config/apps.json",
+      "file": "app/config/apps.json",
+      "lines": 0,
+      "complexity": 0,
+      "headerComment": "",
+      "kind": "asset"
+    },
+    {
+      "id": "CODE_OF_CONDUCT.md",
+      "file": "CODE_OF_CONDUCT.md",
+      "lines": 0,
+      "complexity": 0,
+      "headerComment": "",
+      "kind": "asset"
+    },
+    {
+      "id": "LICENSE",
+      "file": "LICENSE",
+      "lines": 0,
+      "complexity": 0,
+      "headerComment": "",
+      "kind": "asset"
+    },
+    {
+      "id": "app",
+      "file": "app",
+      "lines": 0,
+      "complexity": 0,
+      "headerComment": "",
+      "kind": "dir"
+    },
+    {
+      "id": "app/lib",
+      "file": "app/lib",
+      "lines": 0,
+      "complexity": 0,
+      "headerComment": "",
+      "kind": "dir"
+    },
+    {
+      "id": "app/public",
+      "file": "app/public",
+      "lines": 0,
+      "complexity": 0,
+      "headerComment": "",
+      "kind": "dir"
+    },
+    {
+      "id": "app/routes",
+      "file": "app/routes",
+      "lines": 0,
+      "complexity": 0,
+      "headerComment": "",
+      "kind": "dir"
+    },
+    {
+      "id": "assets",
+      "file": "assets",
+      "lines": 0,
+      "complexity": 0,
+      "headerComment": "",
+      "kind": "dir"
+    },
+    {
+      "id": "assets/logo.png",
+      "file": "assets/logo.png",
+      "lines": 0,
+      "complexity": 0,
+      "headerComment": "",
+      "kind": "asset"
+    },
+    {
+      "id": "package-lock.json",
+      "file": "package-lock.json",
+      "lines": 0,
+      "complexity": 0,
+      "headerComment": "",
+      "kind": "asset"
+    },
+    {
+      "id": "package.json",
+      "file": "package.json",
+      "lines": 0,
+      "complexity": 0,
+      "headerComment": "",
+      "kind": "asset"
+    },
+    {
+      "id": "readme.md",
+      "file": "readme.md",
+      "lines": 0,
+      "complexity": 0,
+      "headerComment": "",
+      "kind": "asset"
+    },
+    {
+      "id": "app/routes/analyze.js",
+      "file": "app/routes/analyze.js",
+      "lines": 133,
+      "complexity": 30,
+      "headerComment": "",
+      "kind": "file"
+    },
+    {
+      "id": "app/routes/apps.js",
+      "file": "app/routes/apps.js",
+      "lines": 23,
+      "complexity": 2,
+      "headerComment": "endpoint for my apps dropdown",
+      "kind": "file"
+    },
+    {
+      "id": "app/routes/help.js",
+      "file": "app/routes/help.js",
+      "lines": 64,
+      "complexity": 7,
+      "headerComment": "Help Markdown Route\n===================\n\nPurpose\n-------\nThe frontend has a \"Help\" button that opens a floating panel.\nThis route returns the markdown content for that panel.\n\nContract\n--------\nGET /help\n  -> { found: true, helpPath: string, markdown: string }\n  -> { found: false }\n\nNotes\n-----\n- This route is intentionally NOT the \"nearest README\" logic.\n  That behavior belongs to `GET /readme?file=...`.\n- This route always serves a single, project-owned help file:\n    app/public/readme.md (case-insensitive fallback)",
+      "kind": "file"
+    },
+    {
+      "id": "app/routes/readme.js",
+      "file": "app/routes/readme.js",
+      "lines": 133,
+      "complexity": 24,
+      "headerComment": "README Lookup Route\n===================\n\nGET /readme?file=<relative-path>\n\nBehavior\n--------\n1) If file points to the global help doc (app/public/readme.md), return it.\n2) Otherwise: find the nearest README in the file's directory and parents.\n\nResponse\n--------\n{ found: true, readmePath: string, markdown: string }\n{ found: false }",
+      "kind": "file"
+    },
+    {
+      "id": "app/routes/readme.md",
+      "file": "app/routes/readme.md",
+      "lines": 0,
+      "complexity": 0,
+      "headerComment": "",
+      "kind": "asset"
+    },
+    {
+      "id": "app/routes/README.md",
+      "file": "app/routes/README.md",
+      "lines": 0,
+      "complexity": 0,
+      "headerComment": "",
+      "kind": "asset"
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 656,
+      "complexity": 124,
+      "headerComment": "buildMetricsFromEntrypoint\n==========================\n\nDeterministic, entrypoint-driven dependency graph builder for Node-style projects.\n\n-----------------------------------------------------------------------------\nARCHITECTURAL ROLE\n-----------------------------------------------------------------------------\nConstructs a static file-level dependency graph starting from a single\nentrypoint file.\n\nPerforms a breadth-first traversal (BFS) across resolvable internal imports\nand emits a D3-compatible metrics payload.\n\n-----------------------------------------------------------------------------\nDESIGN PRINCIPLES\n-----------------------------------------------------------------------------\n• Deterministic traversal (BFS)\n• No runtime execution or evaluation\n• Only local/relative imports are resolved\n• Resilient parsing via parseFile()\n• Side-effect free (pure metrics builder)\n\n-----------------------------------------------------------------------------\nOUTPUT CONTRACT\n-----------------------------------------------------------------------------\n{\n  meta: {\n    entry: string,\n    urlInfo: any\n  },\n  nodes: Array<{\n    id: string,\n    file: string,\n    lines: number,\n    complexity: number,\n    headerComment: string\n  }>,\n  links: Array<{\n    source: string,\n    target: string,\n    type: \"use\" | \"include\"\n  }>\n}"
+    },
+    {
+      "id": "app/lib/README.md",
+      "file": "app/lib/README.md",
+      "lines": 0,
+      "complexity": 0,
+      "headerComment": "",
+      "kind": "asset"
+    },
+    {
+      "id": "app/lib/readme.md",
+      "file": "app/lib/readme.md",
+      "lines": 0,
+      "complexity": 0,
+      "headerComment": "",
+      "kind": "asset"
+    },
+    {
+      "id": "app/lib/probeAppUrl.js",
+      "file": "app/lib/probeAppUrl.js",
+      "lines": 16,
+      "complexity": 1,
+      "headerComment": ""
+    },
+    {
+      "id": "app/lib/parseFile.js",
+      "file": "app/lib/parseFile.js",
+      "lines": 631,
+      "complexity": 219,
+      "headerComment": "parseFile\n=========\n\nBest-effort static signal extraction for project files.\n\nWhy this exists\n---------------\nMany apps (especially “single-file” servers) have few or no internal JS imports,\nbut still depend on lots of *files and folders*:\n  - public/ (static frontend)\n  - config.json / .env\n  - CSVs, templates, images, CSS\n\nTo keep the graph meaningful across styles, we parse multiple formats.\n\nSupported formats\n-----------------\n- JS/TS/JSX/TSX: AST-based extraction via @babel/parser + @babel/traverse\n- HTML: extract <script src>, <link href>, <img src>, etc.\n- CSS: extract url(...)\n- JSON: extract path-like values from common keys (path/file/dir/...)\n- MD: extract markdown links/images\n\nOutput Contract (stable)\n------------------------\n{\n  imports: string[],                 // module specifiers (JS only)\n  lines: number,                     // non-empty LOC\n  complexity: number,                // heuristic (JS only)\n  headerComment: string,             // file header comment (JS/TS only)\n  symbols: Array<{name, kind}>,       // top-level declarations (JS only)\n  callsBy: Record<string, string[]>,  // best-effort call attribution (JS only)\n  assetRefs: string[],               // suspicious string refs that look like assets/data/config\n  fileRefsAbs: string[]              // absolute file/folder refs resolved from safe patterns\n}\n\nDeterminism / Safety\n--------------------\n- No runtime execution\n- No evaluation of dynamic expressions\n- Only resolve paths from string literals + known base anchors"
+    },
+    {
+      "id": "app/lib/resolveImports.js",
+      "file": "app/lib/resolveImports.js",
+      "lines": 19,
+      "complexity": 7,
+      "headerComment": ""
     }
   ],
   "links": [
     {
       "source": "app/server.js",
-      "target": "app/routes/camera.js",
+      "target": "app/config/config.js",
+      "type": "include"
+    },
+    {
+      "source": "app/server.js",
+      "target": "app/config/config.js",
       "type": "use"
     },
     {
       "source": "app/server.js",
-      "target": "app/routes/exposure.js",
+      "target": "app/routes/analyze.js",
       "type": "use"
     },
     {
       "source": "app/server.js",
-      "target": "app/routes/scan.js",
+      "target": "app/routes/apps.js",
       "type": "use"
     },
     {
       "source": "app/server.js",
-      "target": "app/routes/preview.js",
+      "target": "app/routes/readme.js",
       "type": "use"
     },
     {
       "source": "app/server.js",
-      "target": "app/routes/import.js",
+      "target": "app/routes/help.js",
       "type": "use"
     },
     {
-      "source": "app/server.js",
-      "target": "app/routes/delete.js",
+      "source": "app/config/config.js",
+      "target": "app/config",
+      "type": "include"
+    },
+    {
+      "source": "app/config",
+      "target": "app/config/apps.json",
+      "type": "include"
+    },
+    {
+      "source": "app",
+      "target": "app/config",
+      "type": "include"
+    },
+    {
+      "source": "app",
+      "target": "app/lib",
+      "type": "include"
+    },
+    {
+      "source": "app",
+      "target": "app/public",
+      "type": "include"
+    },
+    {
+      "source": "app",
+      "target": "app/routes",
+      "type": "include"
+    },
+    {
+      "source": "app",
+      "target": "app/server.js",
+      "type": "include"
+    },
+    {
+      "source": "assets",
+      "target": "assets/logo.png",
+      "type": "include"
+    },
+    {
+      "source": "readme.md",
+      "target": "assets/logo.png",
+      "type": "include"
+    },
+    {
+      "source": "app/config",
+      "target": "app/config/config.js",
+      "type": "include"
+    },
+    {
+      "source": "app/routes/analyze.js",
+      "target": "app/routes",
+      "type": "include"
+    },
+    {
+      "source": "app/routes",
+      "target": "app/routes/analyze.js",
+      "type": "include"
+    },
+    {
+      "source": "app/routes",
+      "target": "app/routes/apps.js",
+      "type": "include"
+    },
+    {
+      "source": "app/routes",
+      "target": "app/routes/help.js",
+      "type": "include"
+    },
+    {
+      "source": "app/routes",
+      "target": "app/routes/readme.js",
+      "type": "include"
+    },
+    {
+      "source": "app/routes",
+      "target": "app/routes/readme.md",
+      "type": "include"
+    },
+    {
+      "source": "app/routes/readme.md",
+      "target": "app/routes/README.md",
+      "type": "include"
+    },
+    {
+      "source": "app/routes/analyze.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js",
       "type": "use"
     },
     {
-      "source": "app/server.js",
-      "target": "app/routes/config.js",
+      "source": "app/routes/analyze.js",
+      "target": "app/lib/probeAppUrl.js",
       "type": "use"
     },
     {
-      "source": "app/server.js",
-      "target": "app/routes/target.js",
+      "source": "app/routes/readme.js",
+      "target": "app/routes",
+      "type": "include"
+    },
+    {
+      "source": "app/routes/readme.js",
+      "target": "app/routes/README.md",
+      "type": "include"
+    },
+    {
+      "source": "app/routes/readme.js",
+      "target": "app/routes/readme.md",
+      "type": "include"
+    },
+    {
+      "source": "app/routes/help.js",
+      "target": "app/routes",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/README.md",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/readme.md",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/parseFile.js",
       "type": "use"
     },
     {
-      "source": "app/server.js",
-      "target": "app/lib/logger.js",
-      "type": "use"
-    },
-    {
-      "source": "app/routes/camera.js",
-      "target": "app/lib/camera.js",
-      "type": "use"
-    },
-    {
-      "source": "app/routes/scan.js",
-      "target": "app/lib/camera.js",
-      "type": "use"
-    },
-    {
-      "source": "app/routes/scan.js",
-      "target": "app/lib/scan.js",
-      "type": "use"
-    },
-    {
-      "source": "app/routes/scan.js",
-      "target": "app/lib/sessions.js",
-      "type": "use"
-    },
-    {
-      "source": "app/routes/scan.js",
-      "target": "app/config.js",
-      "type": "use"
-    },
-    {
-      "source": "app/routes/scan.js",
-      "target": "app/lib/progress.js",
-      "type": "use"
-    },
-    {
-      "source": "app/routes/preview.js",
-      "target": "app/lib/fsutil.js",
-      "type": "use"
-    },
-    {
-      "source": "app/routes/preview.js",
-      "target": "app/lib/preview.js",
-      "type": "use"
-    },
-    {
-      "source": "app/routes/import.js",
-      "target": "app/config.js",
-      "type": "use"
-    },
-    {
-      "source": "app/routes/import.js",
-      "target": "app/lib/fsutil.js",
-      "type": "use"
-    },
-    {
-      "source": "app/routes/import.js",
-      "target": "app/lib/camera.js",
-      "type": "use"
-    },
-    {
-      "source": "app/routes/import.js",
-      "target": "app/lib/import.js",
-      "type": "use"
-    },
-    {
-      "source": "app/routes/delete.js",
-      "target": "app/lib/camera.js",
-      "type": "use"
-    },
-    {
-      "source": "app/routes/delete.js",
-      "target": "app/lib/fsutil.js",
-      "type": "use"
-    },
-    {
-      "source": "app/routes/config.js",
-      "target": "app/config.js",
-      "type": "use"
-    },
-    {
-      "source": "app/routes/target.js",
-      "target": "app/config.js",
-      "type": "use"
-    },
-    {
-      "source": "app/lib/camera.js",
-      "target": "app/config.js",
-      "type": "use"
-    },
-    {
-      "source": "app/lib/camera.js",
-      "target": "app/lib/fsutil.js",
-      "type": "use"
-    },
-    {
-      "source": "app/lib/scan.js",
-      "target": "app/lib/fsutil.js",
-      "type": "use"
-    },
-    {
-      "source": "app/lib/fsutil.js",
-      "target": "app/config.js",
-      "type": "use"
-    },
-    {
-      "source": "app/lib/preview.js",
-      "target": "app/config.js",
-      "type": "use"
-    },
-    {
-      "source": "app/lib/preview.js",
-      "target": "app/lib/fsutil.js",
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/resolveImports.js",
       "type": "use"
     }
   ]

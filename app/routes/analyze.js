@@ -7,7 +7,15 @@ import { probeAppUrl } from "../lib/probeAppUrl.js";
 
 const router = express.Router();
 
-const DEFAULT_ENTRY_PATH = "app/server.js";
+// Fallback entrypoint candidates (used when entry is missing or invalid)
+const ENTRY_CANDIDATES = [
+  "app/server.js",
+  "app/index.js",
+  "src/server.js",
+  "src/index.js",
+  "server.js",
+  "index.js"
+];
 
 /**
  * Load app registry config.
@@ -42,20 +50,20 @@ router.post("/analyze", async (req, res) => {
       }
 
       targetRoot = String(app.rootDir || "").trim();
-      entryPath = String(app.entry || "").trim();
+      // Note: entry is NOT stored in config (by design). We always resolve via
+      // request-provided entryPath (optional) or fallback candidates.
+      if (typeof entryPath === "string") entryPath = entryPath.trim();
+      else entryPath = "";
+
       appUrl = String(app.url || "").trim() || null;
 
       if (!targetRoot) {
         return res.status(400).send(`Missing rootDir for appId: ${appId}`);
       }
-      if (!entryPath) {
-        return res.status(400).send(`Missing entry for appId: ${appId}`);
-      }
     } else {
       // manual mode: default to analyzing NodeAnalyzer itself
-      if (!entryPath || typeof entryPath !== "string" || !entryPath.trim()) {
-        entryPath = DEFAULT_ENTRY_PATH;
-      }
+      if (typeof entryPath === "string") entryPath = entryPath.trim();
+      else entryPath = ""; // will be resolved via fallback candidates
       if (typeof appUrl === "string") appUrl = appUrl.trim();
       if (!appUrl) appUrl = null;
     }
@@ -64,20 +72,45 @@ router.post("/analyze", async (req, res) => {
     // 2) Resolve + validate entrypoint under targetRoot
     // ------------------------------------------------------------
     const targetRootAbs = path.resolve(targetRoot);
-    const entryAbs = path.isAbsolute(entryPath)
-      ? path.normalize(entryPath)
-      : path.resolve(targetRootAbs, entryPath);
 
-    // Safety boundary: entry must be inside the selected app root
-    if (!entryAbs.startsWith(targetRootAbs + path.sep) && entryAbs !== targetRootAbs) {
-      return res.status(400).send("entryPath outside target app rootDir");
+    // ------------------------------------------------------------
+    // Resolve entrypoint (explicit entry OR fallback candidates)
+    // ------------------------------------------------------------
+    let effectiveEntryAbs = null;
+
+    // 1) If entryPath provided, try it first
+    if (entryPath) {
+      const candidate = path.isAbsolute(entryPath)
+        ? path.normalize(entryPath)
+        : path.resolve(targetRootAbs, entryPath);
+
+      if (
+        candidate.startsWith(targetRootAbs + path.sep) &&
+        fs.existsSync(candidate) &&
+        fs.statSync(candidate).isFile()
+      ) {
+        effectiveEntryAbs = candidate;
+      }
     }
 
-    if (!fs.existsSync(entryAbs)) {
-      return res.status(400).send(`entryPath does not exist: ${entryAbs}`);
+    // 2) If no valid explicit entry, try fallback candidates
+    if (!effectiveEntryAbs) {
+      for (const rel of ENTRY_CANDIDATES) {
+        const candidate = path.resolve(targetRootAbs, rel);
+        if (!candidate.startsWith(targetRootAbs + path.sep)) continue;
+        if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+          effectiveEntryAbs = candidate;
+          entryPath = rel;
+          break;
+        }
+      }
     }
-    if (!fs.statSync(entryAbs).isFile()) {
-      return res.status(400).send(`entryPath is not a file: ${entryAbs}`);
+
+    if (!effectiveEntryAbs) {
+      return res.status(400).send(
+        `No valid entrypoint found under ${targetRootAbs}. ` +
+        `Tried request entryPath (if any) and fallback candidates: ${ENTRY_CANDIDATES.join(", ")}`
+      );
     }
 
     // ------------------------------------------------------------
@@ -90,7 +123,7 @@ router.post("/analyze", async (req, res) => {
     // ------------------------------------------------------------
     const metrics = await buildMetricsFromEntrypoint({
       projectRoot: targetRootAbs,
-      entryAbs,
+      entryAbs: effectiveEntryAbs,
       urlInfo
     });
 
@@ -112,7 +145,8 @@ router.post("/analyze", async (req, res) => {
       metricsUrl: "/output/code-structure.json",
       analyzedAppId: appId || null,
       targetRoot: targetRootAbs,
-      entryUsed: entryAbs,
+      entryUsed: effectiveEntryAbs,
+      entryRel: entryPath || null,
       summary: { nodes: metrics.nodes.length, links: metrics.links.length }
     });
   } catch (err) {

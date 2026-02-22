@@ -23,7 +23,9 @@
 
 import express from "express";
 import path from "node:path";
-import process from "node:process";
+
+// Centralized server/app path configuration
+import { getServerConfig } from "./config/config.js";
 
 // ---------------------------------------------------------------------
 // Route modules (pure HTTP controllers)
@@ -32,23 +34,18 @@ import analyzeRoute from "./routes/analyze.js";
 import appsRoute from "./routes/apps.js";
 import readmeRoute from "./routes/readme.js";
 
-// ---------------------------------------------------------------------
-// helpfile Route  (fs controllers)
-// ---------------------------------------------------------------------
-
 import helpRoute from "./routes/help.js";
-
 
 // ---------------------------------------------------------------------
 // App bootstrap
 // ---------------------------------------------------------------------
 const app = express();
-const PORT = 3003;
 
-// Resolve project paths once (avoid repeating process.cwd())
-const PROJECT_ROOT = process.cwd();
-const PUBLIC_ROOT = path.join(PROJECT_ROOT, "app/public");
-const OUTPUT_ROOT = path.join(PUBLIC_ROOT, "output");
+// Central config (port + important paths)
+const { PORT, PROJECT_ROOT, PUBLIC_ROOT, OUTPUT_ROOT } = getServerConfig({
+  // server.js lives in app/, so public is relative to project root
+  publicDir: path.join("app", "public")
+});
 
 // ---------------------------------------------------------------------
 // Global middleware
@@ -104,6 +101,7 @@ app.use(appsRoute);
  */
 app.use(readmeRoute);
 
+// GET /help → returns the NodeAnalyzer UI help markdown (app/public/readme.md)
 app.use(helpRoute);
 
 /**
@@ -118,4 +116,5 @@ app.use(analyzeRoute);
 
 app.listen(PORT, () => {
   console.log(`NodeAnalyzer running at http://localhost:${PORT}`);
+  console.log(`Project root: ${PROJECT_ROOT}`);
 });

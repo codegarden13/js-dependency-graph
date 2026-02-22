@@ -164,6 +164,176 @@
   }
 
   /* =======================================================================
+   * Help (floating draggable panel)
+   * ======================================================================= */
+
+  let helpPanelEl = null;
+
+  function closeHelpPanel() {
+    if (helpPanelEl) {
+      helpPanelEl.remove();
+      helpPanelEl = null;
+    }
+  }
+
+  function openHelpPanel() {
+    // If already open, just bring to front.
+    if (helpPanelEl) {
+      helpPanelEl.style.zIndex = String(getNextZ());
+      return;
+    }
+
+    const panel = document.createElement("div");
+    panel.className = "help-float";
+    panel.style.position = "fixed";
+    panel.style.right = "16px";
+    panel.style.top = "84px";
+    panel.style.width = "560px";
+    panel.style.maxWidth = "calc(100vw - 32px)";
+    panel.style.maxHeight = "calc(100vh - 120px)";
+    panel.style.background = "#fff";
+    panel.style.border = "1px solid rgba(0,0,0,.12)";
+    panel.style.borderRadius = "12px";
+    panel.style.boxShadow = "0 10px 30px rgba(0,0,0,.18)";
+    panel.style.overflow = "hidden";
+    panel.style.zIndex = String(getNextZ());
+
+    panel.innerHTML = `
+      <div class="help-float__hdr" style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:#f8f9fa;border-bottom:1px solid rgba(0,0,0,.08);cursor:move;user-select:none;">
+        <div style="font-weight:600;font-size:13px;">Help</div>
+        <div class="help-float__path" style="margin-left:auto;font-size:12px;color:#6c757d;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></div>
+        <button type="button" class="help-float__close btn btn-sm btn-outline-secondary" style="padding:2px 8px;">Close</button>
+      </div>
+      <div class="help-float__body" style="padding:12px;overflow:auto;max-height:calc(100vh - 180px);">
+        <div class="text-muted small">Loading…</div>
+      </div>
+    `;
+
+    document.body.appendChild(panel);
+    helpPanelEl = panel;
+
+    // Close button
+    panel.querySelector(".help-float__close")?.addEventListener("click", closeHelpPanel);
+
+    // ESC closes
+    const onKey = (e) => {
+      if (e.key === "Escape") closeHelpPanel();
+    };
+    window.addEventListener("keydown", onKey, { once: true });
+
+    // Dragging
+    makeDraggable(panel, panel.querySelector(".help-float__hdr"));
+
+    // Load markdown via /help (server returns app/public/readme.md)
+    loadHelpIntoPanel(panel).catch((e) => {
+      console.warn("Help load failed:", e);
+      const body = panel.querySelector(".help-float__body");
+      if (body) body.innerHTML = `<div class="text-danger small">Failed to load help.</div>`;
+    });
+  }
+
+  async function loadHelpIntoPanel(panel) {
+    const body = panel.querySelector(".help-float__body");
+    const pathEl = panel.querySelector(".help-float__path");
+    if (!body) return;
+
+    const r = await fetch("/help");
+    if (!r.ok) throw new Error(`Help HTTP ${r.status}`);
+    const data = await r.json();
+
+    const md = String(data?.markdown || "");
+    const rawHtml = window.marked?.parse ? window.marked.parse(md) : `<pre>${esc(md)}</pre>`;
+    const safeHtml = window.DOMPurify?.sanitize ? window.DOMPurify.sanitize(rawHtml) : rawHtml;
+
+    if (pathEl) pathEl.textContent = String(data?.helpPath || data?.readmePath || "readme.md");
+
+    body.innerHTML = `<div class="content markdown">${safeHtml}</div>`;
+  }
+
+  // Simple z-index increaser so the help panel can float above everything.
+  let __z = 1000;
+  function getNextZ() {
+    __z += 1;
+    return __z;
+  }
+
+  function makeDraggable(panel, handle) {
+    if (!panel || !handle) return;
+
+    let dragging = false;
+    let startX = 0;
+    let startY = 0;
+    let startLeft = 0;
+    let startTop = 0;
+
+    const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+
+    const onDown = (e) => {
+      // left mouse only
+      if (e.type === "mousedown" && e.button !== 0) return;
+
+      dragging = true;
+      panel.style.zIndex = String(getNextZ());
+
+      const rect = panel.getBoundingClientRect();
+      startLeft = rect.left;
+      startTop = rect.top;
+
+      const pt = getPoint(e);
+      startX = pt.x;
+      startY = pt.y;
+
+      // Convert right/top anchoring to left/top for dragging
+      panel.style.right = "auto";
+      panel.style.bottom = "auto";
+      panel.style.left = `${startLeft}px`;
+      panel.style.top = `${startTop}px`;
+
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+      window.addEventListener("touchmove", onMove, { passive: false });
+      window.addEventListener("touchend", onUp);
+
+      e.preventDefault?.();
+    };
+
+    const onMove = (e) => {
+      if (!dragging) return;
+      const pt = getPoint(e);
+      const dx = pt.x - startX;
+      const dy = pt.y - startY;
+
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const rect = panel.getBoundingClientRect();
+
+      const nextLeft = clamp(startLeft + dx, 8, vw - rect.width - 8);
+      const nextTop = clamp(startTop + dy, 8, vh - rect.height - 8);
+
+      panel.style.left = `${nextLeft}px`;
+      panel.style.top = `${nextTop}px`;
+
+      if (e.type === "touchmove") e.preventDefault();
+    };
+
+    const onUp = () => {
+      dragging = false;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("touchmove", onMove);
+      window.removeEventListener("touchend", onUp);
+    };
+
+    const getPoint = (e) => {
+      const te = e.touches && e.touches[0];
+      return te ? { x: te.clientX, y: te.clientY } : { x: e.clientX, y: e.clientY };
+    };
+
+    handle.addEventListener("mousedown", onDown);
+    handle.addEventListener("touchstart", onDown, { passive: false });
+  }
+
+  /* =======================================================================
    * D3 integration hook (global)
    * ======================================================================= */
 
@@ -334,6 +504,9 @@
     byId("run")?.addEventListener("click", () => scheduleAnalysis(0));
 
     ensurePanelsExist();
+    // Help button (optional). If the button exists in the current index.html,
+    // it will open a floating draggable help panel rendered from /help.
+    byId("helpBtn")?.addEventListener("click", openHelpPanel);
     loadApps();
   }
 
