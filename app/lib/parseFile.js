@@ -31,8 +31,8 @@
  *   headerComment: string,             // file header comment (JS/TS only)
  *   symbols: Array<{name, kind}>,       // top-level declarations (JS only)
  *   callsBy: Record<string, string[]>,  // best-effort call attribution (JS only)
- *   assetRefs: string[],               // suspicious string refs that look like assets/data/config
- *   fileRefsAbs: string[]              // absolute file/folder refs resolved from safe patterns
+ *   assetRefs: string[],               // asset-like refs (includes web paths like /assets/..., plus relative refs)
+ *   fileRefsAbs: string[]              // filesystem absolute refs resolved from safe patterns (never OS-rooted from web paths)
  * }
  *
  * Determinism / Safety
@@ -258,13 +258,19 @@ function parseJsTs(src, filename, baseDir, out) {
       if (spec) out.imports.push(spec);
     },
 
-    // dynamic import("x")
-    Import(p) {
-      const parent = p.parent;
-      if (parent?.type === "CallExpression") {
-        const a0 = parent.arguments && parent.arguments[0];
-        if (a0?.type === "StringLiteral") out.imports.push(a0.value);
-      }
+    // export ... from "x" (re-export)
+    ExportNamedDeclaration(p) {
+      const src = p.node.source?.value;
+      if (src) out.imports.push(src);
+
+      // Keep existing symbol extraction logic for exported declarations/specifiers.
+      // (Symbols are handled further down in this visitor map.)
+    },
+
+    // export * from "x"
+    ExportAllDeclaration(p) {
+      const src = p.node.source?.value;
+      if (src) out.imports.push(src);
     },
 
     // ----------------------------- Variables -----------------------------
@@ -311,6 +317,12 @@ function parseJsTs(src, filename, baseDir, out) {
 
       if (isRequireCall) {
         out.imports.push(arg0.value);
+        return;
+      }
+
+      // dynamic import("x")
+      if (callee?.type === "Import" && arg0?.type === "StringLiteral") {
+        out.imports.push(String(arg0.value));
         return;
       }
 
@@ -657,7 +669,13 @@ function addRefFromText(ref, baseDir, out) {
 
   if (looksLikeAssetPath(s)) out.assetRefs.push(s);
 
-  const abs = path.isAbsolute(s) ? s : path.resolve(baseDir, s);
+  // IMPORTANT:
+  // Web-root absolute paths like `/assets/js/app.js` are *not* filesystem absolute paths.
+  // Resolving them via path.isAbsolute() would incorrectly map them to the OS root (`/assets/...`).
+  // We keep them as logical asset refs only. The analyzer can later map them via a known public root.
+  if (s.startsWith("/") && !s.startsWith("//")) return;
+
+  const abs = path.resolve(baseDir, s);
   const absResolved = safeResolve(abs);
   if (absResolved) out._fileRefsAbs.add(absResolved);
 }
@@ -665,6 +683,9 @@ function addRefFromText(ref, baseDir, out) {
 function scanForAssetyStrings(src, baseDir, out) {
   // conservative: quoted strings only
   const STR_RE = /(["'`])([^\n\r]*?)\1/g;
+
+  // Note: we intentionally scan quoted strings only (cheap + deterministic).
+  // This catches many practical refs in "single-file" apps (config.json, public/, /assets/..., etc.).
   let m;
   while ((m = STR_RE.exec(src))) {
     const raw = String(m[2] || "");

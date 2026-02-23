@@ -29,23 +29,29 @@ body {
 }
 
 /* Better markdown readability (your app.js puts markdown into .content) */
-.content.markdown {
-    white-space: normal;
+/* Markdown: normaler Fließtext */
+.content.markdown { 
+  white-space: normal;
 }
 
+/* Markdown: Codeblöcke müssen Einrückungen + Newlines behalten */
 .content.markdown pre {
-    white-space: pre;
-    overflow: auto;
-    padding: 12px;
-    border: 1px solid #e9ecef;
-    border-radius: 10px;
-    background: #f8f9fa;
+  white-space: pre;         /* oder pre-wrap, wenn du umbrechen willst */
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid rgba(0,0,0,.08);
+  border-radius: 10px;
+  background: #f8f9fa;
+  line-height: 1.35;
+  margin: 8px 0;
 }
 
-.content.markdown code {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+/* Wichtig: code nicht "normalisieren" */
+.content.markdown pre code {
+  white-space: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
 }
-
 
 
 

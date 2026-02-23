@@ -1,76 +1,27 @@
 {
   "meta": {
-    "entry": "app/server.js",
+    "entry": "app/index.js",
     "urlInfo": {
-      "url": "http://localhost:3003",
+      "url": "http://localhost:3044",
       "status": 200,
       "contentType": "text/html; charset=UTF-8"
     }
   },
   "nodes": [
     {
-      "id": "app/server.js",
-      "file": "app/server.js",
-      "lines": 100,
-      "complexity": 0,
-      "headerComment": "NodeAnalyzer HTTP Server\n=======================\n\nResponsibilities\n----------------\n- Serve the browser-based UI (index.html + JS/CSS assets)\n- Expose API routes for:\n    - /analyze   → trigger static analysis\n    - /apps      → list known applications\n    - /readme    → resolve nearest README.md\n- Serve generated analysis output as static JSON\n\nDesign Notes\n------------\n- This server is intentionally \"thin\":\n  no business logic lives here.\n- All filesystem access and analysis logic\n  is delegated to /routes and /lib.\n- Static serving is configured BEFORE API routes\n  to avoid accidental shadowing or 404 fallbacks.",
-      "kind": "file"
+      "id": "app/index.js",
+      "file": "app/index.js",
+      "lines": 175,
+      "complexity": 20,
+      "headerComment": ""
     },
     {
-      "id": "app/config/config.js",
-      "file": "app/config/config.js",
-      "lines": 28,
-      "complexity": 2,
-      "headerComment": "Server / Path Configuration\n==========================\n\nCentral place for:\n- PORT\n- PROJECT_ROOT\n- PUBLIC_ROOT\n- OUTPUT_ROOT\n\nKeeps server.js clean and prevents path drift during refactors.",
-      "kind": "file"
-    },
-    {
-      "id": "app/config",
-      "file": "app/config",
-      "lines": 0,
-      "complexity": 0,
-      "headerComment": "",
-      "kind": "dir"
-    },
-    {
-      "id": "app/config/apps.json",
-      "file": "app/config/apps.json",
+      "id": "app/config.json",
+      "file": "app/config.json",
       "lines": 0,
       "complexity": 0,
       "headerComment": "",
       "kind": "asset"
-    },
-    {
-      "id": "CODE_OF_CONDUCT.md",
-      "file": "CODE_OF_CONDUCT.md",
-      "lines": 0,
-      "complexity": 0,
-      "headerComment": "",
-      "kind": "asset"
-    },
-    {
-      "id": "LICENSE",
-      "file": "LICENSE",
-      "lines": 0,
-      "complexity": 0,
-      "headerComment": "",
-      "kind": "asset"
-    },
-    {
-      "id": "app",
-      "file": "app",
-      "lines": 0,
-      "complexity": 0,
-      "headerComment": "",
-      "kind": "dir"
-    },
-    {
-      "id": "app/lib",
-      "file": "app/lib",
-      "lines": 0,
-      "complexity": 0,
-      "headerComment": "",
-      "kind": "dir"
     },
     {
       "id": "app/public",
@@ -81,310 +32,502 @@
       "kind": "dir"
     },
     {
-      "id": "app/routes",
-      "file": "app/routes",
+      "id": "app/public/apple-touch-icon.png",
+      "file": "app/public/apple-touch-icon.png",
+      "lines": 0,
+      "complexity": 0,
+      "headerComment": "",
+      "kind": "asset"
+    },
+    {
+      "id": "app/public/assets",
+      "file": "app/public/assets",
       "lines": 0,
       "complexity": 0,
       "headerComment": "",
       "kind": "dir"
     },
     {
-      "id": "assets",
-      "file": "assets",
+      "id": "app/public/assets/css",
+      "file": "app/public/assets/css",
       "lines": 0,
       "complexity": 0,
       "headerComment": "",
       "kind": "dir"
     },
     {
-      "id": "assets/logo.png",
-      "file": "assets/logo.png",
+      "id": "app/public/assets/data",
+      "file": "app/public/assets/data",
+      "lines": 0,
+      "complexity": 0,
+      "headerComment": "",
+      "kind": "dir"
+    },
+    {
+      "id": "app/public/assets/fonts",
+      "file": "app/public/assets/fonts",
+      "lines": 0,
+      "complexity": 0,
+      "headerComment": "",
+      "kind": "dir"
+    },
+    {
+      "id": "app/public/assets/help",
+      "file": "app/public/assets/help",
+      "lines": 0,
+      "complexity": 0,
+      "headerComment": "",
+      "kind": "dir"
+    },
+    {
+      "id": "app/public/assets/img",
+      "file": "app/public/assets/img",
+      "lines": 0,
+      "complexity": 0,
+      "headerComment": "",
+      "kind": "dir"
+    },
+    {
+      "id": "app/public/assets/js",
+      "file": "app/public/assets/js",
+      "lines": 0,
+      "complexity": 0,
+      "headerComment": "",
+      "kind": "dir"
+    },
+    {
+      "id": "app/public/favicon.ico",
+      "file": "app/public/favicon.ico",
       "lines": 0,
       "complexity": 0,
       "headerComment": "",
       "kind": "asset"
     },
     {
-      "id": "package-lock.json",
-      "file": "package-lock.json",
+      "id": "app/public/index.html",
+      "file": "app/public/index.html",
       "lines": 0,
       "complexity": 0,
       "headerComment": "",
       "kind": "asset"
     },
     {
-      "id": "package.json",
-      "file": "package.json",
-      "lines": 0,
-      "complexity": 0,
-      "headerComment": "",
-      "kind": "asset"
-    },
-    {
-      "id": "readme.md",
-      "file": "readme.md",
-      "lines": 0,
-      "complexity": 0,
-      "headerComment": "",
-      "kind": "asset"
-    },
-    {
-      "id": "app/routes/analyze.js",
-      "file": "app/routes/analyze.js",
-      "lines": 133,
-      "complexity": 30,
-      "headerComment": "",
+      "id": "app/public/main.js",
+      "file": "app/public/main.js",
+      "lines": 116,
+      "complexity": 15,
+      "headerComment": "main.js\n=============================================================================\nOrchestrierung (Industrial Style)\n=============================================================================\nVerantwortung:\n- Boot der Applikation\n- Initialisierung von UI und Renderer\n- Zentrale Redraw-Koordination (Coalescing)\n\nArchitektur:\n- Renderer ist der EINZIGE Ort, der rendert\n- UI liefert nur Events + Render-API\n- Keine Persistenz, kein impliziter State\n=============================================================================",
       "kind": "file"
     },
     {
-      "id": "app/routes/apps.js",
-      "file": "app/routes/apps.js",
-      "lines": 23,
-      "complexity": 2,
-      "headerComment": "endpoint for my apps dropdown",
-      "kind": "file"
-    },
-    {
-      "id": "app/routes/help.js",
-      "file": "app/routes/help.js",
-      "lines": 64,
-      "complexity": 7,
-      "headerComment": "Help Markdown Route\n===================\n\nPurpose\n-------\nThe frontend has a \"Help\" button that opens a floating panel.\nThis route returns the markdown content for that panel.\n\nContract\n--------\nGET /help\n  -> { found: true, helpPath: string, markdown: string }\n  -> { found: false }\n\nNotes\n-----\n- This route is intentionally NOT the \"nearest README\" logic.\n  That behavior belongs to `GET /readme?file=...`.\n- This route always serves a single, project-owned help file:\n    app/public/readme.md (case-insensitive fallback)",
-      "kind": "file"
-    },
-    {
-      "id": "app/routes/readme.js",
-      "file": "app/routes/readme.js",
-      "lines": 133,
-      "complexity": 24,
-      "headerComment": "README Lookup Route\n===================\n\nGET /readme?file=<relative-path>\n\nBehavior\n--------\n1) If file points to the global help doc (app/public/readme.md), return it.\n2) Otherwise: find the nearest README in the file's directory and parents.\n\nResponse\n--------\n{ found: true, readmePath: string, markdown: string }\n{ found: false }",
-      "kind": "file"
-    },
-    {
-      "id": "app/routes/readme.md",
-      "file": "app/routes/readme.md",
+      "id": "app/public/readme.md",
+      "file": "app/public/readme.md",
       "lines": 0,
       "complexity": 0,
       "headerComment": "",
       "kind": "asset"
     },
     {
-      "id": "app/routes/README.md",
-      "file": "app/routes/README.md",
-      "lines": 0,
+      "id": "app/public/assets/js/app-boot.js",
+      "file": "app/public/assets/js/app-boot.js",
+      "lines": 224,
+      "complexity": 15,
+      "headerComment": "app-boot.js\n-----------------------------------------------------------------------------\nBootstrapping (einmalig, ohne Persistenz)\n-----------------------------------------------------------------------------\nVerantwortlichkeiten:\n- ctx erstellen (config + state + flags + dom + model placeholders)\n- DOM lookup\n- optional weiteres UI wiring (Dropdowns/Mode/Years) via opts.wireUI(ctx)\n- initial UI aus State spiegeln (ohne redraw)\n- Rohdaten (RAW) einmalig laden (loadData)\n- initialen redraw coalesced triggern (requestRedraw)\n\nState-Contracts (Industrial Style):\n- enabledSourceIds: explizit, leer = alle aktiv (UI-Komprimierung)\n- enabledTypes: explizit, null => \"alle\" (UI-Komprimierung)\n- disabledCats: expliziter UI-State, leer = alle Kategorien aktiv\n- enabledCats: existiert NICHT mehr\n-----------------------------------------------------------------------------"
+    },
+    {
+      "id": "app/public/assets/js/ui.js",
+      "file": "app/public/assets/js/ui.js",
+      "lines": 517,
+      "complexity": 106,
+      "headerComment": "ui.js\n=============================================================================\nUI-Schicht (Industrial Style)\n----------------------------------------------------------------------------\nVerantwortung (streng):\n- DOM finden, Events verdrahten\n- ctx.state NUR durch User-Interaktion ändern\n- Anzeige NUR aus ctx.derived lesen\n- KEINE Persistenz\n- KEINE Datenaggregation\n\nLeitprinzip:\n  state  = User-Intent\n  derived = Anzeigegrundlage (vom Renderer berechnet)\n============================================================================="
+    },
+    {
+      "id": "app/public/assets/js/renderer.js",
+      "file": "app/public/assets/js/renderer.js",
+      "lines": 875,
+      "complexity": 187,
+      "headerComment": "/assets/js/renderer.js\n-----------------------------------------------------------------------------\nINDUSTRIAL RENDERER PIPELINE (RAW-in-Memory)\n-----------------------------------------------------------------------------\nZielarchitektur (ohne Persistenz, ohne Fallbacks):\n- ctx.raw.bySource: Map<sid, { sid, text, delimiter, model }>\n- ctx.derived: { options, view, graph }\n- UI-State (User-Intent): ctx.state\n\nOPTION A (KATEGORIE-KONTRAKT):\n- Kategorie-Strings sind IDENTITÄT (case-/whitespace-/unicode-sensitiv)\n- Kategorien werden im Renderer NICHT normalisiert.\n- Typen dürfen normalisiert werden (cleanKey), Kategorien NICHT.\n\nStrict:\n- Contract-Verletzungen => throw\n-----------------------------------------------------------------------------"
+    },
+    {
+      "id": "app/public/assets/js/api.js",
+      "file": "app/public/assets/js/api.js",
+      "lines": 308,
+      "complexity": 94,
+      "headerComment": "public/api.js\n-----------------------------------------------------------------------------\nAPI + Data Build Pipeline (Browser-side)\n-----------------------------------------------------------------------------\nResponsibilities\n- fetchConfig(): holt /api/config (Sources + Default delimiter)\n- fetchCsvText(sourceId): holt /api/data (CSV text + delimiter)\n- loadData(ctx): lädt alle CSV Quellen und baut RAW-Modelle pro Source\n    * ctx.raw.bySource : Map<sourceId, { sid, text, delimiter, model }>\n- mergeModels(models): kombiniert mehrere Source-Modelle deterministisch (yearKey-aware)\n-----------------------------------------------------------------------------"
+    },
+    {
+      "id": "app/public/assets/js/state.js",
+      "file": "app/public/assets/js/state.js",
+      "lines": 143,
+      "complexity": 23,
+      "headerComment": "/app/public/assets/js/state.js\n-----------------------------------------------------------------------------\nState-Handling\n-----------------------------------------------------------------------------\nZielbild (neu):\n- state.js liefert nur noch:\n  - Normalisierung / Parsing-Utilities\n  - Invariants (clamp) für Sets\n  - Helper um Default-State aus cfg abzuleiten\n  - state enthält enabled* Sets (empty == alle) und optional disabledCats für inverse-Selection UX\n\nWICHTIG:\n- Reload => Default-Zustand (\"alles\").\n- \"alle\" Semantik für Multi-Selects: empty Set === alle.\n-----------------------------------------------------------------------------"
+    },
+    {
+      "id": "app/public/assets/js/chart.js",
+      "file": "app/public/assets/js/chart.js",
+      "lines": 420,
+      "complexity": 73,
+      "headerComment": "chart.js\n-----------------------------------------------------------------------------\nGrouped bar chart (D3) – Year × Type × Category\n\nResponsibilities (strict):\n- Render the SVG chart (scales, axes, bars).\n- Emit interaction events (hover) via callbacks.\n\nNon-responsibilities (renderer-owned):\n- DOM composition (accordion/inspector panels).\n- Rendering tables / “categoryInspector” content.\n\nData contract (Option A strict):\n- data.years: number[] (numeric years only)\n- data.bars: aggregates with { yearKey, year|null, cat, type|typ, kosten, menge }\n- data.cats: string[] (category identities; no normalization beyond trim)\n- data.hasUndated / data.undatedLabel: support “Undatiert” bucket\n-----------------------------------------------------------------------------"
+    },
+    {
+      "id": "app/public/assets/js/legend.js",
+      "file": "app/public/assets/js/legend.js",
+      "lines": 451,
+      "complexity": 121,
+      "headerComment": "legend.js\n=============================================================================\nLegend renderer – STRICT NETWORK MODE (Option A)\n=============================================================================\nResponsibilities:\n- Validate strict contracts (Option A identities)\n- Build deterministic model (nodes/links)\n- Render DOM layers (SVG edges + HTML nodes)\n- Run D3 simulation + drag + edge-end trimming\n- Apply highlight (chip + link glow) + isolate/hide unrelated Source/Type nodes\n\nCSS Contract (must be honored externally):\n- .legend-graph\n- .legend-graph__edges\n- .legend-graph__nodes\n- .legend-node (positioned via translate(x,y))\nTODO:highligt js auslagern\n============================================================================="
+    },
+    {
+      "id": "app/public/assets/js/keys.js",
+      "file": "app/public/assets/js/keys.js",
+      "lines": 8,
       "complexity": 0,
-      "headerComment": "",
-      "kind": "asset"
+      "headerComment": "/assets/js/keys.js"
     },
     {
-      "id": "app/lib/buildMetricsFromEntrypoint.js",
-      "file": "app/lib/buildMetricsFromEntrypoint.js",
-      "lines": 656,
-      "complexity": 124,
-      "headerComment": "buildMetricsFromEntrypoint\n==========================\n\nDeterministic, entrypoint-driven dependency graph builder for Node-style projects.\n\n-----------------------------------------------------------------------------\nARCHITECTURAL ROLE\n-----------------------------------------------------------------------------\nConstructs a static file-level dependency graph starting from a single\nentrypoint file.\n\nPerforms a breadth-first traversal (BFS) across resolvable internal imports\nand emits a D3-compatible metrics payload.\n\n-----------------------------------------------------------------------------\nDESIGN PRINCIPLES\n-----------------------------------------------------------------------------\n• Deterministic traversal (BFS)\n• No runtime execution or evaluation\n• Only local/relative imports are resolved\n• Resilient parsing via parseFile()\n• Side-effect free (pure metrics builder)\n\n-----------------------------------------------------------------------------\nOUTPUT CONTRACT\n-----------------------------------------------------------------------------\n{\n  meta: {\n    entry: string,\n    urlInfo: any\n  },\n  nodes: Array<{\n    id: string,\n    file: string,\n    lines: number,\n    complexity: number,\n    headerComment: string\n  }>,\n  links: Array<{\n    source: string,\n    target: string,\n    type: \"use\" | \"include\"\n  }>\n}"
+      "id": "app/public/assets/js/aggregates.js",
+      "file": "app/public/assets/js/aggregates.js",
+      "lines": 192,
+      "complexity": 47,
+      "headerComment": "aggregates.js\n============================================================================\nZENTRALE DOMÄNENAGGREGATION (Single Source of Truth)\n----------------------------------------------------------------------------\nZiel\n- EIN Filterpfad (YearRange × Sources × Types × disabledCats)\n- EIN Zahlenursprung (data.rows)\n- Bars + Totals + Dropdown-Universen werden deterministisch aus rows abgeleitet\n\nWichtige Konventionen\n- Kategorien sind IDENTITÄTEN (keine Normalisierung außer: leer -> \"?\")\n- Typen werden normalisiert (cleanKey), damit Filters/Keys stabil sind\n\nInput Contract\n- data.rows: Array<Row>\n  Row muss mindestens liefern:\n  - year\n  - cat\n  - type\n  - sourceId (oder sid/source)\n  - kosten / menge (numerisch oder numerisch parsbar)\n\nState-Semantik (wie in deiner App vereinbart)\n- enabledSourceIds: null/undefined => ALLE, Set.size===0 => KEINE\n- enabledTypes:     null/undefined => ALLE, Set.size===0 => KEINE\n- disabledCats:     Set<string> (exakt, case-sensitiv)\n- yearFrom/yearTo:  sichtbarer Bereich (inklusive)\n- mode:             \"menge\" | \"kosten\" (default: kosten)\n\nOutput\n- bars: Array<{ year, type, cat, kosten, menge }>\n  (für Chart; aggregiert über alle ausgewählten Sources)\n- totalsByCat / totalsBySource / totalsByType / totalsByYear: Map<key, number>\n  (signiert; bezogen auf state.mode)\n- visibleCats / visibleTypes / visibleSources: string[]\n  (Dropdown-Universen basierend auf YearRange × Sources × Types; OHNE disabledCats)\n- hasAny: boolean"
     },
     {
-      "id": "app/lib/README.md",
-      "file": "app/lib/README.md",
-      "lines": 0,
-      "complexity": 0,
-      "headerComment": "",
-      "kind": "asset"
+      "id": "app/public/assets/js/view-derivations.js",
+      "file": "app/public/assets/js/view-derivations.js",
+      "lines": 215,
+      "complexity": 46,
+      "headerComment": "view-derivations.js\n-----------------------------------------------------------------------------\nView-Derivations (pure)\n-----------------------------------------------------------------------------\nZiel:\n- Pure Ableitungen aus (data, state) → Derived Values\n- Keine DOM-Zugriffe, keine Persistenz, kein ctx\n- Deterministisch & testbar\n\nKonventionen / Contracts:\n- data: { years?: number[], cats?: string[], bars?: Bar[] }\n- Bar:  { year: number, cat: string, kosten?: number, menge?: number, type?: string }\n- state: { yearFrom?: number|null, yearTo?: number|null, mode?: \"kosten\"|\"menge\", enabledTypes?: Set<string> }\n- enabledTypes: leeres/fehlendes Set => ALLE Typen\n-----------------------------------------------------------------------------"
     },
     {
-      "id": "app/lib/readme.md",
-      "file": "app/lib/readme.md",
-      "lines": 0,
-      "complexity": 0,
-      "headerComment": "",
-      "kind": "asset"
+      "id": "app/public/assets/js/categoryInspector.js",
+      "file": "app/public/assets/js/categoryInspector.js",
+      "lines": 432,
+      "complexity": 167,
+      "headerComment": "categoryInspector.js\n=============================================================================\nRenders the Category Inspector (details table) into a host element.\n\nPublic API:\n  const insp = createCategoryInspector(ctx, { hostId });\n  insp.update(payload)   // payload from chart hover (expects payload.cat)\n  insp.clear()\n\nNotes:\n- This module is UI-only and must not mutate derived data.\n- It is tolerant to host/title elements missing (no-throw), but is strict about ctx.\n============================================================================="
     },
     {
-      "id": "app/lib/probeAppUrl.js",
-      "file": "app/lib/probeAppUrl.js",
-      "lines": 16,
-      "complexity": 1,
-      "headerComment": ""
+      "id": "app/public/assets/js/barHoverController.js",
+      "file": "app/public/assets/js/barHoverController.js",
+      "lines": 285,
+      "complexity": 74,
+      "headerComment": "barHoverController.js\n=============================================================================\nOrchestriert Hover UX zwischen Chart-Bars und Legend-Pills.\n\nAufgaben:\n- Normalisiert Chart-Hover-Payloads in ein stabiles Hover-Model.\n- Steuert den Legend-Halo (visuell) und broadcastet semantische Highlight-Events.\n- Liefert einen kleinen, ctx-freien Controller für renderer/chart.\n- Enthält yearKey + typ/type, sofern das Chart sie liefert.\n\nWichtige Contracts:\n- Kategorie ist Option-A Identity: whitespace-sensitiv.\n  -> Wir trimmen Kategorien NICHT; whitespace-only gilt als \"leer\".\n- Typ kann als `type` (Chart) oder `typ` (legacy) kommen.\n  -> Wir akzeptieren beides und halten `typ`/`type` synchron.\n\nExport:\n- createBarHoverController({ legendRootEl, getPillEl, getColor, onHoverModel })\n  -> { onHover(payload), clear(), attachChartLeave(chartEl), _debug }\n============================================================================="
     },
     {
-      "id": "app/lib/parseFile.js",
-      "file": "app/lib/parseFile.js",
-      "lines": 631,
-      "complexity": 219,
-      "headerComment": "parseFile\n=========\n\nBest-effort static signal extraction for project files.\n\nWhy this exists\n---------------\nMany apps (especially “single-file” servers) have few or no internal JS imports,\nbut still depend on lots of *files and folders*:\n  - public/ (static frontend)\n  - config.json / .env\n  - CSVs, templates, images, CSS\n\nTo keep the graph meaningful across styles, we parse multiple formats.\n\nSupported formats\n-----------------\n- JS/TS/JSX/TSX: AST-based extraction via @babel/parser + @babel/traverse\n- HTML: extract <script src>, <link href>, <img src>, etc.\n- CSS: extract url(...)\n- JSON: extract path-like values from common keys (path/file/dir/...)\n- MD: extract markdown links/images\n\nOutput Contract (stable)\n------------------------\n{\n  imports: string[],                 // module specifiers (JS only)\n  lines: number,                     // non-empty LOC\n  complexity: number,                // heuristic (JS only)\n  headerComment: string,             // file header comment (JS/TS only)\n  symbols: Array<{name, kind}>,       // top-level declarations (JS only)\n  callsBy: Record<string, string[]>,  // best-effort call attribution (JS only)\n  assetRefs: string[],               // suspicious string refs that look like assets/data/config\n  fileRefsAbs: string[]              // absolute file/folder refs resolved from safe patterns\n}\n\nDeterminism / Safety\n--------------------\n- No runtime execution\n- No evaluation of dynamic expressions\n- Only resolve paths from string literals + known base anchors"
+      "id": "app/public/assets/js/graphBuilder.js",
+      "file": "app/public/assets/js/graphBuilder.js",
+      "lines": 120,
+      "complexity": 47,
+      "headerComment": "/assets/js/graphBuilder.js"
     },
     {
-      "id": "app/lib/resolveImports.js",
-      "file": "app/lib/resolveImports.js",
-      "lines": 19,
-      "complexity": 7,
-      "headerComment": ""
+      "id": "app/public/assets/js/colorsByCat.js",
+      "file": "app/public/assets/js/colorsByCat.js",
+      "lines": 88,
+      "complexity": 12,
+      "headerComment": "/assets/js/colorsByCat.js\n-----------------------------------------------------------------------------\nCategory Color System (Single Source of Truth)\n-----------------------------------------------------------------------------\nContract:\n- Category strings are identity keys (Option A: no normalization).\n- Deterministic color generation via FNV-1a hash + OKLCH/HCL + golden angle (with HSL fallback).\n- Returned structure MUST be a stable Map<string, string>.\n\nThis module is pure and side-effect free.\n-----------------------------------------------------------------------------"
+    },
+    {
+      "id": "app/public/assets/js/renderGenTables.js",
+      "file": "app/public/assets/js/renderGenTables.js",
+      "lines": 474,
+      "complexity": 126,
+      "headerComment": "-----------------------------------------------------------------------------\nrenderGenTables.js\n- Debug/Transparenz: zeigt ALLE aktuell sichtbaren Detail-Zeilen als Tabelle\n- Quelle ist ctx.derived nach Anwendung von Quelle/Typ/Kategorie/Jahr-Filtern\n- Sortierbar nach allen Spalten (Header-Klick: asc/desc)\n- Ohne Dependencies, ohne Inline-Styles\n-----------------------------------------------------------------------------"
+    },
+    {
+      "id": "app/public/assets/js/parse.js",
+      "file": "app/public/assets/js/parse.js",
+      "lines": 466,
+      "complexity": 64,
+      "headerComment": "parse.js\n-----------------------------------------------------------------------------\nCSV Parser → Model Builder (pure)\n-----------------------------------------------------------------------------\nExpected header (recommended):\nGegenpartei;Kostenart;Kategorie;Buchungstyp;Von;Bis;Jahr;Betrag;Menge;Einheit\n\nContract (year / undated):\n- If Jahr cell contains a valid year => SOURCE OF TRUTH (never overwritten)\n- Else derive year from Bis (preferred) or Von\n- If Jahr, Von, Bis are ALL empty => row is UNDATED:\n    - year is NaN\n    - row remains chartable under a dedicated \"Undatiert\" bucket\n- Planned vs Actual is modeled via `status` (not via a virtual type)\n- Optional text is modeled via `memo`\n\nOutput model (dimensioned; future-proof):\n- years: number[]\n- cats: string[]   (KATEGORIE; chart dimension / dropdown)\n- types: string[]  (BUCHUNGSTYP; filter / dropdown)\n- bars: { yearKey: string, year?: number|null, cat: string, type: string, kosten: number, menge: number }[]  (aggregated per (yearKey, Kategorie, Typ))\n- unitByCat: [cat, unit][]\n- detailsByKey: Map<`${yearKey}||${cat}||${typ}`, detailRow[]>\n- hasUndated: boolean\n- undatedLabel: string\n-----------------------------------------------------------------------------"
+    },
+    {
+      "id": "app/public/assets/js/timing.js",
+      "file": "app/public/assets/js/timing.js",
+      "lines": 379,
+      "complexity": 64,
+      "headerComment": "timing.js\n-----------------------------------------------------------------------------\nBPM + musical grid timing utilities (browser-side)\nGoal: drive ALL UI animations/transitions from a single musical clock.\n- Supports BPM, timeSignature (e.g. \"4/4\"), note values (e.g. \"1/4\", \"1/8T\"),\n  swing/shuffle, quantization, and pattern scheduling.\n- Designed to be used by chart.js + legend.js (and any other renderer).\n\nAssumptions:\n- config is available as: state.config or window.__APP_CONFIG__\n- config.timing can look like:\n  {\n    bpm: 120,\n    timeSignature: \"4/4\",\n    chart: { length: \"1/1\" },          // 1 bar (whole note) or \"1/4\" etc\n    legend: { factor: 4 },             // x chart duration\n    quantize: \"1/8\",                   // default grid\n    swing: 0.0                         // 0..0.5 typical\n  }\n\nNOTE VALUE SYNTAX\n- \"1/4\"  = quarter note\n- \"1/8\"  = eighth note\n- \"1/16\" = sixteenth note\n- \"1/8T\" = eighth-note triplet (÷3/2)  (T suffix)\n- \"1/8D\" = dotted eighth (×1.5)        (D suffix)\n- \"2\" or \"2/1\" also works (whole-number notes) as \"2/1\"\n\nPATTERN SYNTAX (for scheduling state changes)\n- Array of steps: [{ at:\"1/8\", do: fn }, ...] relative to pattern start\n- Or simple strings: [\"tick\",\"-\",\"-\",\"accent\"] with grid = \"1/8\"\n  where mapping decides what to do per token.\n-----------------------------------------------------------------------------"
+    },
+    {
+      "id": "app/public/assets/js/legend-model.js",
+      "file": "app/public/assets/js/legend-model.js",
+      "lines": 162,
+      "complexity": 44,
+      "headerComment": "legend-model.js\n=============================================================================\nLegend model builder (pure data)\n- builds deterministic node/link arrays from graph + categories\n- no DOM, no D3\n============================================================================="
+    },
+    {
+      "id": "app/public/assets/js/legend-render.js",
+      "file": "app/public/assets/js/legend-render.js",
+      "lines": 330,
+      "complexity": 84,
+      "headerComment": "legend-render.js\n=============================================================================\nLegend DOM renderer (skeleton + SVG edges + HTML nodes)\n=============================================================================\nCONTRACT (strict, CSS-first):\n\n1) Layering / DOM structure (mountSkeleton)\n   - Creates exactly:\n       <div class=\"legend-graph\">\n         <svg class=\"legend-graph__edges\"></svg>\n         <div class=\"legend-graph__nodes\"></div>\n       </div>\n   - The CSS owns stacking order (z-index, pointer-events) and clipping.\n   - This module NEVER sets z-index or positioning offsets to “fix” stacking.\n\n2) SVG edges (renderSvgEdges)\n   - Renders one <line> per link with classes:\n       \"legend-link legend-link--{kind}\" and optional \"is-planned\".\n   - Stroke color is CSS-driven via `currentColor`.\n     JS sets `style.color` to either:\n       - edgeConf[kind].stroke (default)\n       - category color (when highlighted)\n   - Adds attribute `data-highlight=\"true|false\"` for CSS glow.\n   - Edges are non-interactive: pointer-events is set to none.\n\n3) HTML nodes (renderHtmlNodes)\n   - Source nodes: <div class=\"legend-node legend-node--source ...\">\n   - Type nodes:   <div class=\"legend-node legend-node--type\">\n   - Cat nodes:    <button class=\"legend-chip legend-node legend-node--cat\">\n     Required datasets for interop:\n       - dataset.cat = <cat identity>\n       - dataset.active = \"true|false\" (toggle state)\n       - dataset.highlight = \"true|false\" (glow)\n       - dataset.hidden = \"true\" (optional; higher-level may hide/remove)\n   - Cat colors are exposed via CSS variables on the button:\n       --cat-bg (background), --cat-fg (text), --legend-glow (optional highlight)\n\n4) Non-goals\n   - No force simulation, no node positioning.\n   - No filtering logic; callers decide what nodes/links to provide.\n   - No key normalization for categories (Option A identity semantics).\n============================================================================="
+    },
+    {
+      "id": "app/public/assets/js/legend-simulation.js",
+      "file": "app/public/assets/js/legend-simulation.js",
+      "lines": 595,
+      "complexity": 177,
+      "headerComment": "legend-simulation.js\n=============================================================================\nLegend simulation (D3 force + drag + edge trimming)\n- no DOM creation (but uses nodeElById for accurate trimming)\n============================================================================="
+    },
+    {
+      "id": "app/public/assets/js/renderLegendHalo.js",
+      "file": "app/public/assets/js/renderLegendHalo.js",
+      "lines": 303,
+      "complexity": 53,
+      "headerComment": "renderLegendHalo.js\n=============================================================================\nGlow + highlight broadcaster for legend pills.\n\nThis module is intentionally ctx-free.\nIt does two things:\n 1) Applies a temporary glow to a pill element (purely visual)\n 2) Broadcasts the current highlighted category (semantic) as a DOM CustomEvent\n\nConsumers (renderer/barHoverController/etc.) can listen on the legend root:\n  rootEl.addEventListener('legend:highlight', (e) => {\n    const { cat } = e.detail;\n    // set state.legendHighlightCat = cat; redraw(); OR update legend edges directly\n  });\n\nDesign principles\n-----------------\n- No DOM overlay nodes\n- No transform writes (legend.js owns positioning)\n- No mutation of background/text colors\n- Stateless from the outside (purely visual)\n- One controller per legend root (WeakMap cached)"
+    },
+    {
+      "id": "app/public/assets/js/taxEngineDE.js",
+      "file": "app/public/assets/js/taxEngineDE.js",
+      "lines": 543,
+      "complexity": 49,
+      "headerComment": "taxEngineDE.js (ESM)\n\nEnthält aktuell:\n- berechneRente(...): Modellrechnung „Entgeltpunkte aus Brutto“ → Monatsrente (brutto)\n- calcSozialabgaben(...): Modellrechnung Sozialabgaben (KV/PV/RV/AV) aus Brutto\n\nWichtige Design-Entscheidungen (refaktoriert):\n1) Eingabe-Währung ist IMMER EUR – auch für historische Jahre vor 2002.\n   - Tabellenwerte vor 2002 (DM) werden intern mit dem festen Umrechnungskurs\n     1 EUR = 1,95583 DM nach EUR konvertiert.\n   - Ergebnis ist immer in EUR.\n\n2) Jahresbetrag kann Teiljahresverdienst sein (z.B. „7 Monate gearbeitet“).\n   - Für die Entgeltpunkte zählt der Gesamtverdienst im Kalenderjahr (egal ob 7 oder 12 Monate).\n   - Optional kannst du `monthsWorked` übergeben, wenn du statt eines Jahresbetrags\n     einen Monatsbetrag liefern willst (unit=\"month\").\n\n3) Rentenwert-Stichtag-Regel:\n   - Der Rentenwert wird über einen festen Stichtag bestimmt: 30.06. des Folgejahres.\n     Beispiel: Verdienstjahr 2024 => Rentenwert-Stichtag 2025-06-30.\n\n\n// Jahresverdienst (auch Teiljahr ok)\nberechneRente(35000, { jahr: 2010 }) // 35.000 EUR im Jahr 2010, egal ob 7/12 Monate\n\n// Monatswert + gearbeitete Monate\nberechneRente(5000, { jahr: 2010, unit: \"month\", monthsWorked: 7 }) // 5.000 EUR/Monat * 7\n\n\nWas die Funktion zurückgibt\n\n\t•\trenteMonat (EUR)\n\t•\tentgeltpunkte\n\t•\trentenwert (EUR)\n\t•\tdurchschnittsentgelt (EUR)\n\t•\tmeta inkl. jahresVerdienst, unit, monthsWorked (wenn relevant), Stichtag etc."
+    },
+    {
+      "id": "app/public/assets/js/moneytone.js",
+      "file": "app/public/assets/js/moneytone.js",
+      "lines": 192,
+      "complexity": 19,
+      "headerComment": "moneytone.js\n-----------------------------------------------------------------------------\nSemantische Rot/Grün-Farblogik (\"money tone\") für Beträge / Deltas.\n\nDesignziele\n- Single Source of Truth: eine Logik für Source-Nodes, Pills/Chips, Tabellen etc.\n- Framework-agnostisch: liefert Klassen- und Tone-Strings; DOM-Helfer optional.\n- Stabil & defensiv: NaN/Infinity/\"0\" => neutral.\n\nCSS-Contract (moneyTone.css)\n- Tone tokens:\n  --money-tone-pos-bg, --money-tone-pos-bd, --money-tone-pos-sh\n  --money-tone-neg-bg, --money-tone-neg-bd, --money-tone-neg-sh\n  --money-tone-zero-bg, --money-tone-zero-bd\n- Utilities:\n  .tone-pos / .tone-neg / .tone-zero  (optional)\n  [data-tone=\"pos|neg|zero\"]          (optional)\n- Components lesen:\n  --tone-bg / --tone-bd / --tone-sh\n\nHinweis: Diese Datei definiert *keine* CSS-Variablen. Sie liefert nur die\nsemantische Einstufung und optionale DOM-Helpers."
     }
   ],
   "links": [
     {
-      "source": "app/server.js",
-      "target": "app/config/config.js",
+      "source": "app/index.js",
+      "target": "app/config.json",
       "type": "include"
     },
     {
-      "source": "app/server.js",
-      "target": "app/config/config.js",
-      "type": "use"
-    },
-    {
-      "source": "app/server.js",
-      "target": "app/routes/analyze.js",
-      "type": "use"
-    },
-    {
-      "source": "app/server.js",
-      "target": "app/routes/apps.js",
-      "type": "use"
-    },
-    {
-      "source": "app/server.js",
-      "target": "app/routes/readme.js",
-      "type": "use"
-    },
-    {
-      "source": "app/server.js",
-      "target": "app/routes/help.js",
-      "type": "use"
-    },
-    {
-      "source": "app/config/config.js",
-      "target": "app/config",
-      "type": "include"
-    },
-    {
-      "source": "app/config",
-      "target": "app/config/apps.json",
-      "type": "include"
-    },
-    {
-      "source": "app",
-      "target": "app/config",
-      "type": "include"
-    },
-    {
-      "source": "app",
-      "target": "app/lib",
-      "type": "include"
-    },
-    {
-      "source": "app",
+      "source": "app/index.js",
       "target": "app/public",
       "type": "include"
     },
     {
-      "source": "app",
-      "target": "app/routes",
+      "source": "app/public",
+      "target": "app/public/apple-touch-icon.png",
       "type": "include"
     },
     {
-      "source": "app",
-      "target": "app/server.js",
+      "source": "app/public",
+      "target": "app/public/assets",
       "type": "include"
     },
     {
-      "source": "assets",
-      "target": "assets/logo.png",
+      "source": "app/public/assets",
+      "target": "app/public/assets/css",
       "type": "include"
     },
     {
-      "source": "readme.md",
-      "target": "assets/logo.png",
+      "source": "app/public/assets",
+      "target": "app/public/assets/data",
       "type": "include"
     },
     {
-      "source": "app/config",
-      "target": "app/config/config.js",
+      "source": "app/public/assets",
+      "target": "app/public/assets/fonts",
       "type": "include"
     },
     {
-      "source": "app/routes/analyze.js",
-      "target": "app/routes",
+      "source": "app/public/assets",
+      "target": "app/public/assets/help",
       "type": "include"
     },
     {
-      "source": "app/routes",
-      "target": "app/routes/analyze.js",
+      "source": "app/public/assets",
+      "target": "app/public/assets/img",
       "type": "include"
     },
     {
-      "source": "app/routes",
-      "target": "app/routes/apps.js",
+      "source": "app/public/assets",
+      "target": "app/public/assets/js",
       "type": "include"
     },
     {
-      "source": "app/routes",
-      "target": "app/routes/help.js",
+      "source": "app/public",
+      "target": "app/public/favicon.ico",
       "type": "include"
     },
     {
-      "source": "app/routes",
-      "target": "app/routes/readme.js",
+      "source": "app/public",
+      "target": "app/public/index.html",
       "type": "include"
     },
     {
-      "source": "app/routes",
-      "target": "app/routes/readme.md",
+      "source": "app/public",
+      "target": "app/public/main.js",
       "type": "include"
     },
     {
-      "source": "app/routes/readme.md",
-      "target": "app/routes/README.md",
+      "source": "app/public",
+      "target": "app/public/readme.md",
       "type": "include"
     },
     {
-      "source": "app/routes/analyze.js",
-      "target": "app/lib/buildMetricsFromEntrypoint.js",
+      "source": "app/public/main.js",
+      "target": "app/public/assets/js/app-boot.js",
       "type": "use"
     },
     {
-      "source": "app/routes/analyze.js",
-      "target": "app/lib/probeAppUrl.js",
+      "source": "app/public/main.js",
+      "target": "app/public/assets/js/ui.js",
       "type": "use"
     },
     {
-      "source": "app/routes/readme.js",
-      "target": "app/routes",
-      "type": "include"
-    },
-    {
-      "source": "app/routes/readme.js",
-      "target": "app/routes/README.md",
-      "type": "include"
-    },
-    {
-      "source": "app/routes/readme.js",
-      "target": "app/routes/readme.md",
-      "type": "include"
-    },
-    {
-      "source": "app/routes/help.js",
-      "target": "app/routes",
-      "type": "include"
-    },
-    {
-      "source": "app/lib/buildMetricsFromEntrypoint.js",
-      "target": "app/lib/README.md",
-      "type": "include"
-    },
-    {
-      "source": "app/lib/buildMetricsFromEntrypoint.js",
-      "target": "app/lib/readme.md",
-      "type": "include"
-    },
-    {
-      "source": "app/lib/buildMetricsFromEntrypoint.js",
-      "target": "app/lib/parseFile.js",
+      "source": "app/public/main.js",
+      "target": "app/public/assets/js/renderer.js",
       "type": "use"
     },
     {
-      "source": "app/lib/buildMetricsFromEntrypoint.js",
-      "target": "app/lib/resolveImports.js",
+      "source": "app/public/assets/js/app-boot.js",
+      "target": "app/public/assets/js/api.js",
+      "type": "use"
+    },
+    {
+      "source": "app/public/assets/js/app-boot.js",
+      "target": "app/public/assets/js/state.js",
+      "type": "use"
+    },
+    {
+      "source": "app/public/assets/js/app-boot.js",
+      "target": "app/public/assets/js/ui.js",
+      "type": "use"
+    },
+    {
+      "source": "app/public/assets/js/renderer.js",
+      "target": "app/public/assets/js/api.js",
+      "type": "use"
+    },
+    {
+      "source": "app/public/assets/js/renderer.js",
+      "target": "app/public/assets/js/chart.js",
+      "type": "use"
+    },
+    {
+      "source": "app/public/assets/js/renderer.js",
+      "target": "app/public/assets/js/legend.js",
+      "type": "use"
+    },
+    {
+      "source": "app/public/assets/js/renderer.js",
+      "target": "app/public/assets/js/keys.js",
+      "type": "use"
+    },
+    {
+      "source": "app/public/assets/js/renderer.js",
+      "target": "app/public/assets/js/aggregates.js",
+      "type": "use"
+    },
+    {
+      "source": "app/public/assets/js/renderer.js",
+      "target": "app/public/assets/js/view-derivations.js",
+      "type": "use"
+    },
+    {
+      "source": "app/public/assets/js/renderer.js",
+      "target": "app/public/assets/js/categoryInspector.js",
+      "type": "use"
+    },
+    {
+      "source": "app/public/assets/js/renderer.js",
+      "target": "app/public/assets/js/barHoverController.js",
+      "type": "use"
+    },
+    {
+      "source": "app/public/assets/js/renderer.js",
+      "target": "app/public/assets/js/ui.js",
+      "type": "use"
+    },
+    {
+      "source": "app/public/assets/js/renderer.js",
+      "target": "app/public/assets/js/graphBuilder.js",
+      "type": "use"
+    },
+    {
+      "source": "app/public/assets/js/renderer.js",
+      "target": "app/public/assets/js/colorsByCat.js",
+      "type": "use"
+    },
+    {
+      "source": "app/public/assets/js/renderer.js",
+      "target": "app/public/assets/js/renderGenTables.js",
+      "type": "use"
+    },
+    {
+      "source": "app/public/assets/js/api.js",
+      "target": "app/public/assets/js/parse.js",
+      "type": "use"
+    },
+    {
+      "source": "app/public/assets/js/state.js",
+      "target": "app/public/assets/js/keys.js",
+      "type": "use"
+    },
+    {
+      "source": "app/public/assets/js/chart.js",
+      "target": "app/public/assets/js/keys.js",
+      "type": "use"
+    },
+    {
+      "source": "app/public/assets/js/chart.js",
+      "target": "app/public/assets/js/timing.js",
+      "type": "use"
+    },
+    {
+      "source": "app/public/assets/js/legend.js",
+      "target": "app/public/assets/js/timing.js",
+      "type": "use"
+    },
+    {
+      "source": "app/public/assets/js/legend.js",
+      "target": "app/public/assets/js/legend-model.js",
+      "type": "use"
+    },
+    {
+      "source": "app/public/assets/js/legend.js",
+      "target": "app/public/assets/js/legend-render.js",
+      "type": "use"
+    },
+    {
+      "source": "app/public/assets/js/legend.js",
+      "target": "app/public/assets/js/legend-simulation.js",
+      "type": "use"
+    },
+    {
+      "source": "app/public/assets/js/aggregates.js",
+      "target": "app/public/assets/js/keys.js",
+      "type": "use"
+    },
+    {
+      "source": "app/public/assets/js/view-derivations.js",
+      "target": "app/public/assets/js/keys.js",
+      "type": "use"
+    },
+    {
+      "source": "app/public/assets/js/barHoverController.js",
+      "target": "app/public/assets/js/renderLegendHalo.js",
+      "type": "use"
+    },
+    {
+      "source": "app/public/assets/js/graphBuilder.js",
+      "target": "app/public/assets/js/keys.js",
+      "type": "use"
+    },
+    {
+      "source": "app/public/assets/js/renderGenTables.js",
+      "target": "app/public/assets/js/taxEngineDE.js",
+      "type": "use"
+    },
+    {
+      "source": "app/public/assets/js/parse.js",
+      "target": "app/public/assets/js/keys.js",
+      "type": "use"
+    },
+    {
+      "source": "app/public/assets/js/legend-model.js",
+      "target": "app/public/assets/js/keys.js",
+      "type": "use"
+    },
+    {
+      "source": "app/public/assets/js/legend-render.js",
+      "target": "app/public/assets/js/moneytone.js",
       "type": "use"
     }
   ]

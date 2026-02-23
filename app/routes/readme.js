@@ -23,26 +23,28 @@ const router = express.Router();
 
 router.get("/readme", (req, res) => {
   try {
-    const projectRoot = process.cwd();
-
+    // ---------------------------------------------------------------------
+    // Inputs
+    // ---------------------------------------------------------------------
+    // file: project-relative path within the *selected app* (graph node id)
+    // appId: selects which app rootDir to use (from app/config/apps.json)
     const fileRelRaw = String(req.query?.file || "").trim();
+    const appId = String(req.query?.appId || "").trim();
+
     if (!fileRelRaw) return res.status(400).send("file query param missing");
 
     // Normalize URL-ish paths and Windows separators to forward slash
     const fileRel = normalizeRel(fileRelRaw);
 
-    // Resolve absolute and enforce project boundary
-    const fileAbs = path.resolve(projectRoot, fileRel);
-    if (!isInsideRoot(fileAbs, projectRoot)) {
-      return res.status(400).send("file outside project root");
-    }
-
-    // ------------------------------------------------------------
-    // 1) Special-case: global help file
-    // ------------------------------------------------------------
-    // You said you created: app/public/readme.md
-    // Accept a few equivalent inputs to reduce friction.
+    // ---------------------------------------------------------------------
+    // 1) Special-case: global help doc (NodeAnalyzer UI help)
+    // ---------------------------------------------------------------------
+    // You created: app/public/readme.md
+    // This endpoint must ALSO work for analyzed apps, so help is a separate mode.
+    // We accept a few equivalent inputs to reduce friction.
+    const analyzerRoot = process.cwd();
     const HELP_RELS = new Set([
+      "help",
       "app/public/readme.md",
       "app/public/README.md",
       "public/readme.md",
@@ -50,20 +52,41 @@ router.get("/readme", (req, res) => {
     ]);
 
     if (HELP_RELS.has(fileRel)) {
-      const helpAbs = path.resolve(projectRoot, fileRel);
+      const helpAbs = path.resolve(analyzerRoot, "app/public/readme.md");
       const out = readFileIfExists(helpAbs);
       if (!out) return res.json({ found: false });
 
       return res.json({
         found: true,
-        readmePath: toRelPosix(projectRoot, helpAbs),
+        readmePath: toRelPosix(analyzerRoot, helpAbs),
         markdown: out
       });
     }
 
-    // ------------------------------------------------------------
-    // 2) Validate target exists (for non-help requests)
-    // ------------------------------------------------------------
+    // ---------------------------------------------------------------------
+    // 2) Resolve target project root (analyzed app)
+    // ---------------------------------------------------------------------
+    // IMPORTANT:
+    // Graph nodes are relative to the *analyzed app rootDir*, NOT to NodeAnalyzer.
+    // Therefore, we MUST resolve fileRel under that selected app root.
+    if (!appId) {
+      return res.status(400).send("appId query param missing");
+    }
+
+    const appRootAbs = resolveAppRootAbs(appId);
+    if (!appRootAbs) {
+      return res.status(400).send(`Unknown appId: ${appId}`);
+    }
+
+    // Resolve absolute and enforce project boundary
+    const fileAbs = path.resolve(appRootAbs, fileRel);
+    if (!isInsideRoot(fileAbs, appRootAbs)) {
+      return res.status(400).send("file outside target app rootDir");
+    }
+
+    // ---------------------------------------------------------------------
+    // 3) Validate target exists
+    // ---------------------------------------------------------------------
     if (!fs.existsSync(fileAbs)) {
       return res.status(404).send("file not found");
     }
@@ -71,21 +94,21 @@ router.get("/readme", (req, res) => {
     // Starting directory: file's dir (or itself if already a directory)
     let dir = fs.statSync(fileAbs).isDirectory() ? fileAbs : path.dirname(fileAbs);
 
-    // ------------------------------------------------------------
-    // 3) Walk upward for README (case-sensitive + case-insensitive fallback)
-    // ------------------------------------------------------------
+    // ---------------------------------------------------------------------
+    // 4) Walk upward for README (README.md + readme.md)
+    // ---------------------------------------------------------------------
     while (true) {
       const readmeAbs = findReadmeInDir(dir);
       if (readmeAbs) {
         const markdown = fs.readFileSync(readmeAbs, "utf8");
         return res.json({
           found: true,
-          readmePath: toRelPosix(projectRoot, readmeAbs),
+          readmePath: toRelPosix(appRootAbs, readmeAbs),
           markdown
         });
       }
 
-      if (samePath(dir, projectRoot)) break;
+      if (samePath(dir, appRootAbs)) break;
 
       const parent = path.dirname(dir);
       if (parent === dir) break;
@@ -103,6 +126,20 @@ export default router;
 /* ====================================================================== */
 /* Helpers                                                                */
 /* ====================================================================== */
+
+function loadAppsConfig() {
+  const cfgPath = path.join(process.cwd(), "app/config/apps.json");
+  if (!fs.existsSync(cfgPath)) return { apps: [] };
+  return JSON.parse(fs.readFileSync(cfgPath, "utf8"));
+}
+
+function resolveAppRootAbs(appId) {
+  const cfg = loadAppsConfig();
+  const app = (cfg.apps || []).find((a) => String(a.id || "") === String(appId || ""));
+  const rootDir = String(app?.rootDir || "").trim();
+  if (!rootDir) return null;
+  return path.resolve(rootDir);
+}
 
 function normalizeRel(p) {
   // Remove leading slashes so "/app/public/readme.md" still resolves within root
@@ -140,18 +177,19 @@ function readFileIfExists(absPath) {
 }
 
 function findReadmeInDir(dirAbs) {
-  // Prefer conventional README.md, but also accept readme.md (your new file)
-  const candidates = ["README.md", "readme.md"];
+  // Prefer conventional README.md, but also accept common variants.
+  const candidates = ["README.md", "readme.md", "Readme.md"];
 
   for (const name of candidates) {
     const p = path.join(dirAbs, name);
-    if (fs.existsSync(p)) {
-      try {
-        if (fs.statSync(p).isFile()) return p;
-      } catch {
-        // ignore
-      }
+    if (!fs.existsSync(p)) continue;
+
+    try {
+      if (fs.statSync(p).isFile()) return p;
+    } catch {
+      // ignore
     }
   }
+
   return null;
 }

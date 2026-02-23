@@ -134,7 +134,13 @@
 
     root.innerHTML = `<div class="text-muted small">Searching…</div>`;
 
-    const url = `/readme?file=${encodeURIComponent(fileRel)}`;
+    // IMPORTANT:
+    // The backend must search READMEs inside the *analyzed app's* rootDir, not inside NodeAnalyzer.
+    // Therefore we pass the currently selected appId so the server can resolve the correct project root.
+    const appId = getSelectedAppId();
+    const url = appId
+      ? `/readme?appId=${encodeURIComponent(appId)}&file=${encodeURIComponent(fileRel)}`
+      : `/readme?file=${encodeURIComponent(fileRel)}`;
 
     let data = null;
     try {
@@ -237,7 +243,8 @@
     const pathEl = panel.querySelector(".help-float__path");
     if (!body) return;
 
-    const r = await fetch("/help");
+    const appId = getSelectedAppId();
+    const r = await fetch(appId ? `/help?appId=${encodeURIComponent(appId)}` : "/help");
     if (!r.ok) throw new Error(`Help HTTP ${r.status}`);
     const data = await r.json();
 
@@ -504,9 +511,8 @@
     byId("run")?.addEventListener("click", () => scheduleAnalysis(0));
 
     ensurePanelsExist();
-    // Help button (optional). If the button exists in the current index.html,
-    // it will open a floating draggable help panel rendered from /help.
-    byId("helpBtn")?.addEventListener("click", openHelpPanel);
+    // Help button (supports #helpBtn and legacy #help)
+    (byId("helpBtn") || byId("help"))?.addEventListener("click", openHelpPanel);
     loadApps();
   }
 
