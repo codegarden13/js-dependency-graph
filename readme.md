@@ -3,7 +3,7 @@
 *js-dependency-graph* node app for interactive static analysis of JS/Typescript web-apps (using dependency graphs for navigation).
 
 ## Features
-![screenshot](assets/logo.png)
+![screenshot](assets/NodeAnalyzer_ScS01.png)
 
 - Entrypoint-based dependency graph
 - LOC + heuristic complexity
