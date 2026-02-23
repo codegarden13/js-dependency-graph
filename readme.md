@@ -1,50 +1,14 @@
 # NodeAnalyzer
 
-*js-dependency-graph* node app for interactive static analysis of JS/Typescript web-apps (using dependency graphs for navigation).
-
-## Features
 ![screenshot](assets/NodeAnalyzer_ScS01.png)
 
-- Entrypoint-based dependency graph
-- LOC + heuristic complexity
+Eine funktionierende App ohne Dokumentation ist nicht nur **wertlos**, sondern ein **Risiko**.
 
+Hier setzt NodeAnalyzer an: Ein AST / Babel basierter Analyzer für JavaScript- und TypeScript-Webanwendungen, gedacht für Entwickler oder Entwicklerteams, die eine gemeinsame Echtzeitbasis ihrer DEV - Applikation verwenden wollen.
 
-## What it does
+Die Anwendung findet den Entrypoint der zu analysierenden App, erzeugt ab da einen interaktiven Abhängigkeitsgraphen und visualisiert Projektstruktur, Module, Funktionen, relevante Assets, readme-files und Funktionskommentare. Wo die Projekte liegen, ist dabei irrelevant.
 
-- Parses JavaScript / TypeScript source code
-- Uses static analysis (AST-based, Babel)
-- Builds dependency graphs
-- Extracts file-level metrics and documentation
-- Visualizes architecture & structure (not runtime behavior)
-
-## Run
-```bash
-npm install
-node app/server.js
-```
-## Tec
-
-public/assets/metrics/code-structure.json
-
-```json
-{ "nodes": [ ... ], "links": [ ... ] }
-```
-
-will be rendered by d3.js
-
-
-
-## Future
-- external package nodes (`package:express`)
-- tsconfig path alias resolution
-
-# NodeAnalyzer
-
-NodeAnalyzer ist ein AST-basierter Architektur- und Struktur-Analyzer für JavaScript- und TypeScript-Webanwendungen.
-
-Die Anwendung erzeugt aus einem definierten Einstiegspunkt (Entrypoint) einen interaktiven Abhängigkeitsgraphen und visualisiert Projektstruktur, Module, Funktionen und relevante Assets.
-
----
+Apps und deren Speicherort werden per derzeit per seat in der config definiert - und natürlich könnte man diese Konfiguration auch auf ein gemeinsam genutztes Abteilungsshare legen.
 
 ## Aktueller Funktionsumfang
 
@@ -53,35 +17,16 @@ Die Anwendung erzeugt aus einem definierten Einstiegspunkt (Entrypoint) einen in
 - Datei- und Funktionsknoten im Graph
 - Import-/Include-Beziehungen
 - Heuristische Erkennung von Assets (HTML, CSS, JSON, CSV etc.)
-- Auto-Modus für Single-File-Apps
-- Erweiterte Verzeichnis-Expansion (z. B. public/, config/, data/)
 - LOC- und einfache Komplexitätsmetriken
-- D3-basierte interaktive Visualisierung
+- D3-basierte interaktive Visualisierung der **Architektur** (nicht des Laufzeitverhaltens).
 
-Ziel ist die Visualisierung der **Architektur**, nicht des Laufzeitverhaltens.
 
----
-
-## Start
-
-```bash
-npm install
-node app/server.js
-```
-
-Anschließend im Browser öffnen (Standard: http://localhost:3003).
-
----
 
 ## Output
 
-Die Analyse erzeugt eine strukturierte JSON-Datei:
+Die Analyse erzeugt eine strukturierte JSON-Datei, die dann mit D3 gerendert wird:
 
-```
 app/public/output/code-structure.json
-```
-
-Format:
 
 ```json
 {
@@ -90,12 +35,11 @@ Format:
 }
 ```
 
-Diese wird automatisch mit D3 gerendert.
+## Start
 
----
+```bash
+npm install
+node app/server.js
+```
 
-## Perspektive
-
-- Externe Package-Nodes (z. B. `package:express`)
-- Verbesserte Heuristiken für Asset- und Konfigurations-Erkennung
-- Erweiterte Funktions- und Call-Graph-Analyse
+Im Browser öffnen (Standard: http://localhost:3003).
