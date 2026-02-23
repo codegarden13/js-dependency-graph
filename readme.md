@@ -1,8 +1,8 @@
 # NodeAnalyzer makes app architecture visible.
 
-You really own *undocumented apps or websites* ? **Big risk — even if all works.**
+You own *undocumented apps or websites* ? **Big risk — even if all works.**
 
-![screenshot](assets/NodeAnalyzer_ScS01.png)
+![screenshot](assets/NodeAnalyzer_ScS02.png)
 
 ---
 
