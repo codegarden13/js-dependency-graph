@@ -1,4 +1,4 @@
-# NodeAnalyzer makes architecture visible.
+# NodeAnalyzer makes app architecture visible.
 
 You really own *undocumented apps or websites* ? **Big risk — even if all works.**
 
