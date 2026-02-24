@@ -176,18 +176,56 @@ function readFileIfExists(absPath) {
   }
 }
 
+/**
+ * findReadmeInDir
+ * ===============
+ *
+ * Purpose
+ * -------
+ * Locate a README file inside a given directory.
+ *
+ * Strategy
+ * --------
+ * - Prefer conventional naming (README.md).
+ * - Accept common case variations (cross-platform friendliness).
+ * - Fail safely (no thrown errors on permission/stat issues).
+ *
+ * Design Notes
+ * ------------
+ * - Case-sensitive filesystems (Linux) require explicit variants.
+ * - We intentionally do NOT perform recursive lookup here.
+ * - Caller is responsible for walking parent directories if needed.
+ *
+ * @param {string} dirAbs  Absolute directory path
+ * @returns {string|null}  Absolute path to README file or null if none found
+ */
 function findReadmeInDir(dirAbs) {
-  // Prefer conventional README.md, but also accept common variants.
-  const candidates = ["README.md", "readme.md", "Readme.md"];
+  if (!dirAbs || typeof dirAbs !== "string") {
+    return null;
+  }
 
-  for (const name of candidates) {
-    const p = path.join(dirAbs, name);
-    if (!fs.existsSync(p)) continue;
+  // Ordered by convention priority
+  const CANDIDATES = [
+    "README.md",   // canonical
+    "readme.md",   // common lowercase variant
+    "Readme.md"    // Windows/macOS mixed-case variant
+  ];
+
+  for (const filename of CANDIDATES) {
+    const absPath = path.join(dirAbs, filename);
 
     try {
-      if (fs.statSync(p).isFile()) return p;
+      if (!fs.existsSync(absPath)) continue;
+
+      const stat = fs.statSync(absPath);
+      if (stat.isFile()) {
+        return absPath;
+      }
     } catch {
-      // ignore
+      // Intentionally ignore filesystem errors:
+      // - Permission issues
+      // - Race conditions (file deleted between existsSync + statSync)
+      // Continue scanning remaining candidates.
     }
   }
 

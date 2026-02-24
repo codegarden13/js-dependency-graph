@@ -3,17 +3,26 @@
  *
  * Responsibilities:
  * - Load app presets (/apps) into a compact selectable list (#appList)
- * - Auto-run analysis when app selection changes
+ * - Auto-run analysis when selecting an app (no Analyze button)
  * - Define window.onGraphNodeSelected(node) hook used by the D3 graph
  * - Render README + selection info panels
+ * - Subscribe to SSE (/events) and mark changed nodes (color + timestamp)
+ *
+ * Notes:
+ * - Requires marked + DOMPurify for README HTML rendering (optional fallback)
+ * - Expects a hidden input: <input type="hidden" id="appSelect" value="">
+ * - Expects: #appList, #status, #graphInfoPanel, #readmePanel, #codeStructureSvg
+ * - Expects D3 renderer global: window.initcodeStructureChart(svgId, metrics)
+ * - Expects D3 change hook global: window.graphMarkChanged({id, ev, at})
  */
 (function () {
   "use strict";
 
-  /* =======================================================================
-   * DOM helpers
-   * ======================================================================= */
+  /* ======================================================================= */
+  /* DOM helpers                                                              */
+  /* ======================================================================= */
 
+  /** Get exactly one element by id; warns if duplicates exist. */
   function byId(id) {
     const list = document.querySelectorAll("#" + id);
     if (list.length !== 1) {
@@ -22,15 +31,25 @@
     return /** @type {HTMLElement|null} */ (list[0] || null);
   }
 
+  /** Minimal HTML escape for safe innerHTML templating. */
   function esc(s) {
     return String(s ?? "").replace(/[&<>"']/g, (c) =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
     );
   }
 
+  let __warnedStatusDup = false;
   function setStatus(text) {
-    const el = byId("status");
-    if (el) el.textContent = text || "";
+    const els = document.querySelectorAll("#status");
+    if (els.length > 1 && !__warnedStatusDup) {
+      __warnedStatusDup = true;
+      console.warn(`Expected 1 #status, found ${els.length}. Updating all.`);
+    }
+    els.forEach((el) => {
+      try {
+        el.textContent = text || "";
+      } catch {}
+    });
   }
 
   function ensurePanelsExist() {
@@ -44,10 +63,15 @@
     return true;
   }
 
-  /* =======================================================================
-   * Fetch helpers
-   * ======================================================================= */
+  /* ======================================================================= */
+  /* Fetch helpers                                                            */
+  /* ======================================================================= */
 
+  /**
+   * Fetch JSON and throw on non-2xx.
+   * @param {string} url
+   * @param {RequestInit} [init]
+   */
   async function fetchJson(url, init) {
     const r = await fetch(url, init);
     if (!r.ok) {
@@ -59,6 +83,12 @@
     return r.json();
   }
 
+  /**
+   * Fetch JSON but treat 404 as "not found".
+   * @param {string} url
+   * @param {RequestInit} [init]
+   * @returns {Promise<any|null>}
+   */
   async function fetchJsonAllow404(url, init) {
     const r = await fetch(url, init);
     if (r.status === 404) return null;
@@ -71,9 +101,9 @@
     return r.json();
   }
 
-  /* =======================================================================
-   * Panels
-   * ======================================================================= */
+  /* ======================================================================= */
+  /* Panels                                                                   */
+  /* ======================================================================= */
 
   function clearPanels() {
     const rp = byId("readmePanel");
@@ -82,6 +112,11 @@
     if (ip) ip.innerHTML = "";
   }
 
+  /**
+   * Render selection details immediately on click.
+   * Expects #graphInfoPanel to be the BODY element of the "Selection" card.
+   * @param {any} node
+   */
   function renderInfoPanel(node) {
     const root = byId("graphInfoPanel");
     if (!root) return;
@@ -100,6 +135,9 @@
 
     const comment = node.headerComment ?? node.fileComment ?? node.comment ?? "";
 
+    const lastEv = node._lastChangeEv ?? "";
+    const lastAt = node._lastChangedAt ?? "";
+
     root.innerHTML = `
       <div class="d-grid gap-2">
         <div class="small text-muted"><strong>ID:</strong> ${esc(id)}</div>
@@ -109,6 +147,8 @@
 
         <div class="small text-muted"><strong>Lines:</strong> ${esc(lines)}</div>
         <div class="small text-muted"><strong>Complexity:</strong> ${esc(cx)}</div>
+
+        ${lastAt ? `<div class="small text-muted"><strong>Last change:</strong> ${esc(lastEv)} @ ${esc(lastAt)}</div>` : ""}
 
         <hr class="my-2" />
 
@@ -122,6 +162,12 @@
     `;
   }
 
+  /**
+   * Render README for a selected node.
+   * Expects #readmePanel to be the BODY element of the "README" card.
+   * @param {any} node
+   * @param {AbortSignal} signal
+   */
   async function renderReadmeForNode(node, signal) {
     const root = byId("readmePanel");
     if (!root) return;
@@ -134,13 +180,14 @@
 
     root.innerHTML = `<div class="text-muted small">Searching…</div>`;
 
-    // IMPORTANT:
-    // The backend must search READMEs inside the *analyzed app's* rootDir, not inside NodeAnalyzer.
-    // Therefore we pass the currently selected appId so the server can resolve the correct project root.
-    const appId = getSelectedAppId();
-    const url = appId
-      ? `/readme?appId=${encodeURIComponent(appId)}&file=${encodeURIComponent(fileRel)}`
-      : `/readme?file=${encodeURIComponent(fileRel)}`;
+ const appId = String(byId("appSelect")?.value || "").trim();
+if (!appId) {
+  // Kein aktives App-Selection → UI sauber halten (oder Hinweis anzeigen)
+  root.innerHTML = `<div class="text-muted small">Select an app to load README.</div>`;
+  return;
+}
+
+const url = `/readme?appId=${encodeURIComponent(appId)}&file=${encodeURIComponent(fileRel)}`;
 
     let data = null;
     try {
@@ -169,184 +216,51 @@
     `;
   }
 
-  /* =======================================================================
-   * Help (floating draggable panel)
-   * ======================================================================= */
+  /* ======================================================================= */
+  /* Graph state helpers                                                     */
+  /* ======================================================================= */
 
-  let helpPanelEl = null;
+  /**
+   * Return the currently rendered graph node object for an id (if available).
+   * This is important because the renderer may mutate node objects (e.g. live-change timestamps).
+   * @param {string} id
+   */
+  function getRenderedNodeById(id) {
+    const nodes = window.lastGraphState?.nodes;
+    if (!Array.isArray(nodes) || !id) return null;
+    return nodes.find((n) => n && n.id === id) || null;
+  }
 
-  function closeHelpPanel() {
-    if (helpPanelEl) {
-      helpPanelEl.remove();
-      helpPanelEl = null;
+  /**
+   * Re-render panels for the currently selected node, but using the latest node instance
+   * from the rendered graph state.
+   */
+  function refreshSelectedPanels() {
+    const selectedId = String(window.__selectedNode?.id || "").trim();
+    if (!selectedId) return;
+
+    const latest = getRenderedNodeById(selectedId) || window.__selectedNode;
+    window.__selectedNode = latest;
+
+    if (ensurePanelsExist()) {
+      renderInfoPanel(latest);
+
+      // Refresh README too (keep behavior consistent)
+      if (activeReadmeController) activeReadmeController.abort();
+      activeReadmeController = new AbortController();
+      renderReadmeForNode(latest, activeReadmeController.signal).catch(() => {});
     }
   }
 
-  function openHelpPanel() {
-    // If already open, just bring to front.
-    if (helpPanelEl) {
-      helpPanelEl.style.zIndex = String(getNextZ());
-      return;
-    }
-
-    const panel = document.createElement("div");
-    panel.className = "help-float";
-    panel.style.position = "fixed";
-    panel.style.right = "16px";
-    panel.style.top = "84px";
-    panel.style.width = "560px";
-    panel.style.maxWidth = "calc(100vw - 32px)";
-    panel.style.maxHeight = "calc(100vh - 120px)";
-    panel.style.background = "#fff";
-    panel.style.border = "1px solid rgba(0,0,0,.12)";
-    panel.style.borderRadius = "12px";
-    panel.style.boxShadow = "0 10px 30px rgba(0,0,0,.18)";
-    panel.style.overflow = "hidden";
-    panel.style.zIndex = String(getNextZ());
-
-    panel.innerHTML = `
-      <div class="help-float__hdr" style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:#f8f9fa;border-bottom:1px solid rgba(0,0,0,.08);cursor:move;user-select:none;">
-        <div style="font-weight:600;font-size:13px;">Help</div>
-        <div class="help-float__path" style="margin-left:auto;font-size:12px;color:#6c757d;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></div>
-        <button type="button" class="help-float__close btn btn-sm btn-outline-secondary" style="padding:2px 8px;">Close</button>
-      </div>
-      <div class="help-float__body" style="padding:12px;overflow:auto;max-height:calc(100vh - 180px);">
-        <div class="text-muted small">Loading…</div>
-      </div>
-    `;
-
-    document.body.appendChild(panel);
-    helpPanelEl = panel;
-
-    // Close button
-    panel.querySelector(".help-float__close")?.addEventListener("click", closeHelpPanel);
-
-    // ESC closes
-    const onKey = (e) => {
-      if (e.key === "Escape") closeHelpPanel();
-    };
-    window.addEventListener("keydown", onKey, { once: true });
-
-    // Dragging
-    makeDraggable(panel, panel.querySelector(".help-float__hdr"));
-
-    // Load markdown via /help (server returns app/public/readme.md)
-    loadHelpIntoPanel(panel).catch((e) => {
-      console.warn("Help load failed:", e);
-      const body = panel.querySelector(".help-float__body");
-      if (body) body.innerHTML = `<div class="text-danger small">Failed to load help.</div>`;
-    });
-  }
-
-  async function loadHelpIntoPanel(panel) {
-    const body = panel.querySelector(".help-float__body");
-    const pathEl = panel.querySelector(".help-float__path");
-    if (!body) return;
-
-    const appId = getSelectedAppId();
-    const r = await fetch(appId ? `/help?appId=${encodeURIComponent(appId)}` : "/help");
-    if (!r.ok) throw new Error(`Help HTTP ${r.status}`);
-    const data = await r.json();
-
-    const md = String(data?.markdown || "");
-    const rawHtml = window.marked?.parse ? window.marked.parse(md) : `<pre>${esc(md)}</pre>`;
-    const safeHtml = window.DOMPurify?.sanitize ? window.DOMPurify.sanitize(rawHtml) : rawHtml;
-
-    if (pathEl) pathEl.textContent = String(data?.helpPath || data?.readmePath || "readme.md");
-
-    body.innerHTML = `<div class="content markdown">${safeHtml}</div>`;
-  }
-
-  // Simple z-index increaser so the help panel can float above everything.
-  let __z = 1000;
-  function getNextZ() {
-    __z += 1;
-    return __z;
-  }
-
-  function makeDraggable(panel, handle) {
-    if (!panel || !handle) return;
-
-    let dragging = false;
-    let startX = 0;
-    let startY = 0;
-    let startLeft = 0;
-    let startTop = 0;
-
-    const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
-
-    const onDown = (e) => {
-      // left mouse only
-      if (e.type === "mousedown" && e.button !== 0) return;
-
-      dragging = true;
-      panel.style.zIndex = String(getNextZ());
-
-      const rect = panel.getBoundingClientRect();
-      startLeft = rect.left;
-      startTop = rect.top;
-
-      const pt = getPoint(e);
-      startX = pt.x;
-      startY = pt.y;
-
-      // Convert right/top anchoring to left/top for dragging
-      panel.style.right = "auto";
-      panel.style.bottom = "auto";
-      panel.style.left = `${startLeft}px`;
-      panel.style.top = `${startTop}px`;
-
-      window.addEventListener("mousemove", onMove);
-      window.addEventListener("mouseup", onUp);
-      window.addEventListener("touchmove", onMove, { passive: false });
-      window.addEventListener("touchend", onUp);
-
-      e.preventDefault?.();
-    };
-
-    const onMove = (e) => {
-      if (!dragging) return;
-      const pt = getPoint(e);
-      const dx = pt.x - startX;
-      const dy = pt.y - startY;
-
-      const vw = window.innerWidth;
-      const vh = window.innerHeight;
-      const rect = panel.getBoundingClientRect();
-
-      const nextLeft = clamp(startLeft + dx, 8, vw - rect.width - 8);
-      const nextTop = clamp(startTop + dy, 8, vh - rect.height - 8);
-
-      panel.style.left = `${nextLeft}px`;
-      panel.style.top = `${nextTop}px`;
-
-      if (e.type === "touchmove") e.preventDefault();
-    };
-
-    const onUp = () => {
-      dragging = false;
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-      window.removeEventListener("touchmove", onMove);
-      window.removeEventListener("touchend", onUp);
-    };
-
-    const getPoint = (e) => {
-      const te = e.touches && e.touches[0];
-      return te ? { x: te.clientX, y: te.clientY } : { x: e.clientX, y: e.clientY };
-    };
-
-    handle.addEventListener("mousedown", onDown);
-    handle.addEventListener("touchstart", onDown, { passive: false });
-  }
-
-  /* =======================================================================
-   * D3 integration hook (global)
-   * ======================================================================= */
+  /* ======================================================================= */
+  /* D3 integration hook (global)                                             */
+  /* ======================================================================= */
 
   let activeReadmeController = null;
 
   window.onGraphNodeSelected = function onGraphNodeSelected(node) {
+    window.__selectedNode = node || null;
+
     if (!ensurePanelsExist()) return;
 
     renderInfoPanel(node);
@@ -362,9 +276,9 @@
     });
   };
 
-  /* =======================================================================
-   * Apps list (compact selectable rows)
-   * ======================================================================= */
+  /* ======================================================================= */
+  /* Apps list (compact selectable rows)                                      */
+  /* ======================================================================= */
 
   function setSelectedAppId(appId) {
     const hidden = /** @type {HTMLInputElement|null} */ (byId("appSelect"));
@@ -376,17 +290,10 @@
     return String(hidden?.value || "").trim();
   }
 
-  function setAppsListDisabled(disabled) {
-    const list = byId("appList");
-    if (!list) return;
-    list.style.pointerEvents = disabled ? "none" : "";
-    list.style.opacity = disabled ? "0.65" : "";
-  }
-
-  let analyzeTimer = null;
-  function scheduleAnalysis(delayMs = 150) {
-    if (analyzeTimer) clearTimeout(analyzeTimer);
-    analyzeTimer = setTimeout(() => runAnalysis(), delayMs);
+  function setAppActiveRow(listEl, appId) {
+    listEl.querySelectorAll(".appRow").forEach((el) => {
+      el.classList.toggle("isActive", el.dataset.appId === appId);
+    });
   }
 
   async function loadApps() {
@@ -416,6 +323,7 @@
     const current = getSelectedAppId() || apps[0].id;
     setSelectedAppId(current);
 
+    // Header row (keep it compact; style .appHdr/.appRow in CSS)
     list.innerHTML = `
       <div class="appHdr">
         <div></div>
@@ -434,85 +342,167 @@
       row.innerHTML = `
         <span class="appDot" aria-hidden="true"></span>
         <div class="appName" title="${esc(a.name || a.id)}">${esc(a.name || a.id)}</div>
-        <div class="appMeta" title="${esc(a.entry || "")}">${esc(a.entry || "")}</div>
+        <div class="appMeta" title="${esc(a.entry || "(auto)")}" >${esc(a.entry || "(auto)")}</div>
         <div class="appMeta appUrl" title="${esc(a.url || "")}">${esc(a.url || "")}</div>
       `;
 
       row.addEventListener("click", () => {
-        // Update selection
-        setSelectedAppId(a.id);
-        list.querySelectorAll(".appRow").forEach((el) => el.classList.remove("isActive"));
-        row.classList.add("isActive");
-
-        // Auto-run analysis on selection change
-        scheduleAnalysis(100);
+        // Selecting an app triggers analysis immediately
+        const newId = String(a.id || "");
+        setSelectedAppId(newId);
+        setAppActiveRow(list, newId);
+        runAnalysis().catch((e) => console.error(e));
       });
 
       list.appendChild(row);
     }
 
-    // Auto-run analysis once for initial selection
-    scheduleAnalysis(0);
+    // Auto-analyze initially selected app (first load)
+    // Guard: only run if we haven't rendered a graph yet.
+    setTimeout(() => {
+      const hasGraph = Array.isArray(window.lastGraphState?.nodes) && window.lastGraphState.nodes.length > 0;
+      if (!hasGraph) runAnalysis().catch((e) => console.error(e));
+    }, 0);
   }
 
-  /* =======================================================================
-   * Analysis (auto-run + abortable)
-   * ======================================================================= */
+  /* ======================================================================= */
+  /* Live Change Feed (SSE)                                                   */
+  /* ======================================================================= */
 
-  let activeAnalyzeController = null;
+  let currentRunToken = null;
+  /** @type {EventSource|null} */
+  let sse = null;
+
+  function startLiveEvents() {
+    if (sse) return;
+
+    sse = new EventSource("/events");
+
+    sse.addEventListener("hello", (ev) => {
+      try {
+        const msg = JSON.parse(ev.data || "{}");
+        currentRunToken = msg?.activeAnalysis?.runToken || null;
+      } catch {}
+    });
+
+    sse.addEventListener("analysis", (ev) => {
+      try {
+        const msg = JSON.parse(ev.data || "{}");
+        currentRunToken = msg?.runToken || null;
+      } catch {}
+    });
+
+    sse.addEventListener("fs-change", (ev) => {
+      let msg = null;
+      try {
+        msg = JSON.parse(ev.data || "{}");
+      } catch {
+        return;
+      }
+
+      // Ignore stale events after re-analyze
+      if (currentRunToken && msg.runToken && msg.runToken !== currentRunToken) return;
+
+      // Mark node in graph (renderer supplies this)
+      if (typeof window.graphMarkChanged === "function") {
+        window.graphMarkChanged({
+          id: msg.id,
+          ev: msg.ev,
+          at: msg.at
+        });
+      }
+
+      // If the currently selected node changed, refresh panels using the latest node instance
+      if (String(window.__selectedNode?.id || "") === String(msg.id || "")) {
+        refreshSelectedPanels();
+      }
+    });
+
+    sse.addEventListener("fs-watch-error", (ev) => {
+      try {
+        const msg = JSON.parse(ev.data || "{}");
+        console.warn("[SSE] fs-watch-error:", msg?.message || msg);
+      } catch {
+        console.warn("[SSE] fs-watch-error:", ev.data);
+      }
+    });
+
+    sse.onerror = () => {
+      // EventSource auto-reconnects; keep UI calm
+    };
+  }
+
+  /* ======================================================================= */
+  /* Analyze action (manual removed; runs on app selection)                    */
+  /* ======================================================================= */
+
+  let analyzeInFlight = false;
+  let analyzePending = false;
 
   async function runAnalysis() {
-    const appId = getSelectedAppId();
-    if (!appId) {
-      setStatus("Select an app first.");
+    // If a run is already in flight, remember that we need one more run afterwards.
+    if (analyzeInFlight) {
+      analyzePending = true;
       return;
     }
 
-    if (activeAnalyzeController) activeAnalyzeController.abort();
-    activeAnalyzeController = new AbortController();
-
-    setStatus("Running analysis…");
-    setAppsListDisabled(true);
+    analyzeInFlight = true;
+    analyzePending = false;
 
     try {
+      const appIdEl = /** @type {HTMLInputElement|null} */ (byId("appSelect"));
+      const appId = String(appIdEl?.value || "").trim();
+
+      if (!appId) {
+        setStatus("Select an app first.");
+        return;
+      }
+
+      setStatus("Running analysis…");
+
       const data = await fetchJson("/analyze", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ appId }),
-        signal: activeAnalyzeController.signal
+        body: JSON.stringify({ appId })
       });
 
-      const metrics = await fetchJson(data.metricsUrl, { signal: activeAnalyzeController.signal });
+      // Run token for SSE stale filtering
+      currentRunToken = data?.runToken || currentRunToken;
+
+      const metrics = await fetchJson(data.metricsUrl);
 
       if (typeof window.initcodeStructureChart !== "function") {
-        throw new Error("Graph renderer not loaded (initcodeStructureChart missing).");
+        throw new Error("Graph renderer not loaded (initcodeStructureChart missing). Check script order.");
       }
 
       clearPanels();
+      window.__selectedNode = null;
+
       window.initcodeStructureChart("codeStructureSvg", metrics);
 
       setStatus(`Done. Nodes: ${data.summary?.nodes ?? "?"}, Links: ${data.summary?.links ?? "?"}`);
     } catch (e) {
-      if (e?.name === "AbortError") return;
       console.error("Analyze failed:", e);
       alert(`Analyze failed:\n${e.message || String(e)}`);
       setStatus("Analysis failed.");
     } finally {
-      setAppsListDisabled(false);
+      analyzeInFlight = false;
+
+      // If the user switched apps during the run, run once more with the latest selection.
+      if (analyzePending) {
+        analyzePending = false;
+        runAnalysis().catch((err) => console.error(err));
+      }
     }
   }
 
-  /* =======================================================================
-   * Bootstrap
-   * ======================================================================= */
+  /* ======================================================================= */
+  /* Bootstrap                                                                */
+  /* ======================================================================= */
 
   function init() {
-    // Analyze button is no longer required; if it still exists, keep it as fallback.
-    byId("run")?.addEventListener("click", () => scheduleAnalysis(0));
-
     ensurePanelsExist();
-    // Help button (supports #helpBtn and legacy #help)
-    (byId("helpBtn") || byId("help"))?.addEventListener("click", openHelpPanel);
+    startLiveEvents();
     loadApps();
   }
 

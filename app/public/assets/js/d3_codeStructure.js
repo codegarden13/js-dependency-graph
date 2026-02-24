@@ -23,6 +23,7 @@
  * - window.onGraphNodeSelected(node): optional async hook on node click
  * - window.NAV_REDIRECT_ON_CLICK === true: enables legacy redirects on click
  * - window.initHighlightId: if set, highlights a node after render
+ * - window.graphMarkChanged({ id, ev, at }): optional hook to mark a node as changed (live file watch)
  */
 
 (function () {
@@ -136,6 +137,22 @@
     // 6) Normalize incoming metrics (delegated)
     const { nodes, links } = window.CodeGraphData.normalize(metrics);
 
+    // ------------------------------------------------------------
+    // Live-change state (optional)
+    // ------------------------------------------------------------
+    // The backend can push file-change events (e.g. via SSE). The UI can call
+    // window.graphMarkChanged({ id, ev, at }) to update node visuals.
+    //
+    // Contract:
+    // - id: node id (project-relative path)
+    // - ev: change type (e.g. "change", "add", "unlink")
+    // - at: timestamp string (ISO or readable)
+    for (const n of nodes) {
+      if (typeof n._changed !== "boolean") n._changed = false;
+      if (typeof n._lastChangedAt !== "string") n._lastChangedAt = "";
+      if (typeof n._lastChangeEv !== "string") n._lastChangeEv = "";
+    }
+
     // 7) Visual encodings
     const getNodeColor = (d) => {
       const base = NODE_TYPE_COLORS[d.type] || NODE_TYPE_COLORS.file;
@@ -150,6 +167,12 @@
       const maxR = 26;
       return minR + (maxR - minR) * s;
     };
+
+    // Node fill color is based on type + complexity.
+    // Change highlighting is applied as an outline (stroke) so we never destroy the
+    // semantic encoding.
+    const getNodeStroke = (d) => (d._changed ? "#ff3b30" : "rgba(0,0,0,0.08)");
+    const getNodeStrokeWidth = (d) => (d._changed ? 3 : 1);
 
     // 8) Force simulation
     const simulation = d3.forceSimulation(nodes)
@@ -180,10 +203,12 @@
       .attr("class", "node");
 
     // Visible node body
-    nodeShapeSel.append("circle")
+    const nodeBodySel = nodeShapeSel.append("circle")
       .attr("class", "node-body")
       .attr("r", (d) => getRadius(d))
-      .attr("fill", (d) => getNodeColor(d));
+      .attr("fill", (d) => getNodeColor(d))
+      .attr("stroke", (d) => getNodeStroke(d))
+      .attr("stroke-width", (d) => getNodeStrokeWidth(d));
 
     // Transparent hit area (slightly larger, easier click/drag)
     nodeShapeSel.append("circle")
@@ -208,6 +233,21 @@
       .style("pointer-events", "none")
       .style("fill", "#444")
       .text((d) => (d.id || "").split("/").pop());
+
+    // ------------------------------------------------------------
+    // Internal repaint helper (used by live-change updates)
+    // ------------------------------------------------------------
+    function repaintNodes() {
+      nodeBodySel
+        .attr("fill", (d) => getNodeColor(d))
+        .attr("stroke", (d) => getNodeStroke(d))
+        .attr("stroke-width", (d) => getNodeStrokeWidth(d));
+
+      // Optional subtle label emphasis for changed nodes
+      labelSel
+        .style("font-weight", (d) => (d._changed ? "700" : "400"))
+        .style("fill", (d) => (d._changed ? "#111" : "#444"));
+    }
 
     // 12) Interactions (drag + click suppression + selection hook)
     window.CodeGraphInteractions.attachNodeInteractions(nodeShapeSel, {
@@ -265,8 +305,45 @@
 
     // 17) Expose state for debugging / external helpers
     svg.node().__graphState = { nodes, links, highlightLayer };
+    svg.node().__graphRenderRefs = {
+      svgId,
+      nodes,
+      nodeBodySel,
+      labelSel,
+      repaintNodes
+    };
+
     window.lastGraphState = { nodes, links, simulation };
     console.info("Graph state available at window.lastGraphState");
+
+    // ------------------------------------------------------------
+    // Public live-change hook
+    // ------------------------------------------------------------
+    // Marks exactly one node as "changed" (latest change wins), updates its
+    // timestamp metadata on the node object, and repaints node visuals.
+    //
+    // Usage (from app.js):
+    //   window.graphMarkChanged({ id: "app/server.js", ev: "change", at: "2026-02-24T10:12:00Z" })
+    window.graphMarkChanged = function graphMarkChanged(evt) {
+      try {
+        const id = String(evt?.id || "").trim();
+        if (!id) return;
+
+        // Clear previous change marker (latest change wins)
+        for (const n of nodes) n._changed = false;
+
+        const hit = nodes.find((n) => n.id === id);
+        if (!hit) return;
+
+        hit._changed = true;
+        hit._lastChangeEv = String(evt?.ev || "change");
+        hit._lastChangedAt = String(evt?.at || "");
+
+        repaintNodes();
+      } catch (e) {
+        console.warn("graphMarkChanged failed:", e);
+      }
+    };
 
     return { svg, nodes, links, simulation };
   };
@@ -282,11 +359,16 @@
     const state = svg.node().__graphState;
     if (!state) return;
 
+    const refs = svg.node().__graphRenderRefs;
+
     const { nodes, highlightLayer } = state;
     const d = nodes.find((n) => n.id === nodeId);
     if (!d) return;
 
     drawHighlight(d, highlightLayer);
+
+    // If live-change styling is active, ensure repaint is applied after external highlight.
+    if (refs?.repaintNodes) refs.repaintNodes();
   };
 
   /* ======================================================================

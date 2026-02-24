@@ -23,11 +23,16 @@ NodeAnalyzer helps technical leaders and teams:
 - Make refactoring decisions based on structural data
 - Reduce onboarding time for new developers
 - Create a shared architectural understanding across teams
-
 ---
+<details><summary><strong>Example Use Cases </strong>
+<br>(Developers, teams, CTO, Tech Lead)</summary>
 
+## Devteam Leader / You ?
+**Scenario:** Everyone wants a (Live) dashboard which presents the current status uf the teams projects - including structure, done and missing documentation and more.
+If someone from the team changes something in the common (remote) project, it gets visible:
+![visible remote change](assets/NodeAnalyzer_ScS03.png)
 
-## Example Use Case (CTO / Tech Lead Perspective)
+## CTO / Tech Lead Perspective
 
 **Scenario:**  
 A product team plans a major feature extension in a 4+ year old codebase. Delivery pressure is high, but architectural side effects are unclear.
@@ -48,10 +53,13 @@ A product team plans a major feature extension in a 4+ year old codebase. Delive
 
 Result: architectural decisions are based on structural data, not intuition.
 
+</details>
 
 
-<details>
-<summary><strong>Purpose: </strong><br>Helps teams - <strong> evaluate architectural structure, detect structural risks and understand dependency complexity in existing codebases.</strong></summary>
+
+---
+
+<details><summary><strong>Purpose: </strong><br>Helps teams - <strong> evaluate architectural structure, detect structural risks and understand dependency complexity in existing codebases.</strong></summary>
 
 
 AST-based (Babel) static analysis engine for JavaScript and TypeScript systems, designed for engineering teams who require architectural clarity:
@@ -124,7 +132,7 @@ Example:
 
 ---
 
-
+<details>
 ## Tech Stack
 
 - Node.js
@@ -133,6 +141,7 @@ Example:
 - JSON-based architecture model
 
 
+<details>
 ## Architecture
 
 NodeAnalyzer follows a layered architecture:
@@ -142,7 +151,7 @@ NodeAnalyzer follows a layered architecture:
 - Interactive visualization layer
 - JSON export service
 
-<details>
+
 <summary><strong>Projects Configuration: </strong><br>app/config/apps.json.</summary>
 
 Each target contains:

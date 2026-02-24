@@ -116,7 +116,7 @@
       "file": "app/public/main.js",
       "lines": 116,
       "complexity": 15,
-      "headerComment": "main.js\n=============================================================================\nOrchestrierung (Industrial Style)\n=============================================================================\nVerantwortung:\n- Boot der Applikation\n- Initialisierung von UI und Renderer\n- Zentrale Redraw-Koordination (Coalescing)\n\nArchitektur:\n- Renderer ist der EINZIGE Ort, der rendert\n- UI liefert nur Events + Render-API\n- Keine Persistenz, kein impliziter State\n=============================================================================",
+      "headerComment": "main.js\n=============================================================================\nOrchestrierung (Industrial Style)\n=============================================================================\nVerantwortung:\n- Boot der Applikation\n- Initialisierung von UI und Renderer\n- Zentrale Redraw-Koordination (Coalescing)",
       "kind": "file"
     },
     {
