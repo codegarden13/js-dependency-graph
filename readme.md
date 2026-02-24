@@ -133,15 +133,15 @@ Example:
 ---
 
 <details>
-## Tech Stack
+
+<summary><strong>Tech Stack and Architecture</strong><br></summary>
 
 - Node.js
 - Express
 - D3.js (Graph Rendering)
-- JSON-based architecture model
+- realtime JSON about architecture model of the targeted app
 
 
-<details>
 ## Architecture
 
 NodeAnalyzer follows a layered architecture:
@@ -151,7 +151,11 @@ NodeAnalyzer follows a layered architecture:
 - Interactive visualization layer
 - JSON export service
 
+</details>
 
+---
+
+<details>
 <summary><strong>Projects Configuration: </strong><br>app/config/apps.json.</summary>
 
 Each target contains:
