@@ -64,6 +64,58 @@
   }
 
   /* ======================================================================= */
+  /* MessageBox                                                               */
+  /* ======================================================================= */
+
+  /**
+   * Lightweight message box for analysis diagnostics.
+   * @param {{
+   *   title: string,
+   *   message: string,
+   *   details?: any,
+   *   severity?: "info"|"warn"|"error"
+   * }} cfg
+   */
+  function showMessageBox(cfg) {
+    const title = String(cfg?.title || "Message");
+    const message = String(cfg?.message || "");
+
+    let detailsText = "";
+    try {
+      if (cfg?.details != null) {
+        detailsText = JSON.stringify(cfg.details, null, 2);
+      }
+    } catch {
+      detailsText = String(cfg?.details || "");
+    }
+
+    const full =
+      detailsText && detailsText !== "null"
+        ? `${title}\n\n${message}\n\nDetails:\n${detailsText}`
+        : `${title}\n\n${message}`;
+
+    alert(full);
+  }
+
+  /**
+   * Show a dedicated message for unsupported targets (e.g. CommonJS-only projects).
+   * @param {any} data
+   */
+  function showUnsupportedTargetMessage(data) {
+    const reason = String(data?.reason || data?.analysisStatus || "unsupported");
+    const msg = String(
+      data?.message || "This target is not supported by the current analyzer mode."
+    );
+
+    showMessageBox({
+      title: "Unsupported target",
+      severity: "warn",
+      message: `${msg}\n\nReason: ${reason}`,
+      details: data?.details || data,
+    });
+  }
+
+  /* ======================================================================= */
   /* Fetch helpers                                                            */
   /* ======================================================================= */
 
@@ -77,28 +129,56 @@
     if (!r.ok) {
       const text = await r.text().catch(() => "");
       const err = new Error(text || `HTTP ${r.status}`);
-      err.status = r.status;
+      /** @type {any} */ (err).status = r.status;
       throw err;
     }
     return r.json();
   }
 
   /**
-   * Fetch JSON but treat 404 as "not found".
+   * Fetch JSON but treat HTTP 404 as a normal "not found" result.
    * @param {string} url
    * @param {RequestInit} [init]
    * @returns {Promise<any|null>}
    */
-  async function fetchJsonAllow404(url, init) {
+  async function fetchJsonOrNullOn404(url, init) {
     const r = await fetch(url, init);
     if (r.status === 404) return null;
+
+    const ct = String(r.headers.get("content-type") || "");
+    const isJson = ct.includes("application/json");
+
+    /** @type {any} */
+    let body = null;
+
+    try {
+      body = isJson ? await r.json() : await r.text();
+    } catch {
+      body = null;
+    }
+
     if (!r.ok) {
-      const text = await r.text().catch(() => "");
-      const err = new Error(text || `HTTP ${r.status}`);
-      err.status = r.status;
+      const serverMsg = body?.error?.message || body?.message;
+      const msg = serverMsg
+        ? String(serverMsg)
+        : typeof body === "string" && body.trim()
+          ? body.trim()
+          : `HTTP ${r.status} ${r.statusText}`;
+
+      const err = new Error(msg);
+      /** @type {any} */ (err).status = r.status;
+      /** @type {any} */ (err).code = body?.error?.code;
+      /** @type {any} */ (err).details = body?.error?.details;
       throw err;
     }
-    return r.json();
+
+    if (!isJson) {
+      throw new Error(
+        `Expected JSON response from ${url}, got content-type: ${ct || "(missing)"}`
+      );
+    }
+
+    return body;
   }
 
   /* ======================================================================= */
@@ -114,7 +194,6 @@
 
   /**
    * Render selection details immediately on click.
-   * Expects #graphInfoPanel to be the BODY element of the "Selection" card.
    * @param {any} node
    */
   function renderInfoPanel(node) {
@@ -164,7 +243,6 @@
 
   /**
    * Render README for a selected node.
-   * Expects #readmePanel to be the BODY element of the "README" card.
    * @param {any} node
    * @param {AbortSignal} signal
    */
@@ -180,18 +258,17 @@
 
     root.innerHTML = `<div class="text-muted small">Searching…</div>`;
 
- const appId = String(byId("appSelect")?.value || "").trim();
-if (!appId) {
-  // Kein aktives App-Selection → UI sauber halten (oder Hinweis anzeigen)
-  root.innerHTML = `<div class="text-muted small">Select an app to load README.</div>`;
-  return;
-}
+    const appId = String((/** @type {HTMLInputElement} */ (byId("appSelect"))).value || "").trim();
+    if (!appId) {
+      root.innerHTML = `<div class="text-muted small">Select an app to load README.</div>`;
+      return;
+    }
 
-const url = `/readme?appId=${encodeURIComponent(appId)}&file=${encodeURIComponent(fileRel)}`;
+    const url = `/readme?appId=${encodeURIComponent(appId)}&file=${encodeURIComponent(fileRel)}`;
 
     let data = null;
     try {
-      data = await fetchJsonAllow404(url, { signal });
+      data = await fetchJsonOrNullOn404(url, { signal });
     } catch (e) {
       if (e?.name === "AbortError" || signal?.aborted) return;
       console.warn("README fetch failed:", e);
@@ -201,8 +278,8 @@ const url = `/readme?appId=${encodeURIComponent(appId)}&file=${encodeURIComponen
 
     if (signal?.aborted) return;
 
-    if (!data || !data.found) {
-      root.innerHTML = "";
+    if (!data || data.found === false) {
+      root.innerHTML = `<div class="text-muted small">No README found for this node.</div>`;
       return;
     }
 
@@ -220,21 +297,12 @@ const url = `/readme?appId=${encodeURIComponent(appId)}&file=${encodeURIComponen
   /* Graph state helpers                                                     */
   /* ======================================================================= */
 
-  /**
-   * Return the currently rendered graph node object for an id (if available).
-   * This is important because the renderer may mutate node objects (e.g. live-change timestamps).
-   * @param {string} id
-   */
   function getRenderedNodeById(id) {
     const nodes = window.lastGraphState?.nodes;
     if (!Array.isArray(nodes) || !id) return null;
     return nodes.find((n) => n && n.id === id) || null;
   }
 
-  /**
-   * Re-render panels for the currently selected node, but using the latest node instance
-   * from the rendered graph state.
-   */
   function refreshSelectedPanels() {
     const selectedId = String(window.__selectedNode?.id || "").trim();
     if (!selectedId) return;
@@ -245,7 +313,6 @@ const url = `/readme?appId=${encodeURIComponent(appId)}&file=${encodeURIComponen
     if (ensurePanelsExist()) {
       renderInfoPanel(latest);
 
-      // Refresh README too (keep behavior consistent)
       if (activeReadmeController) activeReadmeController.abort();
       activeReadmeController = new AbortController();
       renderReadmeForNode(latest, activeReadmeController.signal).catch(() => {});
@@ -277,23 +344,94 @@ const url = `/readme?appId=${encodeURIComponent(appId)}&file=${encodeURIComponen
   };
 
   /* ======================================================================= */
-  /* Apps list (compact selectable rows)                                      */
+  /* Apps list + Actions (Restart / Show Website)                             */
   /* ======================================================================= */
 
   function setSelectedAppId(appId) {
-    const hidden = /** @type {HTMLInputElement|null} */ (byId("appSelect"));
-    if (hidden) hidden.value = String(appId || "");
+    const hidden = /** @type {HTMLInputElement} */ (byId("appSelect"));
+    hidden.value = String(appId || "");
   }
 
   function getSelectedAppId() {
-    const hidden = /** @type {HTMLInputElement|null} */ (byId("appSelect"));
-    return String(hidden?.value || "").trim();
+    const hidden = /** @type {HTMLInputElement} */ (byId("appSelect"));
+    return String(hidden.value || "").trim();
   }
 
   function setAppActiveRow(listEl, appId) {
     listEl.querySelectorAll(".appRow").forEach((el) => {
       el.classList.toggle("isActive", el.dataset.appId === appId);
     });
+  }
+
+  function isActionClick(ev) {
+    const t = /** @type {HTMLElement|null} */ (ev?.target || null);
+    if (!t) return false;
+    return !!t.closest?.("[data-action], .appActions");
+  }
+
+  function openWebsite(url) {
+    const u = String(url || "").trim();
+    if (!u) {
+      showMessageBox({
+        title: "No URL",
+        severity: "warn",
+        message: "This app has no URL configured.",
+      });
+      return;
+    }
+    try {
+      window.open(u, "_blank", "noopener,noreferrer");
+    } catch (e) {
+      showMessageBox({
+        title: "Open failed",
+        severity: "error",
+        message: String(e?.message || e || "Could not open URL"),
+      });
+    }
+  }
+
+  /**
+   * Restart action:
+   * We intentionally try multiple endpoints because your backend naming may differ.
+   * - If none exist, you still get a clean error message (instead of “nothing happens”).
+   *
+   * @param {string} appId
+   */
+  async function restartApp(appId) {
+    const id = String(appId || "").trim();
+    if (!id) return;
+
+    // Try a few common patterns (first successful response wins).
+    const tries = [
+      { url: "/restart", body: { appId: id } },
+      { url: "/apps/restart", body: { appId: id } },
+      { url: `/apps/${encodeURIComponent(id)}/restart`, body: { appId: id } },
+    ];
+
+    let lastErr = null;
+
+    for (const t of tries) {
+      try {
+        const res = await fetchJson(t.url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(t.body),
+        });
+
+        // If backend returns something structured, show a short status.
+        const msg =
+          res?.message ||
+          res?.status ||
+          "Restart requested.";
+
+        setStatus(`Restart: ${id} (${msg})`);
+        return;
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+
+    throw lastErr || new Error("Restart failed (no endpoint responded).");
   }
 
   async function loadApps() {
@@ -330,37 +468,108 @@ const url = `/readme?appId=${encodeURIComponent(appId)}&file=${encodeURIComponen
         <div>Name</div>
         <div>Entrypoint</div>
         <div class="appUrl">URL</div>
+        <div class="appActionsHdr">Actions</div>
       </div>
     `;
 
+    // Build rows (no per-row click handlers; we use ONE delegated handler below)
     for (const a of apps) {
       const row = document.createElement("div");
       row.className = "appRow" + (a.id === current ? " isActive" : "");
       row.setAttribute("role", "listitem");
-      row.dataset.appId = a.id;
+      row.dataset.appId = String(a.id || "");
+      row.dataset.appUrl = String(a.url || "");
 
       row.innerHTML = `
         <span class="appDot" aria-hidden="true"></span>
         <div class="appName" title="${esc(a.name || a.id)}">${esc(a.name || a.id)}</div>
-        <div class="appMeta" title="${esc(a.entry || "(auto)")}" >${esc(a.entry || "(auto)")}</div>
+        <div class="appMeta" title="${esc(a.entry || "(auto)")}">${esc(a.entry || "(auto)")}</div>
         <div class="appMeta appUrl" title="${esc(a.url || "")}">${esc(a.url || "")}</div>
-      `;
 
-      row.addEventListener("click", () => {
-        // Selecting an app triggers analysis immediately
-        const newId = String(a.id || "");
-        setSelectedAppId(newId);
-        setAppActiveRow(list, newId);
-        runAnalysis().catch((e) => console.error(e));
-      });
+        <div class="appActions">
+          <button type="button" class="btn btn-sm btn-outline-secondary"
+                  data-action="restart" data-app-id="${esc(a.id || "")}">
+            Restart
+          </button>
+          <button type="button" class="btn btn-sm btn-outline-primary"
+                  data-action="open" data-url="${esc(a.url || "")}">
+            Show
+          </button>
+        </div>
+      `;
 
       list.appendChild(row);
     }
 
+    // Ensure we only bind the delegated handler once, even if loadApps() runs again.
+    if (!list.__actionsBound) {
+      Object.defineProperty(list, "__actionsBound", { value: true });
+
+      list.addEventListener("click", (ev) => {
+        const target = /** @type {HTMLElement|null} */ (ev.target || null);
+        if (!target) return;
+
+        // 1) Button actions
+        const btn = target.closest?.("[data-action]");
+        if (btn) {
+          ev.preventDefault();
+          ev.stopPropagation();
+
+          const action = String(btn.getAttribute("data-action") || "");
+          const appId = String(btn.getAttribute("data-app-id") || btn.closest(".appRow")?.dataset?.appId || "");
+          const url = String(btn.getAttribute("data-url") || btn.closest(".appRow")?.dataset?.appUrl || "");
+
+          if (action === "open") {
+            openWebsite(url);
+            return;
+          }
+
+          if (action === "restart") {
+            setStatus("Restarting…");
+            restartApp(appId)
+              .then(() => {
+                // Optional: re-run analysis after restart (small delay so server can come up)
+                setTimeout(() => {
+                  // Keep current selection; just analyze again.
+                  runAnalysis().catch((e) => console.error(e));
+                }, 300);
+              })
+              .catch((e) => {
+                console.error("Restart failed:", e);
+                showMessageBox({
+                  title: "Restart failed",
+                  severity: "error",
+                  message: String(e?.message || e || "Unknown error"),
+                  details: { status: e?.status, code: e?.code, details: e?.details },
+                });
+                setStatus("Restart failed.");
+              });
+            return;
+          }
+
+          // Unknown action (ignore)
+          return;
+        }
+
+        // 2) Row selection (ignore clicks inside actions container)
+        if (isActionClick(ev)) return;
+
+        const row = target.closest?.(".appRow");
+        if (!row) return;
+
+        const newId = String(row.dataset.appId || "").trim();
+        if (!newId) return;
+
+        setSelectedAppId(newId);
+        setAppActiveRow(list, newId);
+        runAnalysis().catch((e) => console.error(e));
+      });
+    }
+
     // Auto-analyze initially selected app (first load)
-    // Guard: only run if we haven't rendered a graph yet.
     setTimeout(() => {
-      const hasGraph = Array.isArray(window.lastGraphState?.nodes) && window.lastGraphState.nodes.length > 0;
+      const hasGraph =
+        Array.isArray(window.lastGraphState?.nodes) && window.lastGraphState.nodes.length > 0;
       if (!hasGraph) runAnalysis().catch((e) => console.error(e));
     }, 0);
   }
@@ -400,19 +609,16 @@ const url = `/readme?appId=${encodeURIComponent(appId)}&file=${encodeURIComponen
         return;
       }
 
-      // Ignore stale events after re-analyze
       if (currentRunToken && msg.runToken && msg.runToken !== currentRunToken) return;
 
-      // Mark node in graph (renderer supplies this)
       if (typeof window.graphMarkChanged === "function") {
         window.graphMarkChanged({
           id: msg.id,
           ev: msg.ev,
-          at: msg.at
+          at: msg.at,
         });
       }
 
-      // If the currently selected node changed, refresh panels using the latest node instance
       if (String(window.__selectedNode?.id || "") === String(msg.id || "")) {
         refreshSelectedPanels();
       }
@@ -433,14 +639,13 @@ const url = `/readme?appId=${encodeURIComponent(appId)}&file=${encodeURIComponen
   }
 
   /* ======================================================================= */
-  /* Analyze action (manual removed; runs on app selection)                    */
+  /* Analyze action                                                           */
   /* ======================================================================= */
 
   let analyzeInFlight = false;
   let analyzePending = false;
 
   async function runAnalysis() {
-    // If a run is already in flight, remember that we need one more run afterwards.
     if (analyzeInFlight) {
       analyzePending = true;
       return;
@@ -463,16 +668,25 @@ const url = `/readme?appId=${encodeURIComponent(appId)}&file=${encodeURIComponen
       const data = await fetchJson("/analyze", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ appId })
+        body: JSON.stringify({ appId }),
       });
 
-      // Run token for SSE stale filtering
+      if (data?.analysisStatus === "unsupported") {
+        clearPanels();
+        window.__selectedNode = null;
+        showUnsupportedTargetMessage(data);
+        setStatus("Unsupported target (see details).");
+        return;
+      }
+
       currentRunToken = data?.runToken || currentRunToken;
 
       const metrics = await fetchJson(data.metricsUrl);
 
       if (typeof window.initcodeStructureChart !== "function") {
-        throw new Error("Graph renderer not loaded (initcodeStructureChart missing). Check script order.");
+        throw new Error(
+          "Graph renderer not loaded (initcodeStructureChart missing). Check script order."
+        );
       }
 
       clearPanels();
@@ -480,15 +694,25 @@ const url = `/readme?appId=${encodeURIComponent(appId)}&file=${encodeURIComponen
 
       window.initcodeStructureChart("codeStructureSvg", metrics);
 
-      setStatus(`Done. Nodes: ${data.summary?.nodes ?? "?"}, Links: ${data.summary?.links ?? "?"}`);
+      setStatus(
+        `Done. Nodes: ${data.summary?.nodes ?? "?"}, Links: ${data.summary?.links ?? "?"}`
+      );
     } catch (e) {
       console.error("Analyze failed:", e);
-      alert(`Analyze failed:\n${e.message || String(e)}`);
+      showMessageBox({
+        title: "Analyze failed",
+        severity: "error",
+        message: String(e?.message || e || "Unknown error"),
+        details: {
+          status: e?.status,
+          code: e?.code,
+          details: e?.details,
+        },
+      });
       setStatus("Analysis failed.");
     } finally {
       analyzeInFlight = false;
 
-      // If the user switched apps during the run, run once more with the latest selection.
       if (analyzePending) {
         analyzePending = false;
         runAnalysis().catch((err) => console.error(err));

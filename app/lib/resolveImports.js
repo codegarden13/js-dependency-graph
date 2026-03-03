@@ -4,27 +4,45 @@
  *
  * Industrial-grade internal module resolver used by NodeAnalyzer.
  *
- * Responsibility
- * --------------
- * Translate import specifiers found in source files into absolute file
- * paths within the analyzed project root.
+ * Responsibilities
+ * ----------------
+ * - Translate import specifiers found in source files into absolute file paths
+ *   within the analyzed `projectRoot`.
+ * - Resolve only things that are on disk (conservative, deterministic).
+ * - Never allow resolved paths to escape `projectRoot`.
  *
- * Supported
- * ---------
- * - Relative imports: "./x", "../y"
- * - Absolute web imports: "/assets/js/app.js"
- *   → mapped to common public/static roots
+ * Supported specifier forms
+ * -------------------------
+ * 1) Relative imports
+ *    - "./x", "../y"
+ *
+ * 2) Absolute web-path imports (browser-style)
+ *    - "/assets/js/app.js"
+ *    - "/css/app.css"
+ *
+ *    These are mapped into common static roots inside the project, e.g.
+ *    - <root>/app/public
+ *    - <root>/public
+ *    - <root>/www
+ *    - <root>/static
+ *    - <root> (fallback)
+ *
+ * 3) Absolute filesystem paths (only if inside projectRoot)
+ *    - "/Users/.../project/app/index.js"
+ *
+ * 4) file: URLs (tooling sometimes emits these)
+ *    - "file:///Users/.../project/app/index.js"
  *
  * Intentionally ignored
- * ----------------------
+ * ---------------------
  * - Bare package imports: "express", "react", "lodash"
  * - Node builtins: "fs", "path", "node:fs"
  *
- * Design Goals
+ * Design notes
  * ------------
- * - Deterministic
- * - Conservative (must exist on disk)
- * - Never escapes projectRoot
+ * - Deterministic, best-effort resolver.
+ * - Only resolves if the candidate exists as a file.
+ * - Supports extensionless imports by trying common code + asset extensions.
  */
 
 import fs from "node:fs";
@@ -62,6 +80,9 @@ const ASSET_EXTENSIONS = [
 
 const ALL_EXTENSIONS = [...CODE_EXTENSIONS, ...ASSET_EXTENSIONS];
 
+/** Cache public root guesses per project root (performance + determinism). */
+const publicRootsCache = new Map();
+
 /* ========================================================================== */
 /* Public API                                                                 */
 /* ========================================================================== */
@@ -80,18 +101,32 @@ export function resolveImports(fromAbs, spec, projectRoot) {
   const rootAbs = path.resolve(projectRoot);
   const fromDir = path.dirname(path.resolve(fromAbs));
 
-  const cleaned = stripQueryAndHash(spec.trim());
+  const cleaned = stripQueryAndHash(String(spec).trim());
   if (!cleaned) return null;
 
   // ---------------------------------------------------------------------------
   // 1) Ignore external imports early
   // ---------------------------------------------------------------------------
-  if (!cleaned.startsWith(".") && !cleaned.startsWith("/")) {
+  // Only resolve relative (./, ../) or path-like imports (/..., file:...)
+  if (!cleaned.startsWith(".") && !cleaned.startsWith("/") && !cleaned.startsWith("file:")) {
     return null;
   }
 
   // ---------------------------------------------------------------------------
-  // 2) Relative imports
+  // 2) file: URLs -> filesystem paths (only if inside root)
+  // ---------------------------------------------------------------------------
+  if (cleaned.startsWith("file:")) {
+    const asPath = fileUrlToPathSafe(cleaned);
+    if (!asPath) return null;
+
+    const hit = resolveWithExtensions(asPath);
+    if (!hit) return null;
+
+    return isInsideRoot(rootAbs, hit) ? hit : null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // 3) Relative imports
   // ---------------------------------------------------------------------------
   if (cleaned.startsWith(".")) {
     const base = path.resolve(fromDir, cleaned);
@@ -100,20 +135,28 @@ export function resolveImports(fromAbs, spec, projectRoot) {
   }
 
   // ---------------------------------------------------------------------------
-  // 3) Absolute web imports ("/assets/...")
+  // 4) "Absolute" imports starting with "/" can mean two different things:
+  //    - POSIX filesystem absolute paths ("/Users/..."), OR
+  //    - browser web-paths ("/assets/js/app.js")
+  //
+  // We disambiguate conservatively:
+  // - If the spec clearly points *into* the selected project root, accept as FS.
+  // - Otherwise treat it as a web-path and try public roots.
   // ---------------------------------------------------------------------------
-  if (cleaned.startsWith("/")) {
-    const relWeb = cleaned.replace(/^\/+/, "");
 
-    const publicRoots = guessPublicRoots(rootAbs);
+  // 4a) Absolute filesystem paths (only if inside root)
+  const fsAbs = resolveAbsoluteFilesystemPathIfInsideProject(cleaned, rootAbs);
+  if (fsAbs) return fsAbs;
 
-    for (const pr of publicRoots) {
-      const base = path.resolve(pr, relWeb);
-      const hit = resolveWithExtensions(base);
-      if (hit && isInsideRoot(rootAbs, hit)) return hit;
-    }
+  // 4b) Absolute web-path imports
+  const relWeb = normalizeWebPathToRelative(cleaned);
+  if (!relWeb) return null;
 
-    return null;
+  const publicRoots = getPublicRoots(rootAbs);
+  for (const pr of publicRoots) {
+    const base = path.resolve(pr, relWeb);
+    const hit = resolveWithExtensions(base);
+    if (hit && isInsideRoot(rootAbs, hit)) return hit;
   }
 
   return null;
@@ -123,15 +166,109 @@ export function resolveImports(fromAbs, spec, projectRoot) {
 /* Internals                                                                  */
 /* ========================================================================== */
 
+/**
+ * Strip query/hash ("?v=1#x") from import specifiers.
+ * @param {string} s
+ */
 function stripQueryAndHash(s) {
   return String(s || "").split(/[?#]/)[0];
 }
 
+/**
+ * Convert "file:///..." to a filesystem path.
+ * Returns null if the URL is not parseable.
+ *
+ * NOTE: We intentionally avoid importing node:url here to keep this module
+ * small and dependency-free; the conversion is conservative.
+ *
+ * @param {string} fileUrl
+ */
+function fileUrlToPathSafe(fileUrl) {
+  const raw = String(fileUrl || "").trim();
+  if (!raw.startsWith("file:")) return null;
+
+  // Common shapes:
+  // - file:///Users/me/project/app/index.js
+  // - file://localhost/Users/me/project/app/index.js
+  // - file:/Users/me/project/app/index.js
+  let u = raw.replace(/^file:\/\//, "");
+
+  // Drop an optional host ("localhost")
+  u = u.replace(/^localhost\//, "");
+
+  // Ensure leading slash for POSIX paths.
+  if (!u.startsWith("/")) u = "/" + u;
+
+  // Decode %20 etc.
+  try {
+    u = decodeURIComponent(u);
+  } catch {
+    // keep raw if decoding fails
+  }
+
+  return path.normalize(u);
+}
+
+/**
+ * Convert "/assets/js/app.js" → "assets/js/app.js" and normalize slashes.
+ *
+ * Security boundary:
+ * - Reject anything that normalizes outside the web root (".." segments).
+ *
+ * @param {string} web
+ */
+function normalizeWebPathToRelative(web) {
+  const w = String(web || "").trim();
+  if (!w.startsWith("/")) return "";
+
+  // Avoid special Vite-like prefixes; treat as external/unsupported.
+  // Examples: "/@fs/...", "/@id/..."
+  if (w.startsWith("/@")) return "";
+
+  // Use POSIX normalization for web paths.
+  const normalized = path.posix.normalize(w.replace(/\\/g, "/"));
+
+  // Reject traversal outside the web root.
+  if (normalized === "/.." || normalized.startsWith("/../")) return "";
+
+  return normalized.replace(/^\/+/, "");
+}
+
+/**
+ * Resolve an absolute filesystem path only if it is inside the analyzed project.
+ * This prevents mistakenly treating web-paths like "/assets/..." as filesystem
+ * paths on POSIX.
+ *
+ * @param {string} absSpec
+ * @param {string} rootAbs
+ * @returns {string|null}
+ */
+function resolveAbsoluteFilesystemPathIfInsideProject(absSpec, rootAbs) {
+  if (!path.isAbsolute(absSpec)) return null;
+
+  const candidate = path.resolve(absSpec);
+
+  // Disambiguation: only accept the FS path if it is already inside the project.
+  // Otherwise it is far more likely a web-path.
+  if (!isInsideRoot(rootAbs, candidate)) return null;
+
+  const hit = resolveWithExtensions(candidate);
+  if (!hit) return null;
+
+  return isInsideRoot(rootAbs, hit) ? hit : null;
+}
+
+/**
+ * Resolve extensionless imports and directory imports (index.*).
+ *
+ * @param {string} baseAbs
+ * @returns {string|null}
+ */
 function resolveWithExtensions(baseAbs) {
-  // Exact file
+  // 1) Exact file (already has extension)
   if (path.extname(baseAbs) && existsFile(baseAbs)) return baseAbs;
 
-  // Try "<base>.<ext>"
+  // 2) Try "<base>.<ext>"
   if (!path.extname(baseAbs)) {
     for (const ext of ALL_EXTENSIONS) {
       const cand = baseAbs + ext;
@@ -139,7 +276,7 @@ function resolveWithExtensions(baseAbs) {
     }
   }
 
-  // Try "<base>/index.<ext>"
+  // 3) Try "<base>/index.<ext>"
   if (existsDir(baseAbs)) {
     for (const ext of ALL_EXTENSIONS) {
       const cand = path.join(baseAbs, "index" + ext);
@@ -150,20 +287,37 @@ function resolveWithExtensions(baseAbs) {
   return null;
 }
 
-function guessPublicRoots(projectRoot) {
-  // Order matters: most common first
-  const roots = [
-    path.join(projectRoot, "app", "public"),
-    path.join(projectRoot, "public"),
-    path.join(projectRoot, "src", "public"),
-    path.join(projectRoot, "www"),
-    path.join(projectRoot, "static"),
-    projectRoot // fallback: allow direct mapping ("/assets" → "<root>/assets")
-  ];
+/**
+ * Guess and cache likely public/static roots inside the project.
+ *
+ * @param {string} rootAbs
+ * @returns {string[]}
+ */
+function getPublicRoots(rootAbs) {
+  const key = path.resolve(rootAbs);
+  const cached = publicRootsCache.get(key);
+  if (cached) return cached;
 
-  return roots.filter(existsDir);
+  // Order matters: most common first.
+  const roots = [
+    path.join(key, "app", "public"),
+    path.join(key, "public"),
+    path.join(key, "src", "public"),
+    path.join(key, "www"),
+    path.join(key, "static"),
+    key // fallback: allow direct mapping ("/assets" → "<root>/assets")
+  ].filter(existsDir);
+
+  publicRootsCache.set(key, roots);
+  return roots;
 }
 
+/**
+ * Ensure the resolved file stays inside the project root.
+ *
+ * @param {string} rootAbs
+ * @param {string} fileAbs
+ */
 function isInsideRoot(rootAbs, fileAbs) {
   const root = path.resolve(rootAbs);
   const file = path.resolve(fileAbs);

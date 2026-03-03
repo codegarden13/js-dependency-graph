@@ -1,6 +1,6 @@
 // public/assets/js/d3_codeStructure.js
 /**
- * D3 Code Structure Graph (v7)
+ * D3 Code Structure Graph Renderer
  * ===========================
  *
  * Purpose
@@ -33,7 +33,20 @@
      Configuration (Colors)
   ====================================================================== */
 
-  const NODE_TYPE_COLORS = {
+  // Canonical semantic colors (backend contract): `node.group`
+  // Groups are intentionally coarse and stable across projects.
+  const NODE_GROUP_COLORS = {
+    root: "#111827",   // near-black
+    dir: "#6c8cff",    // blue-ish
+    code: "#adb5bd",   // neutral grey (tone varies by complexity)
+    doc: "#2ec4b6",    // teal
+    data: "#ff9933",   // orange
+    image: "#9d4edd"   // purple
+  };
+
+  // Fallback/legacy semantic colors: `node.kind` or older `node.type` values
+  // (kept so older JSON payloads still render, but NOT required).
+  const NODE_KIND_COLORS = {
     controller: "#ff6b6b",
     service: "#4d96ff",
     module: "#ff9933",
@@ -41,6 +54,9 @@
     config: "#f72585",
     core: "#4361ee",
     helper: "#9d4edd",
+    function: "#22223b",
+    dir: "#6c8cff",
+    asset: "#2ec4b6",
     file: "#adb5bd"
   };
 
@@ -52,12 +68,294 @@
     default: "#BBBBBB"
   };
 
+  // Highlight color for exported function nodes
+  const EXPORTED_FUNCTION_COLOR = "#ff6666";
+
   const clusterColor = d3.scaleOrdinal(d3.schemeSet3);
+
+  /**
+   * Show a browser alert once per page-load for a given key.
+   * Prevents re-run spam when the graph is re-rendered.
+   * @param {string} key Deduplication key.
+   * @param {string} message Alert text.
+   */
+  function alertOnce(key, message) {
+    try {
+      const g = (window.__codeStructureAlertOnce = window.__codeStructureAlertOnce || Object.create(null));
+      if (g[key]) return;
+      g[key] = true;
+      window.alert(message);
+    } catch {
+      // ignore
+    }
+  }
+
+  /* ======================================================================
+     Central Config (Layout)
+  ====================================================================== */
+
+  const CODE_STRUCTURE_CONFIG = {
+    // Global multiplier for layout spacing. Keep at 1 for now (no UI yet).
+    layoutScale: 1,
+
+    // Safe clamps for auto-derived parameters
+    clamps: {
+      linkDistanceMin: 12,
+      linkDistanceMax: 160,
+      chargeMin: -420,
+      chargeMax: -10,
+      chargeDistanceMinMin: 6,
+      chargeDistanceMinMax: 40,
+      chargeDistanceMaxMin: 160,
+      chargeDistanceMaxMax: 900,
+    },
+
+    // Type weighting (data-driven defaults)
+    typeWeights: {
+      // Node repulsion scaling by kind
+      chargeByKind: {
+        dir: 0.25,
+        asset: 0.55,
+        default: 1.0,
+      },
+
+      // Link length multipliers by edge type
+      linkDistanceMul: {
+        include: 0.8,
+        use: 2.6,
+        extends: 2.6,
+        call: 3.4,
+        default: 2.2,
+      },
+
+      // Link strength multipliers by edge type
+      linkStrength: {
+        include: 0.08,
+        use: 0.22,
+        extends: 0.22,
+        call: 0.16,
+        default: 0.18,
+      }
+    }
+  };
+
+  /**
+   * Clamp a number into an inclusive range.
+   * @param {number} n Value to clamp.
+   * @param {number} lo Lower bound (inclusive).
+   * @param {number} hi Upper bound (inclusive).
+   * @returns {number} The clamped value.
+   */
+  function clamp(n, lo, hi) {
+    return Math.max(lo, Math.min(hi, n));
+  }
+
+  /**
+   * Compute the arithmetic mean of an array of numbers.
+   * @param {number[]} arr Input values.
+   * @returns {number} Mean value, or 0 for empty/invalid input.
+   */
+  function mean(arr) {
+    if (!arr || !arr.length) return 0;
+    let s = 0;
+    for (const v of arr) s += v;
+    return s / arr.length;
+  }
+
+  /* ====================================================================== */
+  /* Function-node UI helpers                                                */
+  /* ====================================================================== */
+
+  /**
+   * Determine whether a node represents a function.
+   * The backend should set `type: "function"` for function nodes.
+   * @param {object} d Node datum.
+   * @returns {boolean} True if node is a function node.
+   */
+  function isFunctionNode(d) {
+    const t = (d && typeof d.type === "string") ? d.type.trim() : "";
+    if (t === "function") return true;
+    const k = (d && typeof d.kind === "string") ? d.kind.trim() : "";
+    return k === "function";
+  }
+
+  /**
+   * Pick the semantic base color for a node.
+   *
+   * Contract (preferred): backend provides `group` (root/dir/code/doc/data/image).
+   * Fallbacks (legacy): `kind` or `type` for older payloads.
+   *
+   * @param {object} d Node datum.
+   * @returns {string} Hex color string.
+   */
+  function getBaseNodeColor(d) {
+    const g = (d && typeof d.group === "string") ? d.group.trim() : "";
+    if (g && Object.prototype.hasOwnProperty.call(NODE_GROUP_COLORS, g)) {
+      return NODE_GROUP_COLORS[g];
+    }
+
+    const k = (d && typeof d.kind === "string") ? d.kind.trim() : "";
+    if (k && Object.prototype.hasOwnProperty.call(NODE_KIND_COLORS, k)) {
+      return NODE_KIND_COLORS[k];
+    }
+
+    const t = (d && typeof d.type === "string") ? d.type.trim() : "";
+    if (t && Object.prototype.hasOwnProperty.call(NODE_KIND_COLORS, t)) {
+      return NODE_KIND_COLORS[t];
+    }
+
+    // Final fallback
+    return NODE_GROUP_COLORS.code;
+  }
+
+  /**
+   * Convert a numeric-ish value to a safe integer (>= 0).
+   * @param {any} v Input value.
+   * @returns {number} Safe integer (>= 0).
+   */
+  function toSafeInt(v) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return 0;
+    return Math.max(0, Math.floor(n));
+  }
+
+
+
+  /**
+   * Compute a visible ring width for function consumption.
+   * Requirement: ring width is driven by `_inCalls`.
+   * We clamp to avoid comically thick strokes on very dense graphs.
+   * @param {object} d Node datum.
+   * @returns {number} Stroke width in px.
+   */
+  function getFunctionRingWidth(d) {
+    const w = toSafeInt(d?._inCalls);
+    if (!w) return 0;     // kein Ring wenn 0
+    return clamp(w, 1, 12);
+  }
+
+  /**
+   * Determine whether a node is flagged as an unused function by the backend.
+   * Contract: backend sets `_unused: true` for functions that are likely unused.
+   * @param {object} d Node datum.
+   * @returns {boolean} True if node is an unused function.
+   */
+  function isUnusedFunctionNode(d) {
+    return isFunctionNode(d) && d?._unused === true;
+  }
+
+  /**
+   * Derive force-layout defaults from the current graph.
+   *
+   * Rationale:
+   * - Keeps small graphs readable (more spacing)
+   * - Keeps large graphs compact (prevents “explosion”)
+   * - Uses node radius statistics and edge-type distribution
+   *
+   * Output is a small bundle of numbers/functions that can be plugged directly
+   * into d3.forceSimulation.
+   *
+   * @param {Array<object>} nodes Normalized node objects.
+   * @param {Array<object>} links Normalized link objects.
+   * @param {(d: object) => number} getRadius Function that returns a node radius.
+   * @returns {{
+   *  baseLinkDistance: number,
+   *  chargeDistanceMin: number,
+   *  chargeDistanceMax: number,
+   *  linkDistanceFn: (l: object) => number,
+   *  linkStrengthFn: (l: object) => number,
+   *  chargeStrengthFn: (d: object) => number,
+   *  centerStrength: number,
+   * }} Derived defaults.
+   */
+  function deriveLayoutDefaults(nodes, links, getRadius) {
+    const N = Array.isArray(nodes) ? nodes.length : 0;
+
+    // Radius stats (drives spacing & collision feel)
+    const radii = (nodes || []).map((d) => {
+      try { return getRadius(d) || 0; } catch { return 0; }
+    });
+    const rAvg = Math.max(1, mean(radii));
+
+    // Edge type distribution (helps pick slightly denser defaults for structural-heavy graphs)
+    const counts = { include: 0, use: 0, call: 0, extends: 0, default: 0 };
+    for (const l of (links || [])) {
+      const t = String(l?.type || "default");
+      if (t in counts) counts[t]++; else counts.default++;
+    }
+    const structuralRatio = N > 0 ? (counts.include / Math.max(1, (links || []).length)) : 0;
+
+    // Base distance grows with node size, but compresses as N grows.
+    // This keeps small graphs readable and large graphs compact.
+    const nFactor = N > 0 ? (1 / Math.max(0.7, Math.log10(N + 10))) : 1;
+    const scale = CODE_STRUCTURE_CONFIG.layoutScale;
+
+    const baseLinkDistance = clamp(
+      (10 + rAvg * 2.2) * nFactor * (1.15 - 0.35 * structuralRatio) * scale,
+      CODE_STRUCTURE_CONFIG.clamps.linkDistanceMin,
+      CODE_STRUCTURE_CONFIG.clamps.linkDistanceMax
+    );
+
+    // Repulsion magnitude: bigger nodes & more nodes => more repulsion, but log-limited.
+    const chargeBase = -clamp(
+      (rAvg * 7.5 + 22 * Math.log(N + 1)) * scale,
+      Math.abs(CODE_STRUCTURE_CONFIG.clamps.chargeMax),
+      Math.abs(CODE_STRUCTURE_CONFIG.clamps.chargeMin)
+    );
+
+    // Distance bounds for charge: keep local separation strong, long-range weak.
+    const chargeDistanceMin = clamp(
+      rAvg * 0.8,
+      CODE_STRUCTURE_CONFIG.clamps.chargeDistanceMinMin,
+      CODE_STRUCTURE_CONFIG.clamps.chargeDistanceMinMax
+    );
+
+    const chargeDistanceMax = clamp(
+      (rAvg * 14 + 220) * scale,
+      CODE_STRUCTURE_CONFIG.clamps.chargeDistanceMaxMin,
+      CODE_STRUCTURE_CONFIG.clamps.chargeDistanceMaxMax
+    );
+
+    const linkDistanceFn = (l) => {
+      const t = String(l?.type || "default");
+      const mul = CODE_STRUCTURE_CONFIG.typeWeights.linkDistanceMul[t] ?? CODE_STRUCTURE_CONFIG.typeWeights.linkDistanceMul.default;
+      return clamp(baseLinkDistance * mul, CODE_STRUCTURE_CONFIG.clamps.linkDistanceMin, CODE_STRUCTURE_CONFIG.clamps.linkDistanceMax * 3);
+    };
+
+    const linkStrengthFn = (l) => {
+      const t = String(l?.type || "default");
+      return CODE_STRUCTURE_CONFIG.typeWeights.linkStrength[t] ?? CODE_STRUCTURE_CONFIG.typeWeights.linkStrength.default;
+    };
+
+    const chargeStrengthFn = (d) => {
+      const kind = String(d?.kind || "default");
+      const w = CODE_STRUCTURE_CONFIG.typeWeights.chargeByKind[kind] ?? CODE_STRUCTURE_CONFIG.typeWeights.chargeByKind.default;
+      return clamp(chargeBase * w, CODE_STRUCTURE_CONFIG.clamps.chargeMin, CODE_STRUCTURE_CONFIG.clamps.chargeMax);
+    };
+
+    // Slightly stronger centering for large graphs so they don't drift forever.
+    const centerStrength = clamp(0.02 + (N > 200 ? 0.02 : 0), 0.02, 0.06);
+
+    return {
+      baseLinkDistance,
+      chargeDistanceMin,
+      chargeDistanceMax,
+      linkDistanceFn,
+      linkStrengthFn,
+      chargeStrengthFn,
+      centerStrength,
+    };
+  }
 
   /* ======================================================================
      Color Utilities
   ====================================================================== */
 
+  /**
+   * Convert a hex color string (3 or 6 digits) into RGB components.
+   * @param {string} hex Color in #rgb or #rrggbb form (leading # optional).
+   * @returns {{r:number,g:number,b:number}} RGB components (0..255).
+   */
   function hexToRgb(hex) {
     hex = String(hex || "").replace("#", "");
     if (hex.length === 3) hex = hex.split("").map((c) => c + c).join("");
@@ -65,6 +363,13 @@
     return { r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 };
   }
 
+  /**
+   * Convert RGB components into a hex color string.
+   * @param {number} r Red (0..255).
+   * @param {number} g Green (0..255).
+   * @param {number} b Blue (0..255).
+   * @returns {string} Hex string in #rrggbb form.
+   */
   function rgbToHex(r, g, b) {
     const toHex = (v) => {
       const s = Math.max(0, Math.min(255, Math.round(v))).toString(16);
@@ -75,7 +380,11 @@
 
   /**
    * Adjust color intensity by mixing toward white (factor < 1) or black (factor > 1).
-   * factor is clamped to avoid extreme outputs.
+   *
+   * Used to encode complexity/importance without changing the base semantic hue.
+   * @param {string} baseHex Base color in hex.
+   * @param {number} factor Intensity factor (clamped internally).
+   * @returns {string} Adjusted color in hex.
    */
   function adjustColorIntensity(baseHex, factor) {
     const { r, g, b } = hexToRgb(baseHex);
@@ -93,345 +402,552 @@
      Public Entrypoint
   ====================================================================== */
 
+  /**
+   * Main render entrypoint.
+   *
+   * Responsibilities:
+   * - Reset SVG and build render layers
+   * - Normalize backend metrics into {nodes, links}
+   * - Derive force layout defaults and run simulation
+   * - Render links, nodes, labels, hulls, and integrate UI helpers
+   */
   window.initcodeStructureChart = function initcodeStructureChart(svgId, metrics) {
     // 0) Validate external helpers early (fail loudly in dev)
     assertGlobals();
 
-    // 1) Select + reset SVG (critical for re-runs)
-    const svg = d3.select("#" + svgId);
-    if (svg.empty()) {
-      console.warn("SVG not found:", svgId);
-      return;
+    // -------------------------------------------------------------------
+    // Local helpers (keep renderer self-contained, no extra files)
+    // -------------------------------------------------------------------
+
+    function selectAndResetSvg(svgId) {
+      const svg = d3.select("#" + svgId);
+      if (svg.empty()) {
+        console.warn("SVG not found:", svgId);
+        return null;
+      }
+      svg.selectAll("*").remove();
+      return svg;
     }
-    svg.selectAll("*").remove();
+
+    function applyViewBox(svg, width, height) {
+      svg
+        .attr("viewBox", `0 0 ${width} ${height}`)
+        .attr("preserveAspectRatio", "xMidYMid meet");
+    }
+
+    function buildLayers(svg) {
+      // IMPORTANT: highlight is between node shapes and node labels (prevents ring-over-text)
+      const zoomLayer = svg.append("g");
+      return {
+        zoomLayer,
+        hullGroup: zoomLayer.append("g").attr("class", "hulls"),
+        linkGroup: zoomLayer.append("g").attr("class", "links"),
+        nodeShapeGroup: zoomLayer.append("g").attr("class", "node-shapes"),
+        highlightLayer: zoomLayer.append("g").attr("class", "highlight-layer"),
+        nodeLabelGroup: zoomLayer.append("g").attr("class", "node-labels"),
+      };
+    }
+
+    function installZoom(svg, zoomLayer) {
+      svg.call(
+        d3.zoom()
+          .scaleExtent([0.1, 3])
+          .on("zoom", (event) => zoomLayer.attr("transform", event.transform))
+      );
+    }
+
+    function getTooltipOrNull() {
+      return window.CodeStructure?.tooltip?.ensureTooltip
+        ? window.CodeStructure.tooltip.ensureTooltip()
+        : null;
+    }
+
+    function normalizeGraph(metrics) {
+      if (!window.CodeGraphData?.normalize) {
+        throw new Error("CodeGraphData.normalize missing. Check script order (codeGraph/data.js).");
+      }
+      return window.CodeGraphData.normalize(metrics);
+    }
+
+    function validateGroupsOnce(nodes) {
+      try {
+        const diag = window.CodeGraphData?.validateNodeGroups?.(nodes, NODE_GROUP_COLORS) || { missing: [], unknown: [] };
+        const missing = diag.missing || [];
+        const unknown = diag.unknown || [];
+
+        if (!missing.length && !unknown.length) return;
+
+        const exMissing = missing.slice(0, 3)
+          .map((n) => `- ${String(n?.id || n?.file || "(unknown)")}`)
+          .join("\n");
+
+        const exUnknown = unknown.slice(0, 3)
+          .map((n) => `- ${String(n?.group || "?")}  @  ${String(n?.id || n?.file || "(unknown)")}`)
+          .join("\n");
+
+        const parts = [];
+        if (missing.length) parts.push("Fehlende node.group (max 3 Beispiele):\n" + (exMissing || "- (keine Beispiele)"));
+        if (unknown.length) parts.push("Unbekannte node.group (max 3 Beispiele):\n" + (exUnknown || "- (keine Beispiele)"));
+
+        alertOnce(
+          "missing-or-unknown-node-group",
+          "NodeAnalyzer: Node-Farben/Cluster benötigen node.group im JSON.\n" +
+          "Fix: Stelle sicher, dass das Backend `group` setzt (root/dir/code/doc/data/image).\n\n" +
+          parts.join("\n\n")
+        );
+      } catch {
+        // ignore
+      }
+    }
+
+    function initLiveChangeState(nodes) {
+      for (const n of nodes) {
+        if (typeof n._changed !== "boolean") n._changed = false;
+        if (typeof n._lastChangedAt !== "string") n._lastChangedAt = "";
+        if (typeof n._lastChangeEv !== "string") n._lastChangeEv = "";
+      }
+    }
+
+    function makeEncoders(nodes) {
+      const getNodeColor = (d) => {
+        const base = getBaseNodeColor(d);
+
+        // Prefer normalized score if present (0..1). Fallback to raw complexity.
+        const score = (typeof d?._complexityScore === "number" && Number.isFinite(d._complexityScore))
+          ? clamp(d._complexityScore, 0, 1)
+          : null;
+
+        // Function nodes: encode complexity as tone (lighter -> simple, darker -> complex)
+        if (isFunctionNode(d)) {
+          const rawCx = Number(d?.complexity ?? d?.cc ?? 0) || 0;
+          const cxNorm = (score != null)
+            ? score
+            : clamp(Math.log1p(rawCx) / Math.log1p(25), 0, 1);
+          const factor = 0.85 + 0.40 * cxNorm;
+          return adjustColorIntensity(base, factor);
+        }
+
+        if (score == null) return base;
+        const factor = 0.90 + 0.30 * score;
+        return adjustColorIntensity(base, factor);
+      };
+
+      const getRadius = (d) => {
+        const s = d._lineScore ?? 0;
+        const minR = 6;
+        const maxR = 26;
+        return minR + (maxR - minR) * s;
+      };
+
+      const getNodeStroke = (d) => {
+        if (d?._changed) return "#ff3b30";
+        if (isFunctionNode(d) && d?.exported === true) return EXPORTED_FUNCTION_COLOR;
+        return "rgba(0,0,0,0.08)";
+      };
+
+      const getNodeStrokeWidth = (d) => {
+        if (d?._changed) return 3;
+        if (isFunctionNode(d) && d?.exported === true) return 3;
+        return 1;
+      };
+
+      return { getNodeColor, getRadius, getNodeStroke, getNodeStrokeWidth };
+    }
+
+    function createSimulation(nodes, links, width, height, getRadius) {
+      const layout = deriveLayoutDefaults(nodes, links, getRadius);
+
+      const simulation = d3.forceSimulation(nodes)
+        .force(
+          "link",
+          d3.forceLink(links)
+            .id((d) => d.id)
+            .distance((l) => layout.linkDistanceFn(l))
+            .strength((l) => layout.linkStrengthFn(l))
+        )
+        .force(
+          "charge",
+          d3.forceManyBody()
+            .strength((d) => layout.chargeStrengthFn(d))
+            .distanceMin(layout.chargeDistanceMin)
+            .distanceMax(layout.chargeDistanceMax)
+        )
+        .force("collide", d3.forceCollide().radius((d) => getRadius(d) + 4).iterations(2))
+        .force("x", d3.forceX(width / 2).strength(layout.centerStrength))
+        .force("y", d3.forceY(height / 2).strength(layout.centerStrength))
+        .force("center", d3.forceCenter(width / 2, height / 2));
+
+      return simulation;
+    }
+
+    function renderLinks(linkGroup, links) {
+      return linkGroup.selectAll("line")
+        .data(links)
+        .enter()
+        .append("line")
+        .attr("class", (d) => `link ${String(d?.type || "default")}`)
+        .attr("marker-end", (d) => (String(d?.type || "") === "include" ? null : "url(#arrowhead)"));
+    }
+
+    function renderNodes(nodeShapeGroup, nodes, enc) {
+      const nodeShapeSel = nodeShapeGroup.selectAll("g")
+        .data(nodes)
+        .enter()
+        .append("g")
+        .attr("class", "node");
+
+      const nodeBodySel = nodeShapeSel.append("circle")
+        .attr("class", "node-body")
+        .attr("r", (d) => enc.getRadius(d))
+        .attr("fill", (d) => enc.getNodeColor(d))
+        .attr("stroke", (d) => enc.getNodeStroke(d))
+        .attr("stroke-width", (d) => enc.getNodeStrokeWidth(d));
+
+      const fnRingSel = nodeShapeSel.append("circle")
+        .attr("class", (d) => (isFunctionNode(d) ? "node-ring is-function" : "node-ring"))
+        .attr("r", (d) => enc.getRadius(d) + 4)
+        .attr("fill", "none")
+        .attr("stroke", (d) => {
+          if (!isFunctionNode(d)) return "transparent";
+          return (d?.exported === true) ? EXPORTED_FUNCTION_COLOR : "rgba(0,0,0,0.25)";
+        })
+        .attr("stroke-opacity", (d) => (isFunctionNode(d) ? 0.95 : 0))
+        .attr("stroke-width", (d) => (isFunctionNode(d) ? getFunctionRingWidth(d) : 0))
+        .attr("pointer-events", "none");
+
+      const unusedBadgeSel = nodeShapeSel.append("text")
+        .attr("class", "badge-unused")
+        .attr("text-anchor", "middle")
+        .attr("dominant-baseline", "middle")
+        .style("font-weight", "700")
+        .style("font-size", "12px")
+        .style("paint-order", "stroke")
+        .style("stroke-width", "3px")
+        .style("pointer-events", "none")
+        .text("!");
+
+      return { nodeShapeSel, nodeBodySel, fnRingSel, unusedBadgeSel };
+    }
+
+    function renderHits(nodeShapeSel, enc, tooltip) {
+      // Transparent hit area (slightly larger, easier click/drag)
+      return nodeShapeSel.append("circle")
+        .attr("class", "node-hit")
+        .attr("r", (d) => enc.getRadius(d) + 8)
+        .attr("fill", "transparent")
+        .attr("stroke", "transparent")
+        .style("cursor", "pointer")
+        .on("mouseover", (event, d) => {
+          if (!tooltip) return;
+          const html = buildTooltipHtml(d);
+          window.CodeStructure?.tooltip?.showTooltip?.(tooltip, event, html);
+        })
+        .on("mousemove", (event) => {
+          if (!tooltip) return;
+          window.CodeStructure?.tooltip?.moveTooltip?.(tooltip, event);
+        })
+        .on("mouseout", () => {
+          if (!tooltip) return;
+          window.CodeStructure?.tooltip?.hideTooltip?.(tooltip);
+        });
+    }
+
+    function renderLabels(nodeLabelGroup, nodes, enc) {
+      return nodeLabelGroup.selectAll("text")
+        .data(nodes)
+        .enter()
+        .append("text")
+        .attr("class", "node-label")
+        .attr("x", (d) => -enc.getRadius(d) - 6)
+        .attr("y", 4)
+        .style("font-size", "11px")
+        .style("font-family", "sans-serif")
+        .style("pointer-events", "none")
+        .style("fill", "#444")
+        .text((d) => d.__displayLabel || (d.id || "").split("/").pop());
+    }
+
+    function makeRepaint({ nodes, enc, nodeBodySel, fnRingSel, unusedBadgeSel, labelSel }) {
+      return function repaintNodes() {
+        nodeBodySel
+          .attr("fill", (d) => enc.getNodeColor(d))
+          .attr("stroke", (d) => enc.getNodeStroke(d))
+          .attr("stroke-width", (d) => enc.getNodeStrokeWidth(d))
+          .style("opacity", (d) => (isUnusedFunctionNode(d) ? 0.25 : 1))
+          .style("stroke-dasharray", (d) => (isUnusedFunctionNode(d) ? "4,3" : null));
+
+        fnRingSel
+          .attr("r", (d) => enc.getRadius(d) + 4)
+          .attr("stroke", (d) => {
+            if (!isFunctionNode(d)) return "transparent";
+            return (d?.exported === true) ? EXPORTED_FUNCTION_COLOR : "rgba(0,0,0,0.25)";
+          })
+          .attr("stroke-opacity", (d) => (isFunctionNode(d) ? 0.95 : 0))
+          .attr("stroke-width", (d) => (isFunctionNode(d) ? getFunctionRingWidth(d) : 0));
+
+        unusedBadgeSel
+          .style("display", (d) => (isUnusedFunctionNode(d) ? "block" : "none"))
+          .attr("x", (d) => Math.max(8, enc.getRadius(d) * 0.7))
+          .attr("y", (d) => -Math.max(8, enc.getRadius(d) * 0.7))
+          .style("stroke", "#fff")
+          .style("fill", "#111")
+          .style("opacity", (d) => (isUnusedFunctionNode(d) ? 0.95 : 0));
+
+        labelSel
+          .style("font-weight", (d) => (d._changed ? "700" : "400"))
+          .style("fill", (d) => (d._changed ? "#111" : "#444"))
+          .style("opacity", (d) => (isUnusedFunctionNode(d) ? 0.35 : 1));
+      };
+    }
+
+    function wireInteractions({ nodeShapeSel, simulation, highlightLayer }) {
+      window.CodeGraphInteractions.attachNodeInteractions(nodeShapeSel, {
+        simulation,
+        thresholdPx: 5,
+        onSelected: async (node) => {
+          if (typeof window.onGraphNodeSelected === "function") {
+            await window.onGraphNodeSelected(node);
+          }
+          if (window.NAV_REDIRECT_ON_CLICK === true) {
+            handleNodeClick(node);
+          }
+
+          window.CodeGraphInteractions.drawHighlight(node, highlightLayer);
+        },
+        enableLegacyRedirect: false,
+        legacyRedirect: null
+      });
+    }
+
+    function wireSimulationTicks({ simulation, linkSel, nodeShapeSel, labelSel, highlightLayer, hullGroup, nodes }) {
+      simulation.on("tick", () => {
+        linkSel
+          .attr("x1", (d) => d.source.x)
+          .attr("y1", (d) => d.source.y)
+          .attr("x2", (d) => d.target.x)
+          .attr("y2", (d) => d.target.y);
+
+        nodeShapeSel.attr("transform", (d) => `translate(${d.x},${d.y})`);
+        labelSel.attr("transform", (d) => `translate(${d.x},${d.y})`);
+
+
+        window.CodeGraphInteractions.anchorHighlight(highlightLayer);
+        window.CodeGraphHulls.renderTypeHulls(hullGroup, nodes, clusterColor);
+      });
+    }
+
+    function wireSimulationEnd({ simulation, svgId, nodes, links, width, height }) {
+      simulation.on("end", () => {
+        window.CodeGraphUI.buildGraphDiagnosticsPanel(svgId, nodes, links, width, height);
+      });
+    }
+
+    function restoreHighlightIfNeeded({ nodes, highlightLayer }) {
+      // If the host app requests an initial highlight (e.g. deep-link), restore it
+      // AFTER the graph is rendered and the highlight layer exists.
+      if (!window.initHighlightId) return;
+
+      const match = nodes.find((n) => n.id === window.initHighlightId);
+      if (!match) return;
+
+      // Highlight helpers live in CodeGraphInteractions (keeps renderer thinner).
+      if (window.CodeGraphInteractions?.drawHighlight) {
+        window.CodeGraphInteractions.drawHighlight(match, highlightLayer);
+      }
+    }
+
+    function exposeState(svg, svgId, { nodes, links, simulation, highlightLayer }, renderRefs) {
+      svg.node().__graphState = { nodes, links, highlightLayer };
+      svg.node().__graphRenderRefs = { svgId, nodes, ...renderRefs };
+      window.lastGraphState = { nodes, links, simulation };
+      console.info("Graph state available at window.lastGraphState");
+    }
+
+    function installGraphMarkChanged(nodes, repaintNodes) {
+      window.graphMarkChanged = function graphMarkChanged(evt) {
+        try {
+          const id = String(evt?.id || "").trim();
+          if (!id) return;
+
+          for (const n of nodes) n._changed = false;
+
+          const hit = nodes.find((n) => n.id === id);
+          if (!hit) return;
+
+          hit._changed = true;
+          hit._lastChangeEv = String(evt?.ev || "change");
+          hit._lastChangedAt = String(evt?.at || "");
+
+          repaintNodes();
+        } catch (e) {
+          console.warn("graphMarkChanged failed:", e);
+        }
+      };
+    }
+
+    function wireLegendAndFilters({ svgId, metrics, nodes, links, nodeShapeSel, labelSel, linkSel, unusedBadgeSel }) {
+      // -----------------------------------------------------------------
+      // Legacy UI (kept for backward compatibility)
+      // -----------------------------------------------------------------
+      // These two functions existed before the unified Legend&Filter panel.
+      // Keeping them allows older pages / CSS to continue working while we
+      // migrate logic into `codeGraph/ui.js`.
+      window.CodeGraphUI.setupGraphFilters(svgId, metrics, nodeShapeSel, linkSel);
+      window.CodeGraphUI.buildGraphLegend(svgId, nodes, links, NODE_GROUP_COLORS, LINK_TYPE_COLORS, clusterColor);
+
+      // -----------------------------------------------------------------
+      // Unified Legend & Filter Panel (event-driven)
+      // -----------------------------------------------------------------
+      // Contract:
+      // - The panel owns filter state and emits `codegraph:filters-changed`.
+      // - The wiring that applies state to selections lives in CodeGraphUI
+      //   (NOT in the renderer) so re-renders don’t leak listeners.
+      //
+      // Renderer responsibility: provide the D3 selections that should be
+      // shown/hidden.
+
+      if (window.CodeGraphUI?.buildLegendFilterPanel) {
+        window.CodeGraphUI.buildLegendFilterPanel(svgId, nodes, links, {
+          nodeShapeSel,
+          labelSel,
+          linkSel,
+          unusedBadgeSel
+        });
+      }
+
+      // NEW: central wiring that listens once per svgId and applies filters.
+      // This is the missing piece when changing the panel did not update the graph.
+      if (window.CodeGraphUI?.attachLegendFilterWiring) {
+        window.CodeGraphUI.attachLegendFilterWiring(svgId, nodes, links, {
+          nodeShapeSel,
+          labelSel,
+          linkSel,
+          unusedBadgeSel
+        });
+      } else {
+        // Fail-soft in case ui.js hasn’t been updated yet.
+        console.warn(
+          "CodeGraphUI.attachLegendFilterWiring missing. Update public/assets/js/codeGraph/ui.js to enable live filter repaint."
+        );
+      }
+    }
+
+    // -------------------------------------------------------------------
+    // 1) Setup SVG
+    // -------------------------------------------------------------------
+    const svg = selectAndResetSvg(svgId);
+    if (!svg) return;
 
     const width = 1200;
     const height = 800;
+    applyViewBox(svg, width, height);
 
-    svg
-      .attr("viewBox", `0 0 ${width} ${height}`)
-      .attr("preserveAspectRatio", "xMidYMid meet");
+    const layers = buildLayers(svg);
+    const tooltip = getTooltipOrNull();
 
-    // 2) Layers (back → front)
-    // IMPORTANT: highlight is between node shapes and node labels (prevents ring-over-text)
-    const zoomLayer = svg.append("g");
-    const hullGroup = zoomLayer.append("g").attr("class", "hulls");
-    const linkGroup = zoomLayer.append("g").attr("class", "links");
-    const nodeShapeGroup = zoomLayer.append("g").attr("class", "node-shapes");
-    const highlightLayer = zoomLayer.append("g").attr("class", "highlight-layer");
-    const nodeLabelGroup = zoomLayer.append("g").attr("class", "node-labels");
-
-    // 3) Tooltip (singleton)
-    const tooltip = ensureTooltip();
-
-    // 4) Zoom + pan
-    svg.call(
-      d3.zoom()
-        .scaleExtent([0.1, 3])
-        .on("zoom", (event) => zoomLayer.attr("transform", event.transform))
-    );
-
-    // 5) Arrow marker
+    installZoom(svg, layers.zoomLayer);
     defineArrowMarker(svg);
 
-    // 6) Normalize incoming metrics (delegated)
-    const { nodes, links } = window.CodeGraphData.normalize(metrics);
+    // -------------------------------------------------------------------
+    // 2) Normalize + validate + init render state
+    // -------------------------------------------------------------------
+    const { nodes, links } = normalizeGraph(metrics);
+    validateGroupsOnce(nodes);
+    initLiveChangeState(nodes);
 
-    // ------------------------------------------------------------
-    // Live-change state (optional)
-    // ------------------------------------------------------------
-    // The backend can push file-change events (e.g. via SSE). The UI can call
-    // window.graphMarkChanged({ id, ev, at }) to update node visuals.
-    //
-    // Contract:
-    // - id: node id (project-relative path)
-    // - ev: change type (e.g. "change", "add", "unlink")
-    // - at: timestamp string (ISO or readable)
-    for (const n of nodes) {
-      if (typeof n._changed !== "boolean") n._changed = false;
-      if (typeof n._lastChangedAt !== "string") n._lastChangedAt = "";
-      if (typeof n._lastChangeEv !== "string") n._lastChangeEv = "";
-    }
+    // -------------------------------------------------------------------
+    // 3) Encoders + simulation
+    // -------------------------------------------------------------------
+    const enc = makeEncoders(nodes);
+    const simulation = createSimulation(nodes, links, width, height, enc.getRadius);
 
-    // 7) Visual encodings
-    const getNodeColor = (d) => {
-      const base = NODE_TYPE_COLORS[d.type] || NODE_TYPE_COLORS.file;
-      const c = d._complexityScore ?? 0;
-      const intensity = 0.25 + 0.75 * c;
-      return adjustColorIntensity(base, intensity);
-    };
+    // -------------------------------------------------------------------
+    // 4) Render
+    // -------------------------------------------------------------------
+    const linkSel = renderLinks(layers.linkGroup, links);
 
-    const getRadius = (d) => {
-      const s = d._lineScore ?? 0;
-      const minR = 6;
-      const maxR = 26;
-      return minR + (maxR - minR) * s;
-    };
+    const { nodeShapeSel, nodeBodySel, fnRingSel, unusedBadgeSel } =
+      renderNodes(layers.nodeShapeGroup, nodes, enc);
 
-    // Node fill color is based on type + complexity.
-    // Change highlighting is applied as an outline (stroke) so we never destroy the
-    // semantic encoding.
-    const getNodeStroke = (d) => (d._changed ? "#ff3b30" : "rgba(0,0,0,0.08)");
-    const getNodeStrokeWidth = (d) => (d._changed ? 3 : 1);
+    renderHits(nodeShapeSel, enc, tooltip);
 
-    // 8) Force simulation
-    const simulation = d3.forceSimulation(nodes)
-      .force("link", d3.forceLink(links).id((d) => d.id).distance(80).strength(0.35))
-      .force("charge", d3.forceManyBody().strength(-140))
-      .force("collide", d3.forceCollide().radius((d) => getRadius(d) + 4).iterations(2))
-      .force("x", d3.forceX(width / 2).strength(0.03))
-      .force("y", d3.forceY(height / 2).strength(0.03))
-      .force("center", d3.forceCenter(width / 2, height / 2));
+    const labelSel = renderLabels(layers.nodeLabelGroup, nodes, enc);
 
-    // 9) Render links
-    const linkSel = linkGroup.selectAll("line")
-      .data(links)
-      .enter()
-      .append("line")
-      .attr("class", "link")
-      .attr("stroke", (d) => LINK_TYPE_COLORS[d.type] || LINK_TYPE_COLORS.default)
-      .attr("stroke-width", 1.5)
-      .attr("stroke-opacity", 0.8)
-      .attr("marker-end", "url(#arrowhead)");
-
-    // 10) Render node shapes (g -> visible circle + invisible hit circle)
-    // Interactions attach to the nodeShapeSel (so labels are never part of hit-testing)
-    const nodeShapeSel = nodeShapeGroup.selectAll("g")
-      .data(nodes)
-      .enter()
-      .append("g")
-      .attr("class", "node");
-
-    // Visible node body
-    const nodeBodySel = nodeShapeSel.append("circle")
-      .attr("class", "node-body")
-      .attr("r", (d) => getRadius(d))
-      .attr("fill", (d) => getNodeColor(d))
-      .attr("stroke", (d) => getNodeStroke(d))
-      .attr("stroke-width", (d) => getNodeStrokeWidth(d));
-
-    // Transparent hit area (slightly larger, easier click/drag)
-    nodeShapeSel.append("circle")
-      .attr("class", "node-hit")
-      .attr("r", (d) => getRadius(d) + 8)
-      .attr("fill", "transparent")
-      .attr("stroke", "transparent")
-      .style("cursor", "pointer")
-      .on("mouseover", (event, d) => showTooltip(tooltip, event, d))
-      .on("mouseout", () => hideTooltip(tooltip));
-
-    // 11) Render labels in their own layer (ALWAYS above highlight ring)
-    const labelSel = nodeLabelGroup.selectAll("text")
-      .data(nodes)
-      .enter()
-      .append("text")
-      .attr("class", "node-label")
-      .attr("x", (d) => -getRadius(d) - 6)
-      .attr("y", 4)
-      .style("font-size", "11px")
-      .style("font-family", "sans-serif")
-      .style("pointer-events", "none")
-      .style("fill", "#444")
-      .text((d) => (d.id || "").split("/").pop());
-
-    // ------------------------------------------------------------
-    // Internal repaint helper (used by live-change updates)
-    // ------------------------------------------------------------
-    function repaintNodes() {
-      nodeBodySel
-        .attr("fill", (d) => getNodeColor(d))
-        .attr("stroke", (d) => getNodeStroke(d))
-        .attr("stroke-width", (d) => getNodeStrokeWidth(d));
-
-      // Optional subtle label emphasis for changed nodes
-      labelSel
-        .style("font-weight", (d) => (d._changed ? "700" : "400"))
-        .style("fill", (d) => (d._changed ? "#111" : "#444"));
-    }
-
-    // 12) Interactions (drag + click suppression + selection hook)
-    window.CodeGraphInteractions.attachNodeInteractions(nodeShapeSel, {
-      simulation,
-      thresholdPx: 5,
-      onSelected: async (node) => {
-        // 1) New behavior: render README + info panel
-        if (typeof window.onGraphNodeSelected === "function") {
-          await window.onGraphNodeSelected(node);
-        }
-
-        // 2) Optional legacy redirect
-        if (window.NAV_REDIRECT_ON_CLICK === true) {
-          handleNodeClick(node);
-        }
-
-        // 3) Always highlight the selected node (local feedback)
-        drawHighlight(node, highlightLayer);
-      },
-      enableLegacyRedirect: false,
-      legacyRedirect: null
-    });
-
-    // 13) Tick loop: positions + hulls + highlight anchoring
-    simulation.on("tick", () => {
-      linkSel
-        .attr("x1", (d) => d.source.x)
-        .attr("y1", (d) => d.source.y)
-        .attr("x2", (d) => d.target.x)
-        .attr("y2", (d) => d.target.y);
-
-      nodeShapeSel.attr("transform", (d) => `translate(${d.x},${d.y})`);
-      labelSel.attr("transform", (d) => `translate(${d.x},${d.y})`);
-
-      anchorHighlight(highlightLayer);
-
-      window.CodeGraphHulls.renderTypeHulls(hullGroup, nodes, clusterColor);
-    });
-
-    // 14) Simulation end → diagnostics panel
-    simulation.on("end", () => {
-      window.CodeGraphUI.buildGraphDiagnosticsPanel(svgId, nodes, links, width, height);
-    });
-
-    // 15) Restore highlight (optional)
-    if (window.initHighlightId) {
-      const match = nodes.find((n) => n.id === window.initHighlightId);
-      if (match) drawHighlight(match, highlightLayer);
-    }
-
-    // 16) Optional UI integrations: filters + legend
-    // NOTE: filters work on nodeShapeSel (the interactive selection)
-    window.CodeGraphUI.setupGraphFilters(svgId, metrics, nodeShapeSel, linkSel);
-    window.CodeGraphUI.buildGraphLegend(svgId, nodes, links, NODE_TYPE_COLORS, LINK_TYPE_COLORS, clusterColor);
-
-    // 17) Expose state for debugging / external helpers
-    svg.node().__graphState = { nodes, links, highlightLayer };
-    svg.node().__graphRenderRefs = {
-      svgId,
+    // -------------------------------------------------------------------
+    // 5) Repaint + initial apply (unused styles, rings, badges)
+    // -------------------------------------------------------------------
+    const repaintNodes = makeRepaint({
       nodes,
+      enc,
       nodeBodySel,
+      fnRingSel,
+      unusedBadgeSel,
+      labelSel
+    });
+    repaintNodes();
+
+    // -------------------------------------------------------------------
+    // 6) Wire interactions + simulation loops
+    // -------------------------------------------------------------------
+    wireInteractions({ nodeShapeSel, simulation, highlightLayer: layers.highlightLayer });
+
+    wireSimulationTicks({
+      simulation,
+      linkSel,
+      nodeShapeSel,
+      labelSel,
+      highlightLayer: layers.highlightLayer,
+      hullGroup: layers.hullGroup,
+      nodes
+    });
+
+    wireSimulationEnd({ simulation, svgId, nodes, links, width, height });
+    restoreHighlightIfNeeded({ nodes, highlightLayer: layers.highlightLayer });
+
+    // -------------------------------------------------------------------
+    // 7) UI integrations (legend/filter + event wiring)
+    // -------------------------------------------------------------------
+    wireLegendAndFilters({
+      svgId,
+      metrics,
+      nodes,
+      links,
+      nodeShapeSel,
+      labelSel,
+      linkSel,
+      unusedBadgeSel
+    });
+
+    // -------------------------------------------------------------------
+    // 8) Expose state + live change hook
+    // -------------------------------------------------------------------
+    exposeState(svg, svgId, { nodes, links, simulation, highlightLayer: layers.highlightLayer }, {
+      nodeBodySel,
+      fnRingSel,
       labelSel,
       repaintNodes
-    };
+    });
 
-    window.lastGraphState = { nodes, links, simulation };
-    console.info("Graph state available at window.lastGraphState");
-
-    // ------------------------------------------------------------
-    // Public live-change hook
-    // ------------------------------------------------------------
-    // Marks exactly one node as "changed" (latest change wins), updates its
-    // timestamp metadata on the node object, and repaints node visuals.
-    //
-    // Usage (from app.js):
-    //   window.graphMarkChanged({ id: "app/server.js", ev: "change", at: "2026-02-24T10:12:00Z" })
-    window.graphMarkChanged = function graphMarkChanged(evt) {
-      try {
-        const id = String(evt?.id || "").trim();
-        if (!id) return;
-
-        // Clear previous change marker (latest change wins)
-        for (const n of nodes) n._changed = false;
-
-        const hit = nodes.find((n) => n.id === id);
-        if (!hit) return;
-
-        hit._changed = true;
-        hit._lastChangeEv = String(evt?.ev || "change");
-        hit._lastChangedAt = String(evt?.at || "");
-
-        repaintNodes();
-      } catch (e) {
-        console.warn("graphMarkChanged failed:", e);
-      }
-    };
+    installGraphMarkChanged(nodes, repaintNodes);
 
     return { svg, nodes, links, simulation };
   };
 
-  /* ======================================================================
-     Public Helper: Highlight node by ID
-  ====================================================================== */
-
-  window.highlightGraphNode = function highlightGraphNode(svgId, nodeId) {
-    const svg = d3.select("#" + svgId);
-    if (svg.empty()) return;
-
-    const state = svg.node().__graphState;
-    if (!state) return;
-
-    const refs = svg.node().__graphRenderRefs;
-
-    const { nodes, highlightLayer } = state;
-    const d = nodes.find((n) => n.id === nodeId);
-    if (!d) return;
-
-    drawHighlight(d, highlightLayer);
-
-    // If live-change styling is active, ensure repaint is applied after external highlight.
-    if (refs?.repaintNodes) refs.repaintNodes();
-  };
 
   /* ======================================================================
      Tooltip helpers
   ====================================================================== */
 
-  function ensureTooltip() {
-    let t = d3.select("body").select("div.tooltip");
-    if (t.empty()) {
-      t = d3.select("body")
-        .append("div")
-        .attr("class", "tooltip")
-        .style("position", "absolute")
-        .style("background", "#333")
-        .style("color", "#fff")
-        .style("padding", "8px 12px")
-        .style("border-radius", "6px")
-        .style("pointer-events", "none")
-        .style("opacity", 0);
-    } else {
-      t.style("opacity", 0);
-    }
-    return t;
-  }
-
-  function showTooltip(tip, event, d) {
-    const esc = window.CodeGraphUI.escapeHtml;
-
-    const lines =
-      d.__displayLines ??
-      d.lines ??
-      d.loc ??
-      d.size ??
-      "?";
-
-    const cx =
-      d.__displayComplexity ??
-      d.complexity ??
-      d.cc ??
-      ((d._inbound || 0) + (d._outbound || 0)) ??
-      "?";
-
-    tip.transition().duration(150).style("opacity", 0.95);
-
-    tip
-      .html(
-        `<strong>${esc(d.id)}</strong>` +
-        `<br><small>Type: ${esc(d.type || "file")}</small>` +
-        `<br><small>Lines: ${esc(lines)}</small>` +
-        `<br><small>Complexity: ${esc(cx)}</small>`
-      )
-      .style("left", (event.pageX + 15) + "px")
-      .style("top", (event.pageY - 28) + "px");
-  }
-
-  function hideTooltip(tip) {
-    tip.transition().duration(150).style("opacity", 0);
-  }
 
   /* ======================================================================
      Marker / defs
   ====================================================================== */
 
+  /**
+   * Define an SVG marker for directed edges.
+   * Uses `currentColor` so the arrow inherits the edge color.
+   * @param {any} svg d3 selection for the root svg.
+   */
   function defineArrowMarker(svg) {
     svg.append("defs")
       .append("marker")
@@ -444,89 +960,28 @@
       .attr("orient", "auto")
       .append("path")
       .attr("d", "M0,-5L10,0L0,5")
-      .attr("fill", "#999")
+      .attr("fill", "currentColor")
       .style("stroke", "none");
-  }
-
-  /* ======================================================================
-     Highlight ring
-  ====================================================================== */
-
-  function drawHighlight(d, layer) {
-    layer.selectAll("*").remove();
-
-    const rBase = d._lineScore != null ? 10 + 20 * d._lineScore : 20;
-
-    layer.append("circle")
-      .datum(d)
-      .attr("cx", d.x)
-      .attr("cy", d.y)
-      .attr("r", rBase)
-      .attr("fill", "none")
-      .attr("stroke", "#FFD166")
-      .attr("stroke-width", 4)
-      .attr("pointer-events", "none")
-      .attr("opacity", 0.95);
-  }
-
-  function anchorHighlight(layer) {
-    const ring = layer.select("circle");
-    if (ring.empty()) return;
-    const d = ring.datum();
-    ring.attr("cx", d.x).attr("cy", d.y);
-  }
-
-  /* ======================================================================
-     Legacy navigation (optional)
-  ====================================================================== */
-
-  function handleNodeClick(d) {
-    const file = resolveFile(d);
-    if (!file) {
-      console.info("No resolvable file for node:", d);
-      return;
-    }
-
-    const base = window.CMS_TOOLS_BASE || "/cms/_tools";
-    const highlightId = encodeURIComponent(d.id);
-
-    const url = `${base}/viewD3CodeNodes?file=${encodeURIComponent(file)}&highlight=${highlightId}`;
-    window.location.href = url;
-  }
-
-  function resolveFile(d) {
-    const normalize = (p) => (p ? p.replace(/\\/g, "/") : null);
-
-    if (d?.file) return normalize(d.file);
-    if (typeof d?.id !== "string") return null;
-
-    const id = normalize(d.id);
-    if (!id) return null;
-
-    const lower = id.toLowerCase();
-
-    const looksLikeFile =
-      /\.php$/.test(lower) ||
-      lower.includes("app/") ||
-      lower.includes("cms/") ||
-      lower.includes("public/") ||
-      lower.includes("modules/") ||
-      lower.includes("config/") ||
-      lower.includes("core/");
-
-    return looksLikeFile ? id : null;
   }
 
   /* ======================================================================
      Dev-time assertions
   ====================================================================== */
 
+  /**
+   * Dev-time assertion helper.
+   * Verifies required global modules are loaded in the correct order.
+   */
   function assertGlobals() {
     const missing = [];
 
     if (!window.CodeGraphData?.normalize) missing.push("CodeGraphData.normalize");
     if (!window.CodeGraphInteractions?.attachNodeInteractions) missing.push("CodeGraphInteractions.attachNodeInteractions");
+    if (!window.CodeGraphInteractions?.drawHighlight) missing.push("CodeGraphInteractions.drawHighlight");
+    if (!window.CodeGraphInteractions?.anchorHighlight) missing.push("CodeGraphInteractions.anchorHighlight");
+    
     if (!window.CodeGraphHulls?.renderTypeHulls) missing.push("CodeGraphHulls.renderTypeHulls");
+    
     if (!window.CodeGraphUI?.buildGraphDiagnosticsPanel) missing.push("CodeGraphUI.buildGraphDiagnosticsPanel");
     if (!window.CodeGraphUI?.setupGraphFilters) missing.push("CodeGraphUI.setupGraphFilters");
     if (!window.CodeGraphUI?.buildGraphLegend) missing.push("CodeGraphUI.buildGraphLegend");

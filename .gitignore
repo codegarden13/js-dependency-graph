@@ -1,3 +1,9 @@
+# only the main readme must be included
+/app/**/readme.md 
+
+# Doku is private and contains the links to the readmes in the structure
+_doku
+
 # Temp notes
 
 _*.md 

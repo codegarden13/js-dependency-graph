@@ -1,4 +1,4 @@
-// public/assets/js/interactions.js
+// public/assets/js/codeGraph/interactions.js
 /**
  * Graph Interactions (UI-side)
  * ===========================
@@ -21,8 +21,8 @@
    *
    * Options:
    * - thresholdPx: drag movement threshold for click suppression (default: 3)
-   * - onSelected(node): async/sync selection callback (e.g. info panel + README)
-   * - legacyRedirect(node): optional legacy redirect handler
+   * - onSelected(node, event): async/sync selection callback (e.g. info panel + README)
+   * - legacyRedirect(node, event): optional legacy redirect handler
    * - enableLegacyRedirect: boolean flag gate
    */
   CodeGraphInteractions.attachNodeInteractions = function attachNodeInteractions(nodeSel, options) {
@@ -46,9 +46,8 @@
       d.fy = event.y;
     }
 
-    function dragEnded(event, d) {
-      d.fx = null;
-      d.fy = null;
+    function dragEnded() {
+      // Let the simulation settle back down.
       setTimeout(() => simulation.alphaTarget(0), 300);
     }
 
@@ -95,10 +94,55 @@
             dragged(event, d);
           })
           .on("end", (event, d) => {
+            // Release the fixed position.
+            d.fx = null;
+            d.fy = null;
             dragEnded(event, d);
           })
       );
   };
+
+  /* ====================================================================== */
+  /* Highlight ring                                                          */
+  /* ====================================================================== */
+
+  /**
+   * Draw a highlight ring around the selected node.
+   * @param {object} d Node datum.
+   * @param {any} layer d3 selection of the highlight layer.
+   */
+  function drawHighlight(d, layer) {
+    if (!layer) return;
+    layer.selectAll("*").remove();
+
+    const rBase = d?._lineScore != null ? 10 + 20 * d._lineScore : 20;
+
+    layer.append("circle")
+      .datum(d)
+      .attr("cx", d?.x)
+      .attr("cy", d?.y)
+      .attr("r", rBase)
+      .attr("fill", "none")
+      .attr("stroke", "#FFD166")
+      .attr("stroke-width", 4)
+      .attr("pointer-events", "none")
+      .attr("opacity", 0.95);
+  }
+
+  /**
+   * Keep highlight ring anchored to its datum across simulation ticks.
+   * @param {any} layer d3 selection of the highlight layer.
+   */
+  function anchorHighlight(layer) {
+    if (!layer) return;
+    const ring = layer.select("circle");
+    if (ring.empty()) return;
+    const d = ring.datum();
+    ring.attr("cx", d?.x).attr("cy", d?.y);
+  }
+
+  CodeGraphInteractions.drawHighlight = drawHighlight;
+  CodeGraphInteractions.anchorHighlight = anchorHighlight;
 
   window.CodeGraphInteractions = CodeGraphInteractions;
 })();
