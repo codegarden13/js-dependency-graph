@@ -92,6 +92,32 @@ export const AUTO_ASSET_EXT_ALLOW = new Set([
   // images
   ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico"
 ]);
+// Image extensions (used for classification in `classifyFileByExt`).
+const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico"]);
+
+// Code extensions (used for classification in `classifyFileByExt`).
+const CODE_EXTS = new Set([".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"]);
+
+// Documentation / text extensions (used for classification in `classifyFileByExt`).
+const DOC_EXTS = new Set([".md", ".txt", ".html", ".htm", ".css"]);
+
+function normalizeExt(fileAbs) {
+  return String(path.extname(fileAbs || "")).toLowerCase();
+}
+
+function extTypeToken(ext) {
+  // Stable subtype token: drop the leading dot.
+  return ext ? ext.slice(1) : "";
+}
+
+function classifyBySet(ext, kind, set) {
+  if (!set.has(ext)) return null;
+  return { kind, type: extTypeToken(ext), ext };
+}
+
+function classifyDataFallback(ext) {
+  return { kind: "data", type: ext ? extTypeToken(ext) : "data", ext };
+}
 
 // File types we can cheaply parse for additional references (non-JS).
 export const AUTO_PARSEABLE_TEXT_EXT = new Set([
@@ -659,23 +685,17 @@ function toProjectRelativeId(projectRootAbs, absPath) {
  * @returns {{ kind: "code"|"doc"|"data"|"image", type: string, ext: string }}
  */
 function classifyFileByExt(fileAbs) {
-  const ext = String(path.extname(fileAbs || "")).toLowerCase();
+  const ext = normalizeExt(fileAbs);
 
-  // code
-  if (ext === ".js" || ext === ".mjs" || ext === ".cjs" || ext === ".ts" || ext === ".tsx" || ext === ".jsx") {
-    return { kind: "code", type: ext.replace(/^\./, ""), ext };
-  }
+  const code = classifyBySet(ext, "code", CODE_EXTS);
+  if (code) return code;
 
-  // docs
-  if (ext === ".md" || ext === ".txt" || ext === ".html" || ext === ".htm" || ext === ".css") {
-    return { kind: "doc", type: ext.replace(/^\./, ""), ext };
-  }
+  const doc = classifyBySet(ext, "doc", DOC_EXTS);
+  if (doc) return doc;
 
-  // images
-  if (ext === ".png" || ext === ".jpg" || ext === ".jpeg" || ext === ".gif" || ext === ".svg" || ext === ".webp" || ext === ".ico") {
-    return { kind: "image", type: ext.replace(/^\./, ""), ext };
-  }
+  const img = classifyBySet(ext, "image", IMAGE_EXTS);
+  if (img) return img;
 
   // data (default bucket for allowed non-binary artifacts)
-  return { kind: "data", type: ext ? ext.replace(/^\./, "") : "data", ext };
+  return classifyDataFallback(ext);
 }
