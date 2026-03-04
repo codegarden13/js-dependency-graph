@@ -24,6 +24,7 @@
  * - window.NAV_REDIRECT_ON_CLICK === true: enables legacy redirects on click
  * - window.initHighlightId: if set, highlights a node after render
  * - window.graphMarkChanged({ id, ev, at }): optional hook to mark a node as changed (live file watch)
+ * - window.__codeGraphAppName: optional; set by app.js so the renderer can update the graph header
  */
 
 (function () {
@@ -930,13 +931,44 @@
 
     installGraphMarkChanged(nodes, repaintNodes);
 
+    // -------------------------------------------------------------------
+    // 9) Update graph header (app name + function count + LOC)
+    // -------------------------------------------------------------------
+    // This must run *after* normalization and render, because it needs the
+    // final nodes array.
+    //
+    // Source of app name (best-effort):
+    // - metrics.appName / metrics.meta.appName (preferred)
+    // - window.__codeGraphAppName (set by app.js during runAnalysis)
+    // - fallback: ""
+    try {
+      const appName = String(
+        metrics?.appName ??
+        metrics?.meta?.appName ??
+        window.__codeGraphAppName ??
+        ""
+      ).trim();
+
+      if (window.CodeGraphUI?.updateGraphHeader) {
+        const fnCount = nodes.filter((n) => String(n?.type || n?.kind) === "function").length;
+
+        let loc = 0;
+        for (const n of nodes) {
+          loc += Number(n?.lines ?? n?.locLines ?? 0) || 0;
+        }
+
+        window.CodeGraphUI.updateGraphHeader({
+          appName,
+          functions: fnCount,
+          loc
+        });
+      }
+    } catch {
+      // ignore
+    }
+
     return { svg, nodes, links, simulation };
   };
-
-
-  /* ======================================================================
-     Tooltip helpers
-  ====================================================================== */
 
 
   /* ======================================================================
@@ -986,6 +1018,8 @@
     if (!window.CodeGraphUI?.setupGraphFilters) missing.push("CodeGraphUI.setupGraphFilters");
     if (!window.CodeGraphUI?.buildGraphLegend) missing.push("CodeGraphUI.buildGraphLegend");
     if (!window.CodeGraphUI?.escapeHtml) missing.push("CodeGraphUI.escapeHtml");
+    if (!window.CodeGraphUI?.attachLegendFilterWiring) missing.push("CodeGraphUI.attachLegendFilterWiring");
+
 
     if (missing.length) {
       console.warn(

@@ -122,35 +122,9 @@ export async function buildMetricsFromEntrypoint({
   /* 1) INITIALIZATION                                                        */
   /* ------------------------------------------------------------------------ */
 
-  // Strict invariants: fail fast on invalid configuration.
-  if (!projectRoot || typeof projectRoot !== "string") {
-    throw new Error("Invalid projectRoot (missing or not a string)." );
-  }
-  if (!entryAbs || typeof entryAbs !== "string") {
-    throw new Error("Invalid entryAbs (missing or not a string)." );
-  }
-
-  const projectRootAbs = path.resolve(projectRoot);
-
-  const rootStat = fs.statSync(projectRootAbs, { throwIfNoEntry: false });
-  if (!rootStat || !rootStat.isDirectory()) {
-    throw new Error(`projectRoot is not a directory or does not exist: ${projectRootAbs}`);
-  }
-
-  const entryNorm = path.resolve(entryAbs);
-  const entryStat = fs.statSync(entryNorm, { throwIfNoEntry: false });
-  if (!entryStat || !entryStat.isFile()) {
-    throw new Error(`entryAbs is not a file or does not exist: ${entryNorm}`);
-  }
-
-  if (!isInsideRoot(projectRootAbs, entryNorm)) {
-    throw new Error(`entryAbs is outside projectRoot. entry=${entryNorm} root=${projectRootAbs}`);
-  }
+  const { projectRootAbs, entryNorm } = validateEntrypointArgs(projectRoot, entryAbs);
 
   // BFS state
-  // - `visited`: files already processed
-  // - `queue`:   pending files to process (BFS)
-  // - `queued`:  fast membership check to prevent duplicate queue entries
   const visited = new Set();
   const queue = [];
   const queued = new Set();
@@ -158,104 +132,27 @@ export async function buildMetricsFromEntrypoint({
   // Graph storage (dedupe + stable output arrays)
   const store = new GraphStore();
 
-  /**
-   * Add a node after enforcing the canonical fields contract.
-   * @param {any} n
-   */
   const addNode = (n) => {
     ensureCanonicalNodeFields(n);
     store.ensureNode(n);
   };
 
-  /**
-   * Add a link (deduped by GraphStore).
-   * @param {string} s
-   * @param {string} t
-   * @param {string} ty
-   */
   const addLink = (s, t, ty) => {
     store.ensureLink(s, t, ty);
   };
 
-  // Always include a stable root node (".") so the UI can anchor the structure graph.
-  addNode({
-    id: ".",
-    file: ".",
-    lines: 0,
-    complexity: 0,
-    headerComment: "",
-    kind: "root"
-  });
+  addStableRootNode(addNode);
 
-  // ------------------------------------------------------------------------
-  // 1.1) PROJECT STRUCTURE SCAN (include-graph)
-  // ------------------------------------------------------------------------
-  // Project structure scan depth is controlled by `maxDirDepth` (UI-selected).
+  const enqueue = createEnqueue({ visited, queued, queue });
 
-  /**
-   * Enqueue a file for BFS parsing.
-   *
-   * - Normalizes the path
-   * - Skips already-visited files
-   * - Avoids duplicates in the queue
-   */
-  const enqueue = (absPath) => {
-    const p = path.resolve(absPath);
-    if (!p) throw new Error("enqueue(): empty path");
-    if (visited.has(p)) return;
-    if (queued.has(p)) return;
-    queued.add(p);
-    queue.push(p);
-  };
+  /* ------------------------------------------------------------------------ */
+  /* 1.1) PROJECT STRUCTURE SCAN (include-graph)                               */
+  /* ------------------------------------------------------------------------ */
 
-  scanProjectTree({
-    projectRootAbs,
-    maxDepth: maxDirDepth,
-    ignoreDirs: ["node_modules", ".git", "dist", "build", ".next", ".cache", "coverage"],
-    onDir: (dir, parent) => {
-      const n = {
-        id: dir.id,
-        file: dir.id,
-        lines: 0,
-        complexity: 0,
-        headerComment: "",
-        kind: "dir"
-      };
-      addNode(n);
-
-      if (parent) {
-        addLink(parent.id, dir.id, "include");
-      }
-    },
-    onFile: (file, parent) => {
-      const ext = String(file.ext || "").toLowerCase();
-      const kind = (ext === ".js" || ext === ".mjs" || ext === ".cjs" || ext === ".ts" || ext === ".tsx" || ext === ".jsx")
-        ? "file"
-        : "asset";
-
-      const n = {
-        id: file.id,
-        file: file.id,
-        lines: 0,
-        complexity: 0,
-        headerComment: "",
-        kind,
-        ext
-      };
-      addNode(n);
-
-      if (parent) {
-        addLink(parent.id, file.id, "include");
-      }
-
-      if (PARSEABLE_EXTS.has(ext)) {
-        enqueue(file.abs);
-      }
-    }
-  });
+  scanStructure({ projectRootAbs, maxDirDepth, addNode, addLink, enqueue });
 
   // Always ensure the entrypoint is analyzed, even if outside scan depth
-  enqueue(entryAbs);
+  enqueue(entryNorm);
 
   const toRelId = (absPath) => toProjectRelativeId(projectRootAbs, absPath);
 
@@ -263,9 +160,6 @@ export async function buildMetricsFromEntrypoint({
   /** @type {Array<{ fromId: string, targetFileId: string, targetExport: string|null }>} */
   const pendingCalls = [];
 
-  // Non-fatal diagnostics collected during analysis.
-  // The analyzer is intentionally conservative and must not crash on unresolved
-  // symbols (globals, DI, monkey-patching, CommonJS dynamic exports, etc.).
   /** @type {Array<{ kind: string, message: string, fromId?: string, targetFileId?: string, targetExport?: string|null }>} */
   const warnings = [];
 
@@ -273,338 +167,44 @@ export async function buildMetricsFromEntrypoint({
   /* 2) BFS TRAVERSAL                                                         */
   /* ------------------------------------------------------------------------ */
 
-  while (queue.length > 0) {
-    const abs = queue.shift();
-    if (!abs) continue;
-
-    const absNorm = path.resolve(abs);
-    queued.delete(absNorm);
-
-    if (visited.has(absNorm)) continue;
-    visited.add(absNorm);
-
-    // Strict: queued paths must exist and be files.
-    statFileOrThrow(absNorm);
-
-    const code = readUtf8(absNorm);
-    const parsed = parseFile(code, absNorm);
-    if (!parsed || typeof parsed !== "object") {
-      throw new Error(`parseFile returned no result for: ${absNorm}`);
-    }
-
-    const fileId = toRelId(absNorm);
-
-    /* --------------------------------------------------------------------- */
-    /* 2.1) FILE NODE                                                         */
-    /* --------------------------------------------------------------------- */
-
-    const fileNode = {
-      id: fileId,
-      file: fileId,
-      lines: Number(parsed?.lines || 0),
-      complexity: Number(parsed?.complexity || 0),
-      headerComment: String(parsed?.headerComment || ""),
-      kind: "file"
-    };
-    addNode(fileNode);
-
-    /* --------------------------------------------------------------------- */
-    /* 2.2) FUNCTION NODES (exported + internal)                               */
-    /* --------------------------------------------------------------------- */
-    // Convention:
-    // - parseFile(): fn.id like "boot@12"
-    // - graph: function node id becomes "<fileId>::<fn.id>"
-    if (Array.isArray(parsed?.functions) && parsed.functions.length) {
-      for (const fn of parsed.functions) {
-        const fnIdRaw = String(fn?.id || "").trim();
-        if (!fnIdRaw) continue;
-
-        const fnNodeId = `${fileId}::${fnIdRaw}`;
-
-        const locLines = Number(fn?.locLines || 0);
-        const startLine = Number(fn?.startLine || 0);
-
-        const fnNode = {
-          id: fnNodeId,
-          file: fileId,
-
-          // Use function span (LOC) as size driver in the renderer.
-          // Falls back to 1 so functions are not all identical in size.
-          lines: locLines > 0 ? locLines : 1,
-
-          complexity: Number(fn?.complexity || 0),
-          headerComment: "",
-
-          kind: "function",
-          name: String(fn?.name || ""),
-          exported: Boolean(fn?.exported),
-          startLine
-        };
-        addNode(fnNode);
-
-        // Containment edge: file -> function
-        addLink(fileId, fnNodeId, "include");
-      }
-    }
-
-    /* --------------------------------------------------------------------- */
-    /* 2.3) AUTO MODE: FILE/DIR/ASSET REFS                                     */
-    /* --------------------------------------------------------------------- */
-    // Delegated to autoMode.js (keeps this builder slim).
-    applyAutoRefs({
-      projectRootAbs,
-      fromFileAbs: absNorm,
-      fromFileId: fileId,
-      parsed,
-      toRelId,
-      ensureNode: (n) => addNode(n),
-      ensureLink: (s, t, ty) => addLink(s, t, ty),
-      enqueue,
-      hasVisited: (absPath) => visited.has(path.resolve(absPath))
-    });
-
-    /* --------------------------------------------------------------------- */
-    /* 2.4) IMPORT EDGES ("use")                                               */
-    /* --------------------------------------------------------------------- */
-    for (const spec of parsed?.imports || []) {
-      const resolvedAbs = resolveImports(absNorm, spec, projectRootAbs);
-      if (!resolvedAbs) continue;
-
-      const targetAbs = path.resolve(resolvedAbs);
-
-      // Safety: never traverse outside selected app root
-      if (!isInsideRoot(projectRootAbs, targetAbs)) continue;
-
-      const targetId = toRelId(targetAbs);
-
-      addLink(fileId, targetId, "use");
-
-      if (!visited.has(targetAbs)) {
-        enqueue(targetAbs);
-      }
-    }
-
-    /* --------------------------------------------------------------------- */
-    /* 2.5) CALL EDGES ("call")                                               */
-    /* --------------------------------------------------------------------- */
-    // parseFile(): calls like
-    //   { from: "requestRedraw@22" | null, callee: "boot" }
-    //   { from: "normalizeYears@353", callee: "app/public/assets/js/ui.js::clampToDom@342" }
-    //
-    // We resolve two classes of calls:
-    //  (A) Intra-file calls to locally declared functions (best-effort)
-    //  (B) Cross-file calls to imported symbols via parsed.importBindings
-    if (Array.isArray(parsed?.calls) && parsed.calls.length) {
-      // Local helper: resolve a function node in a given file by "<name>@" prefix.
-      const resolveFnIdByNameInFile = (fileIdForSearch, fnName) => {
-        const nm = String(fnName || "").trim();
-        if (!nm) return null;
-        const prefix = `${fileIdForSearch}::${nm}@`;
-        return store.findNodeIdByPrefix(prefix);
-      };
-
-      for (const call of parsed.calls) {
-        const calleeRaw = String(call?.callee || "").trim();
-        if (!calleeRaw) continue;
-
-        // Source: function node if available, else file node.
-        const fromFnRaw = String(call?.from || "").trim();
-
-        // parseAst/parseFile may already emit fully-qualified function ids
-        // ("<fileId>::<name>@<line>"). Only prefix when we got a raw token
-        // like "normalizeYears@353".
-        const fromId = fromFnRaw
-          ? (fromFnRaw.includes("::") ? fromFnRaw : `${fileId}::${fromFnRaw}`)
-          : fileId;
-
-
-        // ------------------------------------------------------------------
-// (A0) Intra-file call by bare name (most common output from parseFile.js)
-// ------------------------------------------------------------------
-// parseFile.js emits identifier calls as bare names (e.g. "clampToDom").
-// If a function node exists in the SAME file with "<name>@<line>", link it.
-const localByName = resolveFnIdByNameInFile(fileId, calleeRaw);
-if (localByName) {
-  addLink(fromId, localByName, "call");
-  continue;
-}
-
-        // ------------------------------------------------------------------
-        // (A) Intra-file calls (local helpers)
-        // ------------------------------------------------------------------
-        // If parseAst/parseFile already provides a qualified function node id,
-        // we can link directly. This is the most reliable case.
-        if (calleeRaw.startsWith(`${fileId}::`)) {
-          // 1) Direct hit
-          if (store.findNodeIdByPrefix(calleeRaw) === calleeRaw) {
-            addLink(fromId, calleeRaw, "call");
-            continue;
-          }
-
-          // 2) Best-effort: if the callee is missing line info or differs slightly,
-          // try to resolve by "<name>@" prefix.
-          // Example input: "<fileId>::clampToDom" -> match "<fileId>::clampToDom@342"
-          const tail = calleeRaw.slice((fileId + "::").length);
-          const nameOnly = tail.split("@")[0];
-          const match = resolveFnIdByNameInFile(fileId, nameOnly);
-          if (match) {
-            addLink(fromId, match, "call");
-            continue;
-          }
-
-          // If we cannot resolve locally, stay neutral: do not crash.
-          warnings.push({
-            kind: "unresolved-local-call",
-            message: `Unresolved local call target '${calleeRaw}' in '${fileId}'.`,
-            fromId,
-            targetFileId: fileId,
-            targetExport: null
-          });
-          continue;
-        }
-
-        // ------------------------------------------------------------------
-        // (B) Cross-file calls via import bindings
-        // ------------------------------------------------------------------
-        // Only resolve calls if the callee maps to an import binding.
-        if (!parsed.importBindings) continue;
-
-        const binding = parsed.importBindings[calleeRaw];
-        if (!binding || !binding.source) continue;
-
-        const resolvedAbs = resolveImports(absNorm, binding.source, projectRootAbs);
-        if (!resolvedAbs) continue;
-
-        const targetAbs = path.resolve(resolvedAbs);
-        if (!isInsideRoot(projectRootAbs, targetAbs)) continue;
-
-        const targetFileId = toRelId(targetAbs);
-
-        // Prefer binding.imported (named/default) as exported function target
-        const imported = binding.imported != null ? String(binding.imported) : null;
-
-        if (imported && imported !== "*" && imported !== "namespace" && imported !== "default") {
-          // NOTE:
-          // Function node ids are "<fileId>::<name@line>".
-          // Without a symbol table, we resolve via prefix match in a second pass.
-          pendingCalls.push({ fromId, targetFileId, targetExport: imported });
-        } else {
-          // Namespace/default/CJS: only module-level call edge is known
-          addLink(fromId, targetFileId, "call");
-        }
-      }
-    }
-  }
+  bfsTraverse({
+    queue,
+    queued,
+    visited,
+    projectRootAbs,
+    store,
+    addNode,
+    addLink,
+    enqueue,
+    toRelId,
+    pendingCalls,
+    warnings
+  });
 
   /* ------------------------------------------------------------------------ */
   /* 3) RESOLVE DEFERRED CALL TARGETS                                          */
   /* ------------------------------------------------------------------------ */
 
-  if (pendingCalls.length) {
-    for (const c of pendingCalls) {
-      const fromId = c.fromId;
-      const targetFileId = c.targetFileId;
-      const exp = c.targetExport;
-
-      if (exp) {
-        // Find any function node in that file whose id starts with "<name>@"
-        const prefix = `${targetFileId}::${exp}@`;
-        const match = store.findNodeIdByPrefix(prefix);
-
-        if (match) {
-          addLink(fromId, match, "call");
-          continue;
-        }
-      }
-
-      // Neutral: if a named import was requested but no function node matches, do not crash.
-      // This can happen in CommonJS projects, with dynamic exports, or when the parser cannot
-      // reliably map symbols to function-node ids.
-      if (exp) {
-        warnings.push({
-          kind: "unresolved-call-target",
-          message:
-            `Unresolved call target: cannot find exported function '${exp}' in '${targetFileId}'. ` +
-            `Falling back to a module-level call edge.`,
-          fromId,
-          targetFileId,
-          targetExport: exp
-        });
-
-        // Fallback: preserve the semantic that "something in that module was called".
-        addLink(fromId, targetFileId, "call");
-        continue;
-      }
-
-      // Namespace/CJS: module-level call edge is acceptable because the target is not a named symbol.
-      addLink(fromId, targetFileId, "call");
-    }
-  }
+  resolveDeferredCalls({ pendingCalls, store, addLink, warnings });
 
   /* ------------------------------------------------------------------------ */
   /* 4) STRICT SANITY CHECK (NO FALLBACKS)                                     */
   /* ------------------------------------------------------------------------ */
 
-  // If we only have the root node or no meaningful edges, the entry/config is wrong.
-  // Fail fast with a clear message so the frontend can show it.
-  if (store.nodes.length <= 1) {
-    throw new Error(
-      "Analysis produced no nodes. Check that your entryAbs points to an existing file inside projectRoot."
-    );
-  }
-
-  const meaningfulLinks = store.links.filter(l => String(l?.type || "") !== "include");
-  if (meaningfulLinks.length === 0) {
-    throw new Error(
-      "Analysis produced no dependency links (use/call). This usually means the entry file has no resolvable local imports, or parsing failed."
-    );
-  }
+  strictSanityCheck(store);
 
   /* ------------------------------------------------------------------------ */
   /* 5) FINALIZE + RETURN PAYLOAD                                              */
   /* ------------------------------------------------------------------------ */
 
-  // Backend enrichment: compute derived per-node stats (in/out degree, call counts,
-  // and small caller/callee lists). The frontend can use these for badges/rings
-  // without recalculating on every render.
   finalizeGraphStats(store.nodes, store.links);
 
-  /* ------------------------------------------------------------------------ */
-  /* 5.1) UNUSED FUNCTIONS (BEST-EFFORT)                                      */
-  /* ------------------------------------------------------------------------ */
-  // Definition (pragmatic):
-  // - kind === "function"
-  // - not exported
-  // - no inbound call edges
-  //
-  // Notes:
-  // - This is a static, best-effort heuristic.
-  // - Exported functions are treated as "public API" and therefore not marked.
-  // - Dynamic dispatch / reflection can produce false positives.
-  for (const n of store.nodes) {
-    if (!n || typeof n !== "object") continue;
-    if (n.kind !== "function") continue;
-
-    const exported = Boolean(n.exported);
-    const inCalls = Number(n._inCalls || 0);
-
-    n._unused = !exported && inCalls === 0;
-  }
-
-  // Ensure every exported node contains the canonical fields required by the UI.
-  for (const n of store.nodes) {
-    ensureCanonicalNodeFields(n);
-
-    // Hard requirements for function filtering (no UI defaults).
-    if (n.kind === "function") {
-      if (typeof n.exported !== "boolean") n.exported = false;
-      if (!Number.isFinite(n.startLine)) n.startLine = 0;
-    }
-  }
+  markUnusedFunctions(store.nodes);
+  enforceCanonicalFields(store.nodes);
 
   return {
     meta: {
-      entry: toRelId(entryAbs),
+      entry: toRelId(entryNorm),
       urlInfo,
       layerOrder: DEFAULT_LAYER_ORDER,
       layerY: defaultLayerY(DEFAULT_LAYER_ORDER),
@@ -618,6 +218,413 @@ if (localByName) {
 /* ========================================================================== */
 /* INTERNAL HELPERS                                                           */
 /* ========================================================================== */
+
+/** Validate and normalize the entrypoint builder arguments (strict). */
+function validateEntrypointArgs(projectRoot, entryAbs) {
+  assertNonEmptyString(projectRoot, "projectRoot");
+  assertNonEmptyString(entryAbs, "entryAbs");
+
+  const projectRootAbs = path.resolve(projectRoot);
+  statDirOrThrow(projectRootAbs, "projectRoot");
+
+  const entryNorm = path.resolve(entryAbs);
+  statFileOrThrow(entryNorm);
+
+  assertInsideRootOrThrow(projectRootAbs, entryNorm);
+
+  return { projectRootAbs, entryNorm };
+}
+
+/** Create a strict BFS enqueue function with duplicate prevention. */
+function createEnqueue({ visited, queued, queue }) {
+  return (absPath) => {
+    const p = path.resolve(absPath);
+    if (!p) throw new Error("enqueue(): empty path");
+    if (visited.has(p)) return;
+    if (queued.has(p)) return;
+    queued.add(p);
+    queue.push(p);
+  };
+}
+
+/** Add the stable root node (".") so the UI can anchor the graph. */
+function addStableRootNode(addNode) {
+  addNode({
+    id: ".",
+    file: ".",
+    lines: 0,
+    complexity: 0,
+    headerComment: "",
+    kind: "root"
+  });
+}
+
+/** Scan project structure (include-graph) and enqueue parseable files. */
+function scanStructure({ projectRootAbs, maxDirDepth, addNode, addLink, enqueue }) {
+  scanProjectTree({
+    projectRootAbs,
+    maxDepth: maxDirDepth,
+    ignoreDirs: ["node_modules", ".git", "dist", "build", ".next", ".cache", "coverage"],
+    onDir: (dir, parent) => {
+      addNode({
+        id: dir.id,
+        file: dir.id,
+        lines: 0,
+        complexity: 0,
+        headerComment: "",
+        kind: "dir"
+      });
+
+      if (parent) addLink(parent.id, dir.id, "include");
+    },
+    onFile: (file, parent) => {
+      const ext = String(file.ext || "").toLowerCase();
+      const kind = (ext === ".js" || ext === ".mjs" || ext === ".cjs" || ext === ".ts" || ext === ".tsx" || ext === ".jsx")
+        ? "file"
+        : "asset";
+
+      addNode({
+        id: file.id,
+        file: file.id,
+        lines: 0,
+        complexity: 0,
+        headerComment: "",
+        kind,
+        ext
+      });
+
+      if (parent) addLink(parent.id, file.id, "include");
+      if (PARSEABLE_EXTS.has(ext)) enqueue(file.abs);
+    }
+  });
+}
+
+/** Iterate parsed functions safely (no-op if missing/empty). */
+function forEachParsedFunction(parsed, fn) {
+  const fns = parsed?.functions;
+  if (!Array.isArray(fns) || fns.length === 0) return;
+  for (const item of fns) fn(item);
+}
+
+/** Build a canonical function node (returns null if fn has no usable id). */
+function buildFunctionNode(fileId, fn) {
+  const fnIdRaw = String(fn?.id || "").trim();
+  if (!fnIdRaw) return null;
+
+  const fnNodeId = `${fileId}::${fnIdRaw}`;
+
+  const locLines = Number(fn?.locLines || 0);
+  const startLine = Number(fn?.startLine || 0);
+
+  return {
+    id: fnNodeId,
+    file: fileId,
+
+    // Use function span (LOC) as size driver in the renderer.
+    // Falls back to 1 so functions are not all identical in size.
+    lines: locLines > 0 ? locLines : 1,
+
+    complexity: Number(fn?.complexity || 0),
+    headerComment: "",
+
+    kind: "function",
+    name: String(fn?.name || ""),
+    exported: Boolean(fn?.exported),
+    startLine
+  };
+}
+
+/** Add function nodes for a parsed file (and containment edges). */
+function addFunctionNodes({ parsed, fileId, addNode, addLink }) {
+  forEachParsedFunction(parsed, (fn) => {
+    const node = buildFunctionNode(fileId, fn);
+    if (!node) return;
+
+    addNode(node);
+    // Containment edge: file -> function
+    addLink(fileId, node.id, "include");
+  });
+}
+
+/** Import edges ("use") + enqueue discovered internal modules. */
+function addImportEdges({ parsed, absNorm, projectRootAbs, fileId, toRelId, addLink, enqueue, visited }) {
+  const specs = parsed?.imports || [];
+  for (const spec of specs) {
+    const resolvedAbs = resolveImports(absNorm, spec, projectRootAbs);
+    if (!resolvedAbs) continue;
+
+    const targetAbs = path.resolve(resolvedAbs);
+    if (!isInsideRoot(projectRootAbs, targetAbs)) continue;
+
+    const targetId = toRelId(targetAbs);
+    addLink(fileId, targetId, "use");
+
+    if (!visited.has(targetAbs)) enqueue(targetAbs);
+  }
+}
+
+/** Call edges ("call"): intra-file + best-effort cross-file via importBindings. */
+function addCallEdges({ parsed, store, fileId, absNorm, projectRootAbs, toRelId, addLink, pendingCalls, warnings }) {
+  if (!Array.isArray(parsed?.calls) || parsed.calls.length === 0) return;
+
+  // Local helper: resolve a function node in a given file by "<name>@" prefix.
+  const resolveFnIdByNameInFile = (fileIdForSearch, fnName) => {
+    const nm = String(fnName || "").trim();
+    if (!nm) return null;
+    const prefix = `${fileIdForSearch}::${nm}@`;
+    return store.findNodeIdByPrefix(prefix);
+  };
+
+  const moduleLevelImportKinds = new Set(["*", "namespace", "default"]);
+
+  const resolveFromId = (fromFnRaw) => {
+    const raw = String(fromFnRaw || "").trim();
+    if (!raw) return fileId;
+    return raw.includes("::") ? raw : `${fileId}::${raw}`;
+  };
+
+  const linkBareLocalIfPossible = (fromId, calleeName) => {
+    const localByName = resolveFnIdByNameInFile(fileId, calleeName);
+    if (!localByName) return false;
+    addLink(fromId, localByName, "call");
+    return true;
+  };
+
+  const linkQualifiedLocalIfPossible = (fromId, calleeQualified) => {
+    if (!calleeQualified.startsWith(`${fileId}::`)) return false;
+
+    if (store.findNodeIdByPrefix(calleeQualified) === calleeQualified) {
+      addLink(fromId, calleeQualified, "call");
+      return true;
+    }
+
+    const tail = calleeQualified.slice((fileId + "::").length);
+    const nameOnly = tail.split("@")[0];
+    const match = resolveFnIdByNameInFile(fileId, nameOnly);
+    if (match) {
+      addLink(fromId, match, "call");
+      return true;
+    }
+
+    warnings.push({
+      kind: "unresolved-local-call",
+      message: `Unresolved local call target '${calleeQualified}' in '${fileId}'.`,
+      fromId,
+      targetFileId: fileId,
+      targetExport: null
+    });
+    return true;
+  };
+
+  const getImportBinding = (calleeName) => parsed.importBindings?.[calleeName] ?? null;
+
+  const resolveTargetFileIdFromSource = (source) => {
+    const resolvedAbs = resolveImports(absNorm, source, projectRootAbs);
+    if (!resolvedAbs) return "";
+
+    const targetAbs = path.resolve(resolvedAbs);
+    if (!isInsideRoot(projectRootAbs, targetAbs)) return "";
+
+    return toRelId(targetAbs);
+  };
+
+  const normalizeImported = (importedRaw) => (importedRaw != null ? String(importedRaw) : "");
+
+  const linkCrossFileIfPossible = (fromId, calleeName) => {
+    const binding = getImportBinding(calleeName);
+    if (!binding?.source) return false;
+
+    const targetFileId = resolveTargetFileIdFromSource(binding.source);
+    if (!targetFileId) return false;
+
+    const imported = normalizeImported(binding.imported);
+
+    const isModuleLevelCall = !imported || moduleLevelImportKinds.has(imported);
+    if (isModuleLevelCall) {
+      addLink(fromId, targetFileId, "call");
+      return true;
+    }
+
+    pendingCalls.push({ fromId, targetFileId, targetExport: imported });
+    return true;
+  };
+
+  for (const call of parsed.calls) {
+    const calleeRaw = String(call?.callee || "").trim();
+    if (!calleeRaw) continue;
+
+    const fromId = resolveFromId(call?.from);
+
+    if (linkBareLocalIfPossible(fromId, calleeRaw)) continue;
+    if (linkQualifiedLocalIfPossible(fromId, calleeRaw)) continue;
+
+    linkCrossFileIfPossible(fromId, calleeRaw);
+  }
+}
+
+/** Resolve deferred call targets after BFS, emitting best-effort edges/warnings. */
+function resolveDeferredCalls({ pendingCalls, store, addLink, warnings }) {
+  if (!pendingCalls.length) return;
+
+  for (const c of pendingCalls) {
+    const fromId = c.fromId;
+    const targetFileId = c.targetFileId;
+    const exp = c.targetExport;
+
+    if (exp) {
+      const prefix = `${targetFileId}::${exp}@`;
+      const match = store.findNodeIdByPrefix(prefix);
+      if (match) {
+        addLink(fromId, match, "call");
+        continue;
+      }
+
+      warnings.push({
+        kind: "unresolved-call-target",
+        message:
+          `Unresolved call target: cannot find exported function '${exp}' in '${targetFileId}'. ` +
+          `Falling back to a module-level call edge.`,
+        fromId,
+        targetFileId,
+        targetExport: exp
+      });
+
+      addLink(fromId, targetFileId, "call");
+      continue;
+    }
+
+    addLink(fromId, targetFileId, "call");
+  }
+}
+
+/** Strict sanity checks to fail fast when analysis produced no usable output. */
+function strictSanityCheck(store) {
+  if (store.nodes.length <= 1) {
+    throw new Error(
+      "Analysis produced no nodes. Check that your entryAbs points to an existing file inside projectRoot."
+    );
+  }
+
+  const meaningfulLinks = store.links.filter(l => String(l?.type || "") !== "include");
+  if (meaningfulLinks.length === 0) {
+    throw new Error(
+      "Analysis produced no dependency links (use/call). This usually means the entry file has no resolvable local imports, or parsing failed."
+    );
+  }
+}
+
+/** Mark unused functions (best-effort heuristic). */
+function markUnusedFunctions(nodes) {
+  for (const n of nodes) {
+    if (!n || typeof n !== "object") continue;
+    if (n.kind !== "function") continue;
+
+    const exported = Boolean(n.exported);
+    const inCalls = Number(n._inCalls || 0);
+    n._unused = !exported && inCalls === 0;
+  }
+}
+
+/** Enforce canonical fields and hard requirements for function nodes. */
+function enforceCanonicalFields(nodes) {
+  for (const n of nodes) {
+    ensureCanonicalNodeFields(n);
+
+    if (n.kind === "function") {
+      if (typeof n.exported !== "boolean") n.exported = false;
+      if (!Number.isFinite(n.startLine)) n.startLine = 0;
+    }
+  }
+}
+
+/** BFS traversal: parse files, add nodes/edges, and enqueue discovered modules. */
+/**
+ * Pull the next unvisited absolute path from the BFS queue.
+ * Returns a normalized absolute path, or "" when the queue is exhausted.
+ */
+function dequeueNextAbs(queue, queued, visited) {
+  while (queue.length > 0) {
+    const abs = queue.shift();
+    if (!abs) continue;
+
+    const absNorm = path.resolve(abs);
+    queued.delete(absNorm);
+
+    if (visited.has(absNorm)) continue;
+    visited.add(absNorm);
+
+    return absNorm;
+  }
+
+  return "";
+}
+
+/** Parse a file strictly (throws if missing/invalid). */
+function parseOrThrow(absNorm) {
+  // Strict: queued paths must exist and be files.
+  statFileOrThrow(absNorm);
+
+  const code = readUtf8(absNorm);
+  const parsed = parseFile(code, absNorm);
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error(`parseFile returned no result for: ${absNorm}`);
+  }
+  return parsed;
+}
+
+/** Add the file node for a parsed file. */
+function addFileNode({ fileId, parsed, addNode }) {
+  addNode({
+    id: fileId,
+    file: fileId,
+    lines: Number(parsed?.lines || 0),
+    complexity: Number(parsed?.complexity || 0),
+    headerComment: String(parsed?.headerComment || ""),
+    kind: "file"
+  });
+}
+
+function bfsTraverse({
+  queue,
+  queued,
+  visited,
+  projectRootAbs,
+  store,
+  addNode,
+  addLink,
+  enqueue,
+  toRelId,
+  pendingCalls,
+  warnings
+}) {
+  while (true) {
+    const absNorm = dequeueNextAbs(queue, queued, visited);
+    if (!absNorm) break;
+
+    const parsed = parseOrThrow(absNorm);
+    const fileId = toRelId(absNorm);
+
+    addFileNode({ fileId, parsed, addNode });
+
+    addFunctionNodes({ parsed, fileId, addNode, addLink });
+
+    applyAutoRefs({
+      projectRootAbs,
+      fromFileAbs: absNorm,
+      fromFileId: fileId,
+      parsed,
+      toRelId,
+      ensureNode: (n) => addNode(n),
+      ensureLink: (s, t, ty) => addLink(s, t, ty),
+      enqueue,
+      hasVisited: (absPath) => visited.has(path.resolve(absPath))
+    });
+
+    addImportEdges({ parsed, absNorm, projectRootAbs, fileId, toRelId, addLink, enqueue, visited });
+
+    addCallEdges({ parsed, store, fileId, absNorm, projectRootAbs, toRelId, addLink, pendingCalls, warnings });
+  }
+}
 
 /**
  * Convert an absolute path into a project-relative id used as node ids.
@@ -690,27 +697,34 @@ function isInsideRoot(rootAbs, fileAbs) {
 function initDerivedStats(n) {
   if (!n || typeof n !== "object") return;
 
-  // Total degree
-  if (!Number.isFinite(n._inbound)) n._inbound = 0;
-  if (!Number.isFinite(n._outbound)) n._outbound = 0;
+  const ensureFinite = (key, fallback = 0) => {
+    if (!Number.isFinite(n[key])) n[key] = fallback;
+  };
 
-  // By edge type
-  if (!Number.isFinite(n._inCalls)) n._inCalls = 0;
-  if (!Number.isFinite(n._outCalls)) n._outCalls = 0;
+  const ensureArray = (key) => {
+    if (!Array.isArray(n[key])) n[key] = [];
+  };
 
-  if (!Number.isFinite(n._inUses)) n._inUses = 0;
-  if (!Number.isFinite(n._outUses)) n._outUses = 0;
-
-  if (!Number.isFinite(n._inIncludes)) n._inIncludes = 0;
-  if (!Number.isFinite(n._outIncludes)) n._outIncludes = 0;
+  // Total degree + by edge type
+  for (const k of [
+    "_inbound",
+    "_outbound",
+    "_inCalls",
+    "_outCalls",
+    "_inUses",
+    "_outUses",
+    "_inIncludes",
+    "_outIncludes",
+    "_importance",
+    "_radiusHint"
+  ]) {
+    ensureFinite(k, 0);
+  }
 
   // Small relationship lists (capped) for tooltips / diagnostics.
-  if (!Array.isArray(n._callers)) n._callers = [];
-  if (!Array.isArray(n._callees)) n._callees = [];
-
-  // Visualization hints (backend-computed)
-  if (!Number.isFinite(n._importance)) n._importance = 0;
-  if (!Number.isFinite(n._radiusHint)) n._radiusHint = 0;
+  for (const k of ["_callers", "_callees"]) {
+    ensureArray(k);
+  }
 }
 
 /**
@@ -743,9 +757,8 @@ function pushUniqueCapped(arr, v, cap) {
  * @param {any[]} nodes Graph nodes (mutated in place).
  * @param {any[]} links Graph links.
  */
-function finalizeGraphStats(nodes, links) {
-  if (!Array.isArray(nodes) || !Array.isArray(links)) return;
-
+/** Build a node index by id and initialize derived stats. */
+function indexNodesById(nodes) {
   /** @type {Map<string, any>} */
   const byId = new Map();
 
@@ -756,46 +769,69 @@ function finalizeGraphStats(nodes, links) {
     byId.set(id, n);
   }
 
-  const getId = (x) => {
-    if (!x) return "";
-    if (typeof x === "string") return x;
-    if (typeof x === "object" && x.id) return String(x.id);
-    return "";
-  };
+  return byId;
+}
 
+/** Normalize link endpoints to ids (supports string ids or {id}). */
+function getEndpointId(x) {
+  if (!x) return "";
+  if (typeof x === "string") return x;
+  if (typeof x === "object" && x.id) return String(x.id);
+  return "";
+}
+
+/** Iterate links and yield only those with valid (non-empty) endpoint ids. */
+function forEachValidLink(links, fn) {
   for (const l of links) {
-    const sId = String(getId(l?.source) || "").trim();
-    const tId = String(getId(l?.target) || "").trim();
+    const sId = String(getEndpointId(l?.source) || "").trim();
+    const tId = String(getEndpointId(l?.target) || "").trim();
     if (!sId || !tId) continue;
-
-    const s = byId.get(sId);
-    const t = byId.get(tId);
-    if (!s || !t) continue;
-
-    // Total degree
-    s._outbound++;
-    t._inbound++;
-
     const ty = String(l?.type || "default");
-
-    if (ty === "call") {
-      s._outCalls++;
-      t._inCalls++;
-
-      // Relationship lists: cap to avoid huge payloads
-      pushUniqueCapped(t._callers, sId, 20);
-      pushUniqueCapped(s._callees, tId, 20);
-    } else if (ty === "use") {
-      s._outUses++;
-      t._inUses++;
-    } else if (ty === "include") {
-      s._outIncludes++;
-      t._inIncludes++;
-    }
+    fn(sId, tId, ty);
   }
+}
 
-  // Derive a compact importance score (degree + call emphasis).
-  // UI can map this to size/labels without recomputing.
+/** Resolve source/target node objects from ids (returns null if missing). */
+function resolveNodePair(byId, sId, tId) {
+  const s = byId.get(sId);
+  const t = byId.get(tId);
+  if (!s || !t) return null;
+  return { s, t };
+}
+
+/** Apply total degree increments. */
+function applyDegree(s, t) {
+  s._outbound++;
+  t._inbound++;
+}
+
+/** Apply edge-type-specific derived stats. */
+function applyEdgeTypeStats(s, t, sId, tId, ty) {
+  const handlers = edgeTypeHandlers;
+  const fn = handlers[ty];
+  if (fn) fn(s, t, sId, tId);
+}
+
+const edgeTypeHandlers = {
+  call: (s, t, sId, tId) => {
+    s._outCalls++;
+    t._inCalls++;
+    // Relationship lists: cap to avoid huge payloads
+    pushUniqueCapped(t._callers, sId, 20);
+    pushUniqueCapped(s._callees, tId, 20);
+  },
+  use: (s, t) => {
+    s._outUses++;
+    t._inUses++;
+  },
+  include: (s, t) => {
+    s._outIncludes++;
+    t._inIncludes++;
+  }
+};
+
+/** Compute per-node importance score + suggested radius. */
+function applyImportanceAndRadius(nodes) {
   for (const n of nodes) {
     if (!n || typeof n !== "object") continue;
 
@@ -814,5 +850,46 @@ function finalizeGraphStats(nodes, links) {
     // Suggested radius. Keep it conservative; UI may clamp.
     const radius = 5 + 6 * n._importance;
     n._radiusHint = Number.isFinite(radius) ? radius : 8;
+  }
+}
+
+function finalizeGraphStats(nodes, links) {
+  if (!Array.isArray(nodes) || !Array.isArray(links)) return;
+
+  const byId = indexNodesById(nodes);
+
+  forEachValidLink(links, (sId, tId, ty) => {
+    const pair = resolveNodePair(byId, sId, tId);
+    if (!pair) return;
+
+    applyDegree(pair.s, pair.t);
+    applyEdgeTypeStats(pair.s, pair.t, sId, tId, ty);
+  });
+
+  applyImportanceAndRadius(nodes);
+}
+/** Strict string arg check: throws if missing or not a non-empty string. */
+function assertNonEmptyString(value, name) {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`Invalid ${name} (missing or not a string).`);
+  }
+}
+
+/** Strict stat helper: throws on error or if not a directory. */
+function statDirOrThrow(abs, label = "path") {
+  const p = path.resolve(abs);
+  const st = fs.statSync(p, { throwIfNoEntry: false });
+  if (!st || !st.isDirectory()) {
+    throw new Error(`${label} is not a directory or does not exist: ${p}`);
+  }
+  return st;
+}
+
+/** Safety boundary assertion: throws if file is outside root. */
+function assertInsideRootOrThrow(rootAbs, fileAbs) {
+  if (!isInsideRoot(rootAbs, fileAbs)) {
+    const root = path.resolve(rootAbs);
+    const file = path.resolve(fileAbs);
+    throw new Error(`entryAbs is outside projectRoot. entry=${file} root=${root}`);
   }
 }

@@ -48,7 +48,7 @@
     els.forEach((el) => {
       try {
         el.textContent = text || "";
-      } catch {}
+      } catch { }
     });
   }
 
@@ -232,11 +232,10 @@
         <hr class="my-2" />
 
         <div class="fw-semibold small">Comment</div>
-        ${
-          comment
-            ? `<pre class="comment-pre mb-0">${esc(comment)}</pre>`
-            : `<div class="text-muted small">No file header comment provided by analyzer.</div>`
-        }
+        ${comment
+        ? `<pre class="comment-pre mb-0">${esc(comment)}</pre>`
+        : `<div class="text-muted small">No file header comment provided by analyzer.</div>`
+      }
       </div>
     `;
   }
@@ -315,7 +314,7 @@
 
       if (activeReadmeController) activeReadmeController.abort();
       activeReadmeController = new AbortController();
-      renderReadmeForNode(latest, activeReadmeController.signal).catch(() => {});
+      renderReadmeForNode(latest, activeReadmeController.signal).catch(() => { });
     }
   }
 
@@ -347,19 +346,66 @@
   /* Apps list + Actions (Restart / Show Website)                             */
   /* ======================================================================= */
 
+  /**
+   * Persist currently selected app id in the hidden `#appSelect` input.
+   *
+   * Why this exists
+   * ---------------
+   * We deliberately keep the selected app as DOM state (a hidden input) instead of
+   * relying on a module-global variable. This makes selection:
+   * - stable across re-renders,
+   * - easy to inspect in DevTools,
+   * - the single source of truth for `runAnalysis()`.
+   *
+   * Contract
+   * --------
+   * - `#appSelect` MUST exist in index.html:
+   *     <input type="hidden" id="appSelect" value="">
+   * - The value stored here is the *app id* from `/apps` (config id), e.g. "vscode".
+   *
+   * @param {string} appId Config id of the selected app.
+   */
   function setSelectedAppId(appId) {
-    const hidden = /** @type {HTMLInputElement} */ (byId("appSelect"));
+    const hidden = /** @type {HTMLInputElement|null} */ (byId("appSelect"));
+    if (!hidden) return;
+
+    // Always store a string (defensive). Empty string means "no selection".
     hidden.value = String(appId || "");
   }
 
+  /**
+   * Read the currently selected app id from `#appSelect`.
+   *
+   * Note
+   * ----
+   * Keep this as a helper even though it's one line: it prevents copy/paste
+   * mistakes and makes it obvious where selection is sourced from.
+   *
+   * @returns {string} Current selected app id (trimmed). Empty string if none.
+   */
   function getSelectedAppId() {
     const hidden = /** @type {HTMLInputElement} */ (byId("appSelect"));
-    return String(hidden.value || "").trim();
+    return String(hidden?.value || "").trim();
   }
 
+  /**
+   * Visually mark the active app row in the sidebar list.
+   *
+   * Implementation
+   * --------------
+   * - Rows are created by `loadApps()` with:
+   *     - class `.appRow`
+   *     - `data-app-id="..."`
+   * - We toggle `.isActive` purely for styling (CSS), *not* for behavior.
+   * - Selection behavior is driven by `#appSelect` + `runAnalysis()`.
+   *
+   * @param {HTMLElement} listEl Container element that holds the `.appRow` elements.
+   * @param {string} appId App id that should be shown as selected.
+   */
   function setAppActiveRow(listEl, appId) {
+    const id = String(appId || "");
     listEl.querySelectorAll(".appRow").forEach((el) => {
-      el.classList.toggle("isActive", el.dataset.appId === appId);
+      el.classList.toggle("isActive", el.dataset.appId === id);
     });
   }
 
@@ -591,14 +637,14 @@
       try {
         const msg = JSON.parse(ev.data || "{}");
         currentRunToken = msg?.activeAnalysis?.runToken || null;
-      } catch {}
+      } catch { }
     });
 
     sse.addEventListener("analysis", (ev) => {
       try {
         const msg = JSON.parse(ev.data || "{}");
         currentRunToken = msg?.runToken || null;
-      } catch {}
+      } catch { }
     });
 
     sse.addEventListener("fs-change", (ev) => {
@@ -693,6 +739,27 @@
       window.__selectedNode = null;
 
       window.initcodeStructureChart("codeStructureSvg", metrics);
+
+
+      try {
+        const appId = getSelectedAppId(); // liest #appSelect
+        const nodes = metrics?.nodes || metrics?.data?.nodes || []; // je nach payload
+        const fnCount = (nodes || []).filter(n => String(n?.kind || n?.type) === "function").length;
+
+        let loc = 0;
+        for (const n of (nodes || [])) loc += Number(n?.lines ?? n?.locLines ?? 0) || 0;
+
+        if (window.CodeGraphUI?.updateGraphHeader) {
+          window.CodeGraphUI.updateGraphHeader({ appName: appId, functions: fnCount, loc });
+        } else {
+          const h = document.getElementById("graphInfoHeader");
+          if (h) h.textContent = `${appId} · ƒ ${fnCount} · LOC ${loc}`;
+        }
+      } catch { }
+
+
+
+
 
       setStatus(
         `Done. Nodes: ${data.summary?.nodes ?? "?"}, Links: ${data.summary?.links ?? "?"}`

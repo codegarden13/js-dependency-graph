@@ -219,7 +219,12 @@ export function parseJsTsAst(src, filename, baseDir, out, helpers) {
 
     const fnObj = fnById.get(cur);
     if (!fnObj || typeof fnObj !== "object") return;
-    fnObj.complexity = Number(fnObj.complexity || 0) + inc;
+
+    // Cyclomatic complexity is 1 + decision points. The +1 baseline is
+    // initialized when the function node is created; here we only add deltas.
+    const next = Number(fnObj.complexity || 0) + inc;
+    fnObj.complexity = next;
+    fnObj.cc = next; // explicit alias for cyclomatic complexity
   };
 
   const inferFnName = (p) => {
@@ -299,13 +304,22 @@ export function parseJsTsAst(src, filename, baseDir, out, helpers) {
         id: fnId,
         name: String(name || ""),
         exported: false,
-        complexity: 0,
+        complexity: 1,
+        cc: 1,
         startLine: Number(line) || 0,
         endLine: Number(line) || 0,
         locLines: 0
       });
 
       fnById.set(fnId, out.functions[out.functions.length - 1]);
+      // Ensure any pre-existing fnObj has baseline and alias
+      const fnObj = fnById.get(fnId);
+      if (fnObj && typeof fnObj === "object") {
+        const base = Number(fnObj.complexity);
+        fnObj.complexity = Number.isFinite(base) && base > 0 ? base : 1;
+        fnObj.cc = Number(fnObj.cc);
+        if (!Number.isFinite(fnObj.cc) || fnObj.cc <= 0) fnObj.cc = fnObj.complexity;
+      }
       out.symbols.push({ name: String(name || ""), kind: "function" });
     }
 
@@ -496,6 +510,15 @@ export function parseJsTsAst(src, filename, baseDir, out, helpers) {
 
     if (n && exportedNames.has(n)) fn.exported = true;
     if (exportedNames.has("default") && (!n || n === "anon")) fn.exported = true;
+  }
+
+  // Normalize: ensure cc is present for all emitted functions.
+  for (const fn of out.functions) {
+    if (!fn || typeof fn !== "object") continue;
+    const c = Number(fn.complexity);
+    if (!Number.isFinite(c) || c <= 0) fn.complexity = 1;
+    const cc = Number(fn.cc);
+    if (!Number.isFinite(cc) || cc <= 0) fn.cc = fn.complexity;
   }
 
   // Reserved parameters (kept for future AST-based path extraction)

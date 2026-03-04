@@ -265,26 +265,26 @@
     {
       "id": "app/lib/buildMetricsFromEntrypoint.js",
       "file": "app/lib/buildMetricsFromEntrypoint.js",
-      "lines": 818,
-      "complexity": 140,
+      "lines": 895,
+      "complexity": 128,
       "headerComment": "buildMetricsFromEntrypoint\n==========================\n\nDeterministic, entrypoint-driven dependency graph builder for Node-style projects.\n\n-----------------------------------------------------------------------------\nARCHITECTURAL ROLE\n-----------------------------------------------------------------------------\nConstructs a static dependency graph starting from a single entrypoint file.\n\nPerforms a breadth-first traversal (BFS) across resolvable internal imports\nand emits a D3-compatible metrics payload.\n\n-----------------------------------------------------------------------------\nDESIGN PRINCIPLES\n-----------------------------------------------------------------------------\n• Deterministic traversal (BFS)\n• No runtime execution or evaluation\n• Only local/relative imports are resolved\n• Resilient parsing via parseFile()\n• Side-effect free (pure metrics builder)\n\n-----------------------------------------------------------------------------\nOUTPUT CONTRACT (Canonical JSON)\n-----------------------------------------------------------------------------\nThe frontend renders directly from this JSON. No UI-only inference is required.\n\n{\n  meta: {\n    entry: string,\n    urlInfo: any,\n    layerOrder?: string[],\n    layerY?: Record<string, number>\n  },\n  nodes: Array<{\n    id: string,\n    file: string,\n    kind: \"root\"|\"dir\"|\"file\"|\"asset\"|\"function\",\n    group: \"root\"|\"dir\"|\"code\"|\"doc\"|\"data\"|\"image\",\n    layer?: string,    // backend-assigned architecture layer (for hulls/forceY)\n    ext: string,        // original extension incl dot (e.g. \".md\")\n    type: string,       // subtype (usually ext w/o dot: \"md\", \"js\", \"png\")\n    subtype?: string,   // alias for type (kept for clarity)\n    lines: number,\n    complexity: number,\n    headerComment: string,\n    name?: string,\n    exported?: boolean,\n    startLine?: number,\n\n    // Derived stats (computed once on backend)\n    _inbound?: number,\n    _outbound?: number,\n    _inCalls?: number,\n    _outCalls?: number,\n    _inUses?: number,\n    _outUses?: number,\n    _inIncludes?: number,\n    _outIncludes?: number,\n    _callers?: string[],\n    _callees?: string[],\n    _importance?: number, // backend importance score (degree-weighted)\n    _radiusHint?: number,  // suggested node radius (UI may clamp)\n    _unused?: boolean     // backend flag: true if function is likely unused (no inbound calls and not exported)\n  }>,\n  links: Array<{\n    source: string,\n    target: string,\n    type: \"use\" | \"include\" | \"call\"\n  }>\n}",
       "kind": "file",
       "_inbound": 2,
-      "_outbound": 23,
+      "_outbound": 57,
       "_inCalls": 0,
       "_outCalls": 3,
       "_inUses": 1,
       "_outUses": 6,
       "_inIncludes": 1,
-      "_outIncludes": 14,
+      "_outIncludes": 48,
       "_callers": [],
       "_callees": [
-        "app/lib/buildMetricsFromEntrypoint.js::addNode@165",
-        "app/lib/buildMetricsFromEntrypoint.js::addLink@176",
-        "app/lib/buildMetricsFromEntrypoint.js::enqueue@202"
+        "app/lib/buildMetricsFromEntrypoint.js::addNode@135",
+        "app/lib/buildMetricsFromEntrypoint.js::addLink@140",
+        "app/lib/buildMetricsFromEntrypoint.js::pushUniqueCapped@736"
       ],
-      "_importance": 3.5115454388310208,
-      "_radiusHint": 26.069272632986124,
+      "_importance": 4.212127597878484,
+      "_radiusHint": 30.272765587270904,
       "ext": ".js",
       "type": "js",
       "subtype": "js",
@@ -394,8 +394,8 @@
     {
       "id": "app/lib/parseAst.js",
       "file": "app/lib/parseAst.js",
-      "lines": 504,
-      "complexity": 154,
+      "lines": 527,
+      "complexity": 167,
       "headerComment": "parseAst / parseJsTsAst\n=======================\n\nCanonical JS/TS AST extractor (Babel).\n\nContract (mutates `out`)\n------------------------\n- out.imports:        string[]\n- out.importBindings: Record<localName, { source: string, imported: string }>\n- out.functions:      Array<{ id, name, exported, complexity, startLine, endLine, locLines }>\n- out.calls:          Array<{ from: string|null, callee: string }>\n- out.symbols:        optional legacy list (safe to keep)\n- out.complexity:     file-level heuristic counter (incremental)\n\nDesign\n------\n- Best-effort: never throws, syntax errors are expected.\n- Deterministic: no runtime evaluation.\n- Neutral: call attribution records what we can see statically.\n\nNotes\n-----\nThis module intentionally does NOT perform path/asset resolution. That belongs\nin a separate pass once the call/import/function graph is stable.",
       "kind": "file",
       "_inbound": 2,
@@ -619,7 +619,7 @@
     {
       "id": "app/public/index.html",
       "file": "app/public/index.html",
-      "lines": 141,
+      "lines": 188,
       "complexity": 0,
       "headerComment": "",
       "kind": "asset",
@@ -1211,7 +1211,7 @@
       "_inIncludes": 1,
       "_outIncludes": 0,
       "_callers": [
-        "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115"
+        "app/lib/buildMetricsFromEntrypoint.js::bfsTraverse@587"
       ],
       "_callees": [
         "app/lib/autoMode.js::toAbsFromRelMaybe@629",
@@ -1570,16 +1570,16 @@
     {
       "id": "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115",
       "file": "app/lib/buildMetricsFromEntrypoint.js",
-      "lines": 502,
-      "complexity": 72,
+      "lines": 102,
+      "complexity": 0,
       "headerComment": "",
       "kind": "function",
       "name": "buildMetricsFromEntrypoint",
       "exported": true,
       "_inbound": 2,
-      "_outbound": 15,
+      "_outbound": 12,
       "_inCalls": 1,
-      "_outCalls": 15,
+      "_outCalls": 12,
       "_inUses": 0,
       "_outUses": 0,
       "_inIncludes": 1,
@@ -1588,24 +1588,21 @@
         "app/routes/analyze.js"
       ],
       "_callees": [
-        "app/lib/buildMetricsFromEntrypoint.js::isInsideRoot@665",
-        "app/lib/buildMetricsFromEntrypoint.js::addNode@165",
-        "app/lib/buildMetricsFromEntrypoint.js::enqueue@202",
-        "app/lib/buildMetricsFromEntrypoint.js::statFileOrThrow@648",
-        "app/lib/buildMetricsFromEntrypoint.js::readUtf8@643",
-        "app/lib/buildMetricsFromEntrypoint.js::toRelId@260",
-        "app/lib/buildMetricsFromEntrypoint.js::addLink@176",
-        "app/lib/buildMetricsFromEntrypoint.js::resolveFnIdByNameInFile@399",
-        "app/lib/buildMetricsFromEntrypoint.js::finalizeGraphStats@746",
-        "app/lib/scanProjectTree.js::scanProjectTree@96",
-        "app/lib/parseFile.js::parseFile@51",
-        "app/lib/autoMode.js::applyAutoRefs@154",
-        "app/lib/resolveImports.js::resolveImports@98",
-        "app/lib/nodeClassification.js::ensureCanonicalNodeFields@203",
+        "app/lib/buildMetricsFromEntrypoint.js::validateEntrypointArgs@223",
+        "app/lib/buildMetricsFromEntrypoint.js::addStableRootNode@251",
+        "app/lib/buildMetricsFromEntrypoint.js::createEnqueue@239",
+        "app/lib/buildMetricsFromEntrypoint.js::scanStructure@263",
+        "app/lib/buildMetricsFromEntrypoint.js::bfsTraverse@587",
+        "app/lib/buildMetricsFromEntrypoint.js::resolveDeferredCalls@466",
+        "app/lib/buildMetricsFromEntrypoint.js::strictSanityCheck@501",
+        "app/lib/buildMetricsFromEntrypoint.js::finalizeGraphStats@856",
+        "app/lib/buildMetricsFromEntrypoint.js::markUnusedFunctions@517",
+        "app/lib/buildMetricsFromEntrypoint.js::enforceCanonicalFields@529",
+        "app/lib/buildMetricsFromEntrypoint.js::toRelId@157",
         "app/lib/nodeClassification.js::defaultLayerY@182"
       ],
-      "_importance": 4.060443010546419,
-      "_radiusHint": 29.362658063278516,
+      "_importance": 3.8607297110405954,
+      "_radiusHint": 28.164378266243574,
       "_unused": false,
       "ext": ".js::buildmetricsfromentrypoint@115",
       "type": "js::buildmetricsfromentrypoint@115",
@@ -1615,7 +1612,7 @@
       "startLine": 0
     },
     {
-      "id": "app/lib/buildMetricsFromEntrypoint.js::addNode@165",
+      "id": "app/lib/buildMetricsFromEntrypoint.js::addNode@135",
       "file": "app/lib/buildMetricsFromEntrypoint.js",
       "lines": 4,
       "complexity": 0,
@@ -1623,33 +1620,35 @@
       "kind": "function",
       "name": "addNode",
       "exported": false,
-      "_inbound": 3,
+      "_inbound": 5,
       "_outbound": 1,
-      "_inCalls": 2,
+      "_inCalls": 4,
       "_outCalls": 1,
       "_inUses": 0,
       "_outUses": 0,
       "_inIncludes": 1,
       "_outIncludes": 0,
       "_callers": [
-        "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115",
-        "app/lib/buildMetricsFromEntrypoint.js"
+        "app/lib/buildMetricsFromEntrypoint.js::addStableRootNode@251",
+        "app/lib/buildMetricsFromEntrypoint.js",
+        "app/lib/buildMetricsFromEntrypoint.js::addFunctionNodes@338",
+        "app/lib/buildMetricsFromEntrypoint.js::addFileNode@576"
       ],
       "_callees": [
         "app/lib/nodeClassification.js::ensureCanonicalNodeFields@203"
       ],
-      "_importance": 2.5257286443082556,
-      "_radiusHint": 20.154371865849534,
+      "_importance": 2.970414465569701,
+      "_radiusHint": 22.822486793418207,
       "_unused": false,
-      "ext": ".js::addnode@165",
-      "type": "js::addnode@165",
-      "subtype": "js::addnode@165",
+      "ext": ".js::addnode@135",
+      "type": "js::addnode@135",
+      "subtype": "js::addnode@135",
       "group": "code",
       "layer": "app",
       "startLine": 0
     },
     {
-      "id": "app/lib/buildMetricsFromEntrypoint.js::addLink@176",
+      "id": "app/lib/buildMetricsFromEntrypoint.js::addLink@140",
       "file": "app/lib/buildMetricsFromEntrypoint.js",
       "lines": 3,
       "complexity": 0,
@@ -1657,9 +1656,9 @@
       "kind": "function",
       "name": "addLink",
       "exported": false,
-      "_inbound": 3,
+      "_inbound": 8,
       "_outbound": 0,
-      "_inCalls": 2,
+      "_inCalls": 7,
       "_outCalls": 0,
       "_inUses": 0,
       "_outUses": 0,
@@ -1667,53 +1666,26 @@
       "_outIncludes": 0,
       "_callers": [
         "app/lib/buildMetricsFromEntrypoint.js",
-        "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115"
+        "app/lib/buildMetricsFromEntrypoint.js::addFunctionNodes@338",
+        "app/lib/buildMetricsFromEntrypoint.js::addImportEdges@350",
+        "app/lib/buildMetricsFromEntrypoint.js::linkBareLocalIfPossible@386",
+        "app/lib/buildMetricsFromEntrypoint.js::linkQualifiedLocalIfPossible@393",
+        "app/lib/buildMetricsFromEntrypoint.js::linkCrossFileIfPossible@433",
+        "app/lib/buildMetricsFromEntrypoint.js::resolveDeferredCalls@466"
       ],
       "_callees": [],
-      "_importance": 2.1972245773362196,
-      "_radiusHint": 18.183347464017316,
+      "_importance": 3.2771447329921766,
+      "_radiusHint": 24.66286839795306,
       "_unused": false,
-      "ext": ".js::addlink@176",
-      "type": "js::addlink@176",
-      "subtype": "js::addlink@176",
+      "ext": ".js::addlink@140",
+      "type": "js::addlink@140",
+      "subtype": "js::addlink@140",
       "group": "code",
       "layer": "app",
       "startLine": 0
     },
     {
-      "id": "app/lib/buildMetricsFromEntrypoint.js::enqueue@202",
-      "file": "app/lib/buildMetricsFromEntrypoint.js",
-      "lines": 8,
-      "complexity": 3,
-      "headerComment": "",
-      "kind": "function",
-      "name": "enqueue",
-      "exported": false,
-      "_inbound": 3,
-      "_outbound": 0,
-      "_inCalls": 2,
-      "_outCalls": 0,
-      "_inUses": 0,
-      "_outUses": 0,
-      "_inIncludes": 1,
-      "_outIncludes": 0,
-      "_callers": [
-        "app/lib/buildMetricsFromEntrypoint.js",
-        "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115"
-      ],
-      "_callees": [],
-      "_importance": 2.1972245773362196,
-      "_radiusHint": 18.183347464017316,
-      "_unused": false,
-      "ext": ".js::enqueue@202",
-      "type": "js::enqueue@202",
-      "subtype": "js::enqueue@202",
-      "group": "code",
-      "layer": "app",
-      "startLine": 0
-    },
-    {
-      "id": "app/lib/buildMetricsFromEntrypoint.js::toRelId@260",
+      "id": "app/lib/buildMetricsFromEntrypoint.js::toRelId@157",
       "file": "app/lib/buildMetricsFromEntrypoint.js",
       "lines": 1,
       "complexity": 0,
@@ -1721,10 +1693,46 @@
       "kind": "function",
       "name": "toRelId",
       "exported": false,
-      "_inbound": 2,
+      "_inbound": 5,
       "_outbound": 1,
-      "_inCalls": 1,
+      "_inCalls": 4,
       "_outCalls": 1,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115",
+        "app/lib/buildMetricsFromEntrypoint.js::addImportEdges@350",
+        "app/lib/buildMetricsFromEntrypoint.js::resolveTargetFileIdFromSource@421",
+        "app/lib/buildMetricsFromEntrypoint.js::bfsTraverse@587"
+      ],
+      "_callees": [
+        "app/lib/buildMetricsFromEntrypoint.js::toProjectRelativeId@635"
+      ],
+      "_importance": 2.970414465569701,
+      "_radiusHint": 22.822486793418207,
+      "_unused": false,
+      "ext": ".js::torelid@157",
+      "type": "js::torelid@157",
+      "subtype": "js::torelid@157",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::validateEntrypointArgs@223",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 14,
+      "complexity": 0,
+      "headerComment": "",
+      "kind": "function",
+      "name": "validateEntrypointArgs",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 4,
+      "_inCalls": 1,
+      "_outCalls": 4,
       "_inUses": 0,
       "_outUses": 0,
       "_inIncludes": 1,
@@ -1733,26 +1741,29 @@
         "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115"
       ],
       "_callees": [
-        "app/lib/buildMetricsFromEntrypoint.js::toProjectRelativeId@628"
+        "app/lib/buildMetricsFromEntrypoint.js::assertNonEmptyString@872",
+        "app/lib/buildMetricsFromEntrypoint.js::statDirOrThrow@879",
+        "app/lib/buildMetricsFromEntrypoint.js::statFileOrThrow@655",
+        "app/lib/buildMetricsFromEntrypoint.js::assertInsideRootOrThrow@889"
       ],
-      "_importance": 2.1972245773362196,
-      "_radiusHint": 18.183347464017316,
+      "_importance": 2.970414465569701,
+      "_radiusHint": 22.822486793418207,
       "_unused": false,
-      "ext": ".js::torelid@260",
-      "type": "js::torelid@260",
-      "subtype": "js::torelid@260",
+      "ext": ".js::validateentrypointargs@223",
+      "type": "js::validateentrypointargs@223",
+      "subtype": "js::validateentrypointargs@223",
       "group": "code",
       "layer": "app",
       "startLine": 0
     },
     {
-      "id": "app/lib/buildMetricsFromEntrypoint.js::resolveFnIdByNameInFile@399",
+      "id": "app/lib/buildMetricsFromEntrypoint.js::createEnqueue@239",
       "file": "app/lib/buildMetricsFromEntrypoint.js",
-      "lines": 6,
-      "complexity": 2,
+      "lines": 10,
+      "complexity": 0,
       "headerComment": "",
       "kind": "function",
-      "name": "resolveFnIdByNameInFile",
+      "name": "createEnqueue",
       "exported": false,
       "_inbound": 2,
       "_outbound": 0,
@@ -1769,15 +1780,782 @@
       "_importance": 1.7047480922384253,
       "_radiusHint": 15.228488553430552,
       "_unused": false,
-      "ext": ".js::resolvefnidbynameinfile@399",
-      "type": "js::resolvefnidbynameinfile@399",
-      "subtype": "js::resolvefnidbynameinfile@399",
+      "ext": ".js::createenqueue@239",
+      "type": "js::createenqueue@239",
+      "subtype": "js::createenqueue@239",
       "group": "code",
       "layer": "app",
       "startLine": 0
     },
     {
-      "id": "app/lib/buildMetricsFromEntrypoint.js::toProjectRelativeId@628",
+      "id": "app/lib/buildMetricsFromEntrypoint.js::addStableRootNode@251",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 10,
+      "complexity": 0,
+      "headerComment": "",
+      "kind": "function",
+      "name": "addStableRootNode",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 1,
+      "_inCalls": 1,
+      "_outCalls": 1,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115"
+      ],
+      "_callees": [
+        "app/lib/buildMetricsFromEntrypoint.js::addNode@135"
+      ],
+      "_importance": 2.1972245773362196,
+      "_radiusHint": 18.183347464017316,
+      "_unused": false,
+      "ext": ".js::addstablerootnode@251",
+      "type": "js::addstablerootnode@251",
+      "subtype": "js::addstablerootnode@251",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::scanStructure@263",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 38,
+      "complexity": 0,
+      "headerComment": "",
+      "kind": "function",
+      "name": "scanStructure",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 1,
+      "_inCalls": 1,
+      "_outCalls": 1,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115"
+      ],
+      "_callees": [
+        "app/lib/scanProjectTree.js::scanProjectTree@96"
+      ],
+      "_importance": 2.1972245773362196,
+      "_radiusHint": 18.183347464017316,
+      "_unused": false,
+      "ext": ".js::scanstructure@263",
+      "type": "js::scanstructure@263",
+      "subtype": "js::scanstructure@263",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::forEachParsedFunction@303",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 5,
+      "complexity": 3,
+      "headerComment": "",
+      "kind": "function",
+      "name": "forEachParsedFunction",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 0,
+      "_inCalls": 1,
+      "_outCalls": 0,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::addFunctionNodes@338"
+      ],
+      "_callees": [],
+      "_importance": 1.7047480922384253,
+      "_radiusHint": 15.228488553430552,
+      "_unused": false,
+      "ext": ".js::foreachparsedfunction@303",
+      "type": "js::foreachparsedfunction@303",
+      "subtype": "js::foreachparsedfunction@303",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::buildFunctionNode@310",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 26,
+      "complexity": 7,
+      "headerComment": "",
+      "kind": "function",
+      "name": "buildFunctionNode",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 0,
+      "_inCalls": 1,
+      "_outCalls": 0,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::addFunctionNodes@338"
+      ],
+      "_callees": [],
+      "_importance": 1.7047480922384253,
+      "_radiusHint": 15.228488553430552,
+      "_unused": false,
+      "ext": ".js::buildfunctionnode@310",
+      "type": "js::buildfunctionnode@310",
+      "subtype": "js::buildfunctionnode@310",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::addFunctionNodes@338",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 10,
+      "complexity": 1,
+      "headerComment": "",
+      "kind": "function",
+      "name": "addFunctionNodes",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 4,
+      "_inCalls": 1,
+      "_outCalls": 4,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::bfsTraverse@587"
+      ],
+      "_callees": [
+        "app/lib/buildMetricsFromEntrypoint.js::forEachParsedFunction@303",
+        "app/lib/buildMetricsFromEntrypoint.js::buildFunctionNode@310",
+        "app/lib/buildMetricsFromEntrypoint.js::addNode@135",
+        "app/lib/buildMetricsFromEntrypoint.js::addLink@140"
+      ],
+      "_importance": 2.970414465569701,
+      "_radiusHint": 22.822486793418207,
+      "_unused": false,
+      "ext": ".js::addfunctionnodes@338",
+      "type": "js::addfunctionnodes@338",
+      "subtype": "js::addfunctionnodes@338",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::addImportEdges@350",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 15,
+      "complexity": 5,
+      "headerComment": "",
+      "kind": "function",
+      "name": "addImportEdges",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 4,
+      "_inCalls": 1,
+      "_outCalls": 4,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::bfsTraverse@587"
+      ],
+      "_callees": [
+        "app/lib/buildMetricsFromEntrypoint.js::isInsideRoot@672",
+        "app/lib/buildMetricsFromEntrypoint.js::toRelId@157",
+        "app/lib/buildMetricsFromEntrypoint.js::addLink@140",
+        "app/lib/resolveImports.js::resolveImports@98"
+      ],
+      "_importance": 2.970414465569701,
+      "_radiusHint": 22.822486793418207,
+      "_unused": false,
+      "ext": ".js::addimportedges@350",
+      "type": "js::addimportedges@350",
+      "subtype": "js::addimportedges@350",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::addCallEdges@367",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 97,
+      "complexity": 7,
+      "headerComment": "",
+      "kind": "function",
+      "name": "addCallEdges",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 4,
+      "_inCalls": 1,
+      "_outCalls": 4,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::bfsTraverse@587"
+      ],
+      "_callees": [
+        "app/lib/buildMetricsFromEntrypoint.js::resolveFromId@380",
+        "app/lib/buildMetricsFromEntrypoint.js::linkBareLocalIfPossible@386",
+        "app/lib/buildMetricsFromEntrypoint.js::linkQualifiedLocalIfPossible@393",
+        "app/lib/buildMetricsFromEntrypoint.js::linkCrossFileIfPossible@433"
+      ],
+      "_importance": 2.970414465569701,
+      "_radiusHint": 22.822486793418207,
+      "_unused": false,
+      "ext": ".js::addcalledges@367",
+      "type": "js::addcalledges@367",
+      "subtype": "js::addcalledges@367",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::resolveFnIdByNameInFile@371",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 6,
+      "complexity": 2,
+      "headerComment": "",
+      "kind": "function",
+      "name": "resolveFnIdByNameInFile",
+      "exported": false,
+      "_inbound": 3,
+      "_outbound": 0,
+      "_inCalls": 2,
+      "_outCalls": 0,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::linkBareLocalIfPossible@386",
+        "app/lib/buildMetricsFromEntrypoint.js::linkQualifiedLocalIfPossible@393"
+      ],
+      "_callees": [],
+      "_importance": 2.1972245773362196,
+      "_radiusHint": 18.183347464017316,
+      "_unused": false,
+      "ext": ".js::resolvefnidbynameinfile@371",
+      "type": "js::resolvefnidbynameinfile@371",
+      "subtype": "js::resolvefnidbynameinfile@371",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::resolveFromId@380",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 5,
+      "complexity": 3,
+      "headerComment": "",
+      "kind": "function",
+      "name": "resolveFromId",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 0,
+      "_inCalls": 1,
+      "_outCalls": 0,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::addCallEdges@367"
+      ],
+      "_callees": [],
+      "_importance": 1.7047480922384253,
+      "_radiusHint": 15.228488553430552,
+      "_unused": false,
+      "ext": ".js::resolvefromid@380",
+      "type": "js::resolvefromid@380",
+      "subtype": "js::resolvefromid@380",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::linkBareLocalIfPossible@386",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 6,
+      "complexity": 1,
+      "headerComment": "",
+      "kind": "function",
+      "name": "linkBareLocalIfPossible",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 2,
+      "_inCalls": 1,
+      "_outCalls": 2,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::addCallEdges@367"
+      ],
+      "_callees": [
+        "app/lib/buildMetricsFromEntrypoint.js::resolveFnIdByNameInFile@371",
+        "app/lib/buildMetricsFromEntrypoint.js::addLink@140"
+      ],
+      "_importance": 2.5257286443082556,
+      "_radiusHint": 20.154371865849534,
+      "_unused": false,
+      "ext": ".js::linkbarelocalifpossible@386",
+      "type": "js::linkbarelocalifpossible@386",
+      "subtype": "js::linkbarelocalifpossible@386",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::linkQualifiedLocalIfPossible@393",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 25,
+      "complexity": 3,
+      "headerComment": "",
+      "kind": "function",
+      "name": "linkQualifiedLocalIfPossible",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 2,
+      "_inCalls": 1,
+      "_outCalls": 2,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::addCallEdges@367"
+      ],
+      "_callees": [
+        "app/lib/buildMetricsFromEntrypoint.js::addLink@140",
+        "app/lib/buildMetricsFromEntrypoint.js::resolveFnIdByNameInFile@371"
+      ],
+      "_importance": 2.5257286443082556,
+      "_radiusHint": 20.154371865849534,
+      "_unused": false,
+      "ext": ".js::linkqualifiedlocalifpossible@393",
+      "type": "js::linkqualifiedlocalifpossible@393",
+      "subtype": "js::linkqualifiedlocalifpossible@393",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::getImportBinding@419",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 1,
+      "complexity": 0,
+      "headerComment": "",
+      "kind": "function",
+      "name": "getImportBinding",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 0,
+      "_inCalls": 1,
+      "_outCalls": 0,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::linkCrossFileIfPossible@433"
+      ],
+      "_callees": [],
+      "_importance": 1.7047480922384253,
+      "_radiusHint": 15.228488553430552,
+      "_unused": false,
+      "ext": ".js::getimportbinding@419",
+      "type": "js::getimportbinding@419",
+      "subtype": "js::getimportbinding@419",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::resolveTargetFileIdFromSource@421",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 9,
+      "complexity": 2,
+      "headerComment": "",
+      "kind": "function",
+      "name": "resolveTargetFileIdFromSource",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 3,
+      "_inCalls": 1,
+      "_outCalls": 3,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::linkCrossFileIfPossible@433"
+      ],
+      "_callees": [
+        "app/lib/buildMetricsFromEntrypoint.js::isInsideRoot@672",
+        "app/lib/buildMetricsFromEntrypoint.js::toRelId@157",
+        "app/lib/resolveImports.js::resolveImports@98"
+      ],
+      "_importance": 2.772588722239781,
+      "_radiusHint": 21.635532333438686,
+      "_unused": false,
+      "ext": ".js::resolvetargetfileidfromsource@421",
+      "type": "js::resolvetargetfileidfromsource@421",
+      "subtype": "js::resolvetargetfileidfromsource@421",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::normalizeImported@431",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 1,
+      "complexity": 1,
+      "headerComment": "",
+      "kind": "function",
+      "name": "normalizeImported",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 0,
+      "_inCalls": 1,
+      "_outCalls": 0,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::linkCrossFileIfPossible@433"
+      ],
+      "_callees": [],
+      "_importance": 1.7047480922384253,
+      "_radiusHint": 15.228488553430552,
+      "_unused": false,
+      "ext": ".js::normalizeimported@431",
+      "type": "js::normalizeimported@431",
+      "subtype": "js::normalizeimported@431",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::linkCrossFileIfPossible@433",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 18,
+      "complexity": 4,
+      "headerComment": "",
+      "kind": "function",
+      "name": "linkCrossFileIfPossible",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 4,
+      "_inCalls": 1,
+      "_outCalls": 4,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::addCallEdges@367"
+      ],
+      "_callees": [
+        "app/lib/buildMetricsFromEntrypoint.js::getImportBinding@419",
+        "app/lib/buildMetricsFromEntrypoint.js::resolveTargetFileIdFromSource@421",
+        "app/lib/buildMetricsFromEntrypoint.js::normalizeImported@431",
+        "app/lib/buildMetricsFromEntrypoint.js::addLink@140"
+      ],
+      "_importance": 2.970414465569701,
+      "_radiusHint": 22.822486793418207,
+      "_unused": false,
+      "ext": ".js::linkcrossfileifpossible@433",
+      "type": "js::linkcrossfileifpossible@433",
+      "subtype": "js::linkcrossfileifpossible@433",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::resolveDeferredCalls@466",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 33,
+      "complexity": 4,
+      "headerComment": "",
+      "kind": "function",
+      "name": "resolveDeferredCalls",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 1,
+      "_inCalls": 1,
+      "_outCalls": 1,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115"
+      ],
+      "_callees": [
+        "app/lib/buildMetricsFromEntrypoint.js::addLink@140"
+      ],
+      "_importance": 2.1972245773362196,
+      "_radiusHint": 18.183347464017316,
+      "_unused": false,
+      "ext": ".js::resolvedeferredcalls@466",
+      "type": "js::resolvedeferredcalls@466",
+      "subtype": "js::resolvedeferredcalls@466",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::strictSanityCheck@501",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 14,
+      "complexity": 3,
+      "headerComment": "",
+      "kind": "function",
+      "name": "strictSanityCheck",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 0,
+      "_inCalls": 1,
+      "_outCalls": 0,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115"
+      ],
+      "_callees": [],
+      "_importance": 1.7047480922384253,
+      "_radiusHint": 15.228488553430552,
+      "_unused": false,
+      "ext": ".js::strictsanitycheck@501",
+      "type": "js::strictsanitycheck@501",
+      "subtype": "js::strictsanitycheck@501",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::markUnusedFunctions@517",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 10,
+      "complexity": 6,
+      "headerComment": "",
+      "kind": "function",
+      "name": "markUnusedFunctions",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 0,
+      "_inCalls": 1,
+      "_outCalls": 0,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115"
+      ],
+      "_callees": [],
+      "_importance": 1.7047480922384253,
+      "_radiusHint": 15.228488553430552,
+      "_unused": false,
+      "ext": ".js::markunusedfunctions@517",
+      "type": "js::markunusedfunctions@517",
+      "subtype": "js::markunusedfunctions@517",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::enforceCanonicalFields@529",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 10,
+      "complexity": 4,
+      "headerComment": "",
+      "kind": "function",
+      "name": "enforceCanonicalFields",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 1,
+      "_inCalls": 1,
+      "_outCalls": 1,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115"
+      ],
+      "_callees": [
+        "app/lib/nodeClassification.js::ensureCanonicalNodeFields@203"
+      ],
+      "_importance": 2.1972245773362196,
+      "_radiusHint": 18.183347464017316,
+      "_unused": false,
+      "ext": ".js::enforcecanonicalfields@529",
+      "type": "js::enforcecanonicalfields@529",
+      "subtype": "js::enforcecanonicalfields@529",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::dequeueNextAbs@545",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 16,
+      "complexity": 3,
+      "headerComment": "",
+      "kind": "function",
+      "name": "dequeueNextAbs",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 0,
+      "_inCalls": 1,
+      "_outCalls": 0,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::bfsTraverse@587"
+      ],
+      "_callees": [],
+      "_importance": 1.7047480922384253,
+      "_radiusHint": 15.228488553430552,
+      "_unused": false,
+      "ext": ".js::dequeuenextabs@545",
+      "type": "js::dequeuenextabs@545",
+      "subtype": "js::dequeuenextabs@545",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::parseOrThrow@563",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 11,
+      "complexity": 2,
+      "headerComment": "",
+      "kind": "function",
+      "name": "parseOrThrow",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 3,
+      "_inCalls": 1,
+      "_outCalls": 3,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::bfsTraverse@587"
+      ],
+      "_callees": [
+        "app/lib/buildMetricsFromEntrypoint.js::statFileOrThrow@655",
+        "app/lib/buildMetricsFromEntrypoint.js::readUtf8@650",
+        "app/lib/parseFile.js::parseFile@51"
+      ],
+      "_importance": 2.772588722239781,
+      "_radiusHint": 21.635532333438686,
+      "_unused": false,
+      "ext": ".js::parseorthrow@563",
+      "type": "js::parseorthrow@563",
+      "subtype": "js::parseorthrow@563",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::addFileNode@576",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 10,
+      "complexity": 3,
+      "headerComment": "",
+      "kind": "function",
+      "name": "addFileNode",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 1,
+      "_inCalls": 1,
+      "_outCalls": 1,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::bfsTraverse@587"
+      ],
+      "_callees": [
+        "app/lib/buildMetricsFromEntrypoint.js::addNode@135"
+      ],
+      "_importance": 2.1972245773362196,
+      "_radiusHint": 18.183347464017316,
+      "_unused": false,
+      "ext": ".js::addfilenode@576",
+      "type": "js::addfilenode@576",
+      "subtype": "js::addfilenode@576",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::bfsTraverse@587",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 41,
+      "complexity": 2,
+      "headerComment": "",
+      "kind": "function",
+      "name": "bfsTraverse",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 8,
+      "_inCalls": 1,
+      "_outCalls": 8,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115"
+      ],
+      "_callees": [
+        "app/lib/buildMetricsFromEntrypoint.js::dequeueNextAbs@545",
+        "app/lib/buildMetricsFromEntrypoint.js::parseOrThrow@563",
+        "app/lib/buildMetricsFromEntrypoint.js::toRelId@157",
+        "app/lib/buildMetricsFromEntrypoint.js::addFileNode@576",
+        "app/lib/buildMetricsFromEntrypoint.js::addFunctionNodes@338",
+        "app/lib/buildMetricsFromEntrypoint.js::addImportEdges@350",
+        "app/lib/buildMetricsFromEntrypoint.js::addCallEdges@367",
+        "app/lib/autoMode.js::applyAutoRefs@154"
+      ],
+      "_importance": 3.5115454388310208,
+      "_radiusHint": 26.069272632986124,
+      "_unused": false,
+      "ext": ".js::bfstraverse@587",
+      "type": "js::bfstraverse@587",
+      "subtype": "js::bfstraverse@587",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::toProjectRelativeId@635",
       "file": "app/lib/buildMetricsFromEntrypoint.js",
       "lines": 13,
       "complexity": 2,
@@ -1794,21 +2572,21 @@
       "_inIncludes": 1,
       "_outIncludes": 0,
       "_callers": [
-        "app/lib/buildMetricsFromEntrypoint.js::toRelId@260"
+        "app/lib/buildMetricsFromEntrypoint.js::toRelId@157"
       ],
       "_callees": [],
       "_importance": 1.7047480922384253,
       "_radiusHint": 15.228488553430552,
       "_unused": false,
-      "ext": ".js::toprojectrelativeid@628",
-      "type": "js::toprojectrelativeid@628",
-      "subtype": "js::toprojectrelativeid@628",
+      "ext": ".js::toprojectrelativeid@635",
+      "type": "js::toprojectrelativeid@635",
+      "subtype": "js::toprojectrelativeid@635",
       "group": "code",
       "layer": "app",
       "startLine": 0
     },
     {
-      "id": "app/lib/buildMetricsFromEntrypoint.js::readUtf8@643",
+      "id": "app/lib/buildMetricsFromEntrypoint.js::readUtf8@650",
       "file": "app/lib/buildMetricsFromEntrypoint.js",
       "lines": 3,
       "complexity": 0,
@@ -1825,21 +2603,21 @@
       "_inIncludes": 1,
       "_outIncludes": 0,
       "_callers": [
-        "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115"
+        "app/lib/buildMetricsFromEntrypoint.js::parseOrThrow@563"
       ],
       "_callees": [],
       "_importance": 1.7047480922384253,
       "_radiusHint": 15.228488553430552,
       "_unused": false,
-      "ext": ".js::readutf8@643",
-      "type": "js::readutf8@643",
-      "subtype": "js::readutf8@643",
+      "ext": ".js::readutf8@650",
+      "type": "js::readutf8@650",
+      "subtype": "js::readutf8@650",
       "group": "code",
       "layer": "app",
       "startLine": 0
     },
     {
-      "id": "app/lib/buildMetricsFromEntrypoint.js::statFileOrThrow@648",
+      "id": "app/lib/buildMetricsFromEntrypoint.js::statFileOrThrow@655",
       "file": "app/lib/buildMetricsFromEntrypoint.js",
       "lines": 11,
       "complexity": 2,
@@ -1847,30 +2625,31 @@
       "kind": "function",
       "name": "statFileOrThrow",
       "exported": false,
-      "_inbound": 2,
+      "_inbound": 3,
       "_outbound": 0,
-      "_inCalls": 1,
+      "_inCalls": 2,
       "_outCalls": 0,
       "_inUses": 0,
       "_outUses": 0,
       "_inIncludes": 1,
       "_outIncludes": 0,
       "_callers": [
-        "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115"
+        "app/lib/buildMetricsFromEntrypoint.js::validateEntrypointArgs@223",
+        "app/lib/buildMetricsFromEntrypoint.js::parseOrThrow@563"
       ],
       "_callees": [],
-      "_importance": 1.7047480922384253,
-      "_radiusHint": 15.228488553430552,
+      "_importance": 2.1972245773362196,
+      "_radiusHint": 18.183347464017316,
       "_unused": false,
-      "ext": ".js::statfileorthrow@648",
-      "type": "js::statfileorthrow@648",
-      "subtype": "js::statfileorthrow@648",
+      "ext": ".js::statfileorthrow@655",
+      "type": "js::statfileorthrow@655",
+      "subtype": "js::statfileorthrow@655",
       "group": "code",
       "layer": "app",
       "startLine": 0
     },
     {
-      "id": "app/lib/buildMetricsFromEntrypoint.js::isInsideRoot@665",
+      "id": "app/lib/buildMetricsFromEntrypoint.js::isInsideRoot@672",
       "file": "app/lib/buildMetricsFromEntrypoint.js",
       "lines": 5,
       "complexity": 1,
@@ -1878,36 +2657,72 @@
       "kind": "function",
       "name": "isInsideRoot",
       "exported": false,
-      "_inbound": 2,
+      "_inbound": 4,
       "_outbound": 0,
-      "_inCalls": 1,
+      "_inCalls": 3,
       "_outCalls": 0,
       "_inUses": 0,
       "_outUses": 0,
       "_inIncludes": 1,
       "_outIncludes": 0,
       "_callers": [
-        "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115"
+        "app/lib/buildMetricsFromEntrypoint.js::addImportEdges@350",
+        "app/lib/buildMetricsFromEntrypoint.js::resolveTargetFileIdFromSource@421",
+        "app/lib/buildMetricsFromEntrypoint.js::assertInsideRootOrThrow@889"
       ],
       "_callees": [],
-      "_importance": 1.7047480922384253,
-      "_radiusHint": 15.228488553430552,
+      "_importance": 2.5257286443082556,
+      "_radiusHint": 20.154371865849534,
       "_unused": false,
-      "ext": ".js::isinsideroot@665",
-      "type": "js::isinsideroot@665",
-      "subtype": "js::isinsideroot@665",
+      "ext": ".js::isinsideroot@672",
+      "type": "js::isinsideroot@672",
+      "subtype": "js::isinsideroot@672",
       "group": "code",
       "layer": "app",
       "startLine": 0
     },
     {
-      "id": "app/lib/buildMetricsFromEntrypoint.js::initDerivedStats@690",
+      "id": "app/lib/buildMetricsFromEntrypoint.js::initDerivedStats@697",
       "file": "app/lib/buildMetricsFromEntrypoint.js",
-      "lines": 25,
-      "complexity": 14,
+      "lines": 32,
+      "complexity": 4,
       "headerComment": "",
       "kind": "function",
       "name": "initDerivedStats",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 2,
+      "_inCalls": 1,
+      "_outCalls": 2,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::indexNodesById@761"
+      ],
+      "_callees": [
+        "app/lib/buildMetricsFromEntrypoint.js::ensureFinite@700",
+        "app/lib/buildMetricsFromEntrypoint.js::ensureArray@704"
+      ],
+      "_importance": 2.5257286443082556,
+      "_radiusHint": 20.154371865849534,
+      "_unused": false,
+      "ext": ".js::initderivedstats@697",
+      "type": "js::initderivedstats@697",
+      "subtype": "js::initderivedstats@697",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::ensureFinite@700",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 3,
+      "complexity": 1,
+      "headerComment": "",
+      "kind": "function",
+      "name": "ensureFinite",
       "exported": false,
       "_inbound": 2,
       "_outbound": 0,
@@ -1918,21 +2733,52 @@
       "_inIncludes": 1,
       "_outIncludes": 0,
       "_callers": [
-        "app/lib/buildMetricsFromEntrypoint.js::finalizeGraphStats@746"
+        "app/lib/buildMetricsFromEntrypoint.js::initDerivedStats@697"
       ],
       "_callees": [],
       "_importance": 1.7047480922384253,
       "_radiusHint": 15.228488553430552,
       "_unused": false,
-      "ext": ".js::initderivedstats@690",
-      "type": "js::initderivedstats@690",
-      "subtype": "js::initderivedstats@690",
+      "ext": ".js::ensurefinite@700",
+      "type": "js::ensurefinite@700",
+      "subtype": "js::ensurefinite@700",
       "group": "code",
       "layer": "app",
       "startLine": 0
     },
     {
-      "id": "app/lib/buildMetricsFromEntrypoint.js::pushUniqueCapped@722",
+      "id": "app/lib/buildMetricsFromEntrypoint.js::ensureArray@704",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 3,
+      "complexity": 1,
+      "headerComment": "",
+      "kind": "function",
+      "name": "ensureArray",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 0,
+      "_inCalls": 1,
+      "_outCalls": 0,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::initDerivedStats@697"
+      ],
+      "_callees": [],
+      "_importance": 1.7047480922384253,
+      "_radiusHint": 15.228488553430552,
+      "_unused": false,
+      "ext": ".js::ensurearray@704",
+      "type": "js::ensurearray@704",
+      "subtype": "js::ensurearray@704",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::pushUniqueCapped@736",
       "file": "app/lib/buildMetricsFromEntrypoint.js",
       "lines": 8,
       "complexity": 5,
@@ -1949,62 +2795,60 @@
       "_inIncludes": 1,
       "_outIncludes": 0,
       "_callers": [
-        "app/lib/buildMetricsFromEntrypoint.js::finalizeGraphStats@746"
+        "app/lib/buildMetricsFromEntrypoint.js"
       ],
       "_callees": [],
       "_importance": 1.7047480922384253,
       "_radiusHint": 15.228488553430552,
       "_unused": false,
-      "ext": ".js::pushuniquecapped@722",
-      "type": "js::pushuniquecapped@722",
-      "subtype": "js::pushuniquecapped@722",
+      "ext": ".js::pushuniquecapped@736",
+      "type": "js::pushuniquecapped@736",
+      "subtype": "js::pushuniquecapped@736",
       "group": "code",
       "layer": "app",
       "startLine": 0
     },
     {
-      "id": "app/lib/buildMetricsFromEntrypoint.js::finalizeGraphStats@746",
+      "id": "app/lib/buildMetricsFromEntrypoint.js::indexNodesById@761",
       "file": "app/lib/buildMetricsFromEntrypoint.js",
-      "lines": 73,
-      "complexity": 25,
+      "lines": 13,
+      "complexity": 3,
       "headerComment": "",
       "kind": "function",
-      "name": "finalizeGraphStats",
+      "name": "indexNodesById",
       "exported": false,
       "_inbound": 2,
-      "_outbound": 3,
+      "_outbound": 1,
       "_inCalls": 1,
-      "_outCalls": 3,
+      "_outCalls": 1,
       "_inUses": 0,
       "_outUses": 0,
       "_inIncludes": 1,
       "_outIncludes": 0,
       "_callers": [
-        "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115"
+        "app/lib/buildMetricsFromEntrypoint.js::finalizeGraphStats@856"
       ],
       "_callees": [
-        "app/lib/buildMetricsFromEntrypoint.js::initDerivedStats@690",
-        "app/lib/buildMetricsFromEntrypoint.js::getId@759",
-        "app/lib/buildMetricsFromEntrypoint.js::pushUniqueCapped@722"
+        "app/lib/buildMetricsFromEntrypoint.js::initDerivedStats@697"
       ],
-      "_importance": 2.772588722239781,
-      "_radiusHint": 21.635532333438686,
+      "_importance": 2.1972245773362196,
+      "_radiusHint": 18.183347464017316,
       "_unused": false,
-      "ext": ".js::finalizegraphstats@746",
-      "type": "js::finalizegraphstats@746",
-      "subtype": "js::finalizegraphstats@746",
+      "ext": ".js::indexnodesbyid@761",
+      "type": "js::indexnodesbyid@761",
+      "subtype": "js::indexnodesbyid@761",
       "group": "code",
       "layer": "app",
       "startLine": 0
     },
     {
-      "id": "app/lib/buildMetricsFromEntrypoint.js::getId@759",
+      "id": "app/lib/buildMetricsFromEntrypoint.js::getEndpointId@776",
       "file": "app/lib/buildMetricsFromEntrypoint.js",
       "lines": 6,
       "complexity": 4,
       "headerComment": "",
       "kind": "function",
-      "name": "getId",
+      "name": "getEndpointId",
       "exported": false,
       "_inbound": 2,
       "_outbound": 0,
@@ -2015,15 +2859,305 @@
       "_inIncludes": 1,
       "_outIncludes": 0,
       "_callers": [
-        "app/lib/buildMetricsFromEntrypoint.js::finalizeGraphStats@746"
+        "app/lib/buildMetricsFromEntrypoint.js::forEachValidLink@784"
       ],
       "_callees": [],
       "_importance": 1.7047480922384253,
       "_radiusHint": 15.228488553430552,
       "_unused": false,
-      "ext": ".js::getid@759",
-      "type": "js::getid@759",
-      "subtype": "js::getid@759",
+      "ext": ".js::getendpointid@776",
+      "type": "js::getendpointid@776",
+      "subtype": "js::getendpointid@776",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::forEachValidLink@784",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 9,
+      "complexity": 6,
+      "headerComment": "",
+      "kind": "function",
+      "name": "forEachValidLink",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 1,
+      "_inCalls": 1,
+      "_outCalls": 1,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::finalizeGraphStats@856"
+      ],
+      "_callees": [
+        "app/lib/buildMetricsFromEntrypoint.js::getEndpointId@776"
+      ],
+      "_importance": 2.1972245773362196,
+      "_radiusHint": 18.183347464017316,
+      "_unused": false,
+      "ext": ".js::foreachvalidlink@784",
+      "type": "js::foreachvalidlink@784",
+      "subtype": "js::foreachvalidlink@784",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::resolveNodePair@795",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 6,
+      "complexity": 2,
+      "headerComment": "",
+      "kind": "function",
+      "name": "resolveNodePair",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 0,
+      "_inCalls": 1,
+      "_outCalls": 0,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::finalizeGraphStats@856"
+      ],
+      "_callees": [],
+      "_importance": 1.7047480922384253,
+      "_radiusHint": 15.228488553430552,
+      "_unused": false,
+      "ext": ".js::resolvenodepair@795",
+      "type": "js::resolvenodepair@795",
+      "subtype": "js::resolvenodepair@795",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::applyDegree@803",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 4,
+      "complexity": 0,
+      "headerComment": "",
+      "kind": "function",
+      "name": "applyDegree",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 0,
+      "_inCalls": 1,
+      "_outCalls": 0,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::finalizeGraphStats@856"
+      ],
+      "_callees": [],
+      "_importance": 1.7047480922384253,
+      "_radiusHint": 15.228488553430552,
+      "_unused": false,
+      "ext": ".js::applydegree@803",
+      "type": "js::applydegree@803",
+      "subtype": "js::applydegree@803",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::applyEdgeTypeStats@809",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 5,
+      "complexity": 1,
+      "headerComment": "",
+      "kind": "function",
+      "name": "applyEdgeTypeStats",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 0,
+      "_inCalls": 1,
+      "_outCalls": 0,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::finalizeGraphStats@856"
+      ],
+      "_callees": [],
+      "_importance": 1.7047480922384253,
+      "_radiusHint": 15.228488553430552,
+      "_unused": false,
+      "ext": ".js::applyedgetypestats@809",
+      "type": "js::applyedgetypestats@809",
+      "subtype": "js::applyedgetypestats@809",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::applyImportanceAndRadius@834",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 21,
+      "complexity": 9,
+      "headerComment": "",
+      "kind": "function",
+      "name": "applyImportanceAndRadius",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 0,
+      "_inCalls": 1,
+      "_outCalls": 0,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::finalizeGraphStats@856"
+      ],
+      "_callees": [],
+      "_importance": 1.7047480922384253,
+      "_radiusHint": 15.228488553430552,
+      "_unused": false,
+      "ext": ".js::applyimportanceandradius@834",
+      "type": "js::applyimportanceandradius@834",
+      "subtype": "js::applyimportanceandradius@834",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::finalizeGraphStats@856",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 15,
+      "complexity": 3,
+      "headerComment": "",
+      "kind": "function",
+      "name": "finalizeGraphStats",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 6,
+      "_inCalls": 1,
+      "_outCalls": 6,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115"
+      ],
+      "_callees": [
+        "app/lib/buildMetricsFromEntrypoint.js::indexNodesById@761",
+        "app/lib/buildMetricsFromEntrypoint.js::forEachValidLink@784",
+        "app/lib/buildMetricsFromEntrypoint.js::resolveNodePair@795",
+        "app/lib/buildMetricsFromEntrypoint.js::applyDegree@803",
+        "app/lib/buildMetricsFromEntrypoint.js::applyEdgeTypeStats@809",
+        "app/lib/buildMetricsFromEntrypoint.js::applyImportanceAndRadius@834"
+      ],
+      "_importance": 3.2771447329921766,
+      "_radiusHint": 24.66286839795306,
+      "_unused": false,
+      "ext": ".js::finalizegraphstats@856",
+      "type": "js::finalizegraphstats@856",
+      "subtype": "js::finalizegraphstats@856",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::assertNonEmptyString@872",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 5,
+      "complexity": 2,
+      "headerComment": "",
+      "kind": "function",
+      "name": "assertNonEmptyString",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 0,
+      "_inCalls": 1,
+      "_outCalls": 0,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::validateEntrypointArgs@223"
+      ],
+      "_callees": [],
+      "_importance": 1.7047480922384253,
+      "_radiusHint": 15.228488553430552,
+      "_unused": false,
+      "ext": ".js::assertnonemptystring@872",
+      "type": "js::assertnonemptystring@872",
+      "subtype": "js::assertnonemptystring@872",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::statDirOrThrow@879",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 8,
+      "complexity": 2,
+      "headerComment": "",
+      "kind": "function",
+      "name": "statDirOrThrow",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 0,
+      "_inCalls": 1,
+      "_outCalls": 0,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::validateEntrypointArgs@223"
+      ],
+      "_callees": [],
+      "_importance": 1.7047480922384253,
+      "_radiusHint": 15.228488553430552,
+      "_unused": false,
+      "ext": ".js::statdirorthrow@879",
+      "type": "js::statdirorthrow@879",
+      "subtype": "js::statdirorthrow@879",
+      "group": "code",
+      "layer": "app",
+      "startLine": 0
+    },
+    {
+      "id": "app/lib/buildMetricsFromEntrypoint.js::assertInsideRootOrThrow@889",
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "lines": 7,
+      "complexity": 1,
+      "headerComment": "",
+      "kind": "function",
+      "name": "assertInsideRootOrThrow",
+      "exported": false,
+      "_inbound": 2,
+      "_outbound": 1,
+      "_inCalls": 1,
+      "_outCalls": 1,
+      "_inUses": 0,
+      "_outUses": 0,
+      "_inIncludes": 1,
+      "_outIncludes": 0,
+      "_callers": [
+        "app/lib/buildMetricsFromEntrypoint.js::validateEntrypointArgs@223"
+      ],
+      "_callees": [
+        "app/lib/buildMetricsFromEntrypoint.js::isInsideRoot@672"
+      ],
+      "_importance": 2.1972245773362196,
+      "_radiusHint": 18.183347464017316,
+      "_unused": false,
+      "ext": ".js::assertinsiderootorthrow@889",
+      "type": "js::assertinsiderootorthrow@889",
+      "subtype": "js::assertinsiderootorthrow@889",
       "group": "code",
       "layer": "app",
       "startLine": 0
@@ -2677,8 +3811,8 @@
       "_inIncludes": 1,
       "_outIncludes": 0,
       "_callers": [
-        "app/lib/buildMetricsFromEntrypoint.js::addNode@165",
-        "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115"
+        "app/lib/buildMetricsFromEntrypoint.js::addNode@135",
+        "app/lib/buildMetricsFromEntrypoint.js::enforceCanonicalFields@529"
       ],
       "_callees": [
         "app/lib/nodeClassification.js::extFromId@28",
@@ -2699,8 +3833,8 @@
     {
       "id": "app/lib/parseAst.js::parseJsTsAst@52",
       "file": "app/lib/parseAst.js",
-      "lines": 453,
-      "complexity": 36,
+      "lines": 476,
+      "complexity": 43,
       "headerComment": "",
       "kind": "function",
       "name": "parseJsTsAst",
@@ -2745,7 +3879,7 @@
       "_inIncludes": 1,
       "_outIncludes": 0,
       "_callers": [
-        "app/lib/parseAst.js::enterFunction@271"
+        "app/lib/parseAst.js::enterFunction@276"
       ],
       "_callees": [],
       "_importance": 1.7047480922384253,
@@ -2776,7 +3910,7 @@
       "_inIncludes": 1,
       "_outIncludes": 0,
       "_callers": [
-        "app/lib/parseAst.js::enterFunction@271"
+        "app/lib/parseAst.js::enterFunction@276"
       ],
       "_callees": [],
       "_importance": 1.7047480922384253,
@@ -2807,7 +3941,7 @@
       "_inIncludes": 1,
       "_outIncludes": 0,
       "_callers": [
-        "app/lib/parseAst.js::enterFunction@271"
+        "app/lib/parseAst.js::enterFunction@276"
       ],
       "_callees": [],
       "_importance": 1.7047480922384253,
@@ -2839,7 +3973,7 @@
       "_outIncludes": 0,
       "_callers": [
         "app/lib/parseAst.js::bumpCx@212",
-        "app/lib/parseAst.js::CallExpression@372"
+        "app/lib/parseAst.js::CallExpression@386"
       ],
       "_callees": [],
       "_importance": 2.1972245773362196,
@@ -2855,7 +3989,7 @@
     {
       "id": "app/lib/parseAst.js::bumpCx@212",
       "file": "app/lib/parseAst.js",
-      "lines": 12,
+      "lines": 17,
       "complexity": 6,
       "headerComment": "",
       "kind": "function",
@@ -2870,16 +4004,16 @@
       "_inIncludes": 1,
       "_outIncludes": 0,
       "_callers": [
-        "app/lib/parseAst.js::IfStatement@466",
-        "app/lib/parseAst.js::ForStatement@467",
-        "app/lib/parseAst.js::WhileStatement@468",
-        "app/lib/parseAst.js::DoWhileStatement@469",
-        "app/lib/parseAst.js::ForInStatement@470",
-        "app/lib/parseAst.js::ForOfStatement@471",
-        "app/lib/parseAst.js::SwitchCase@472",
-        "app/lib/parseAst.js::CatchClause@473",
-        "app/lib/parseAst.js::ConditionalExpression@474",
-        "app/lib/parseAst.js::LogicalExpression@475"
+        "app/lib/parseAst.js::IfStatement@480",
+        "app/lib/parseAst.js::ForStatement@481",
+        "app/lib/parseAst.js::WhileStatement@482",
+        "app/lib/parseAst.js::DoWhileStatement@483",
+        "app/lib/parseAst.js::ForInStatement@484",
+        "app/lib/parseAst.js::ForOfStatement@485",
+        "app/lib/parseAst.js::SwitchCase@486",
+        "app/lib/parseAst.js::CatchClause@487",
+        "app/lib/parseAst.js::ConditionalExpression@488",
+        "app/lib/parseAst.js::LogicalExpression@489"
       ],
       "_callees": [
         "app/lib/parseAst.js::currentFn@202"
@@ -2895,7 +4029,7 @@
       "startLine": 0
     },
     {
-      "id": "app/lib/parseAst.js::inferFnName@225",
+      "id": "app/lib/parseAst.js::inferFnName@230",
       "file": "app/lib/parseAst.js",
       "lines": 45,
       "complexity": 26,
@@ -2912,24 +4046,24 @@
       "_inIncludes": 1,
       "_outIncludes": 0,
       "_callers": [
-        "app/lib/parseAst.js::enterFunction@271"
+        "app/lib/parseAst.js::enterFunction@276"
       ],
       "_callees": [],
       "_importance": 1.7047480922384253,
       "_radiusHint": 15.228488553430552,
       "_unused": false,
-      "ext": ".js::inferfnname@225",
-      "type": "js::inferfnname@225",
-      "subtype": "js::inferfnname@225",
+      "ext": ".js::inferfnname@230",
+      "type": "js::inferfnname@230",
+      "subtype": "js::inferfnname@230",
       "group": "code",
       "layer": "parse",
       "startLine": 0
     },
     {
-      "id": "app/lib/parseAst.js::enterFunction@271",
+      "id": "app/lib/parseAst.js::enterFunction@276",
       "file": "app/lib/parseAst.js",
-      "lines": 43,
-      "complexity": 9,
+      "lines": 52,
+      "complexity": 15,
       "headerComment": "",
       "kind": "function",
       "name": "enterFunction",
@@ -2943,26 +4077,26 @@
       "_inIncludes": 1,
       "_outIncludes": 0,
       "_callers": [
-        "app/lib/parseAst.js::enter@484"
+        "app/lib/parseAst.js::enter@498"
       ],
       "_callees": [
         "app/lib/parseAst.js::isInlineCallback@154",
-        "app/lib/parseAst.js::inferFnName@225",
+        "app/lib/parseAst.js::inferFnName@230",
         "app/lib/parseAst.js::lineOf@178",
         "app/lib/parseAst.js::mkFnId@183"
       ],
       "_importance": 2.970414465569701,
       "_radiusHint": 22.822486793418207,
       "_unused": false,
-      "ext": ".js::enterfunction@271",
-      "type": "js::enterfunction@271",
-      "subtype": "js::enterfunction@271",
+      "ext": ".js::enterfunction@276",
+      "type": "js::enterfunction@276",
+      "subtype": "js::enterfunction@276",
       "group": "code",
       "layer": "parse",
       "startLine": 0
     },
     {
-      "id": "app/lib/parseAst.js::exitFunction@315",
+      "id": "app/lib/parseAst.js::exitFunction@329",
       "file": "app/lib/parseAst.js",
       "lines": 21,
       "complexity": 12,
@@ -2979,21 +4113,21 @@
       "_inIncludes": 1,
       "_outIncludes": 0,
       "_callers": [
-        "app/lib/parseAst.js::exit@485"
+        "app/lib/parseAst.js::exit@499"
       ],
       "_callees": [],
       "_importance": 1.7047480922384253,
       "_radiusHint": 15.228488553430552,
       "_unused": false,
-      "ext": ".js::exitfunction@315",
-      "type": "js::exitfunction@315",
-      "subtype": "js::exitfunction@315",
+      "ext": ".js::exitfunction@329",
+      "type": "js::exitfunction@329",
+      "subtype": "js::exitfunction@329",
       "group": "code",
       "layer": "parse",
       "startLine": 0
     },
     {
-      "id": "app/lib/parseAst.js::ImportDeclaration@345",
+      "id": "app/lib/parseAst.js::ImportDeclaration@359",
       "file": "app/lib/parseAst.js",
       "lines": 25,
       "complexity": 15,
@@ -3014,15 +4148,15 @@
       "_importance": 0.6931471805599453,
       "_radiusHint": 9.158883083359672,
       "_unused": true,
-      "ext": ".js::importdeclaration@345",
-      "type": "js::importdeclaration@345",
-      "subtype": "js::importdeclaration@345",
+      "ext": ".js::importdeclaration@359",
+      "type": "js::importdeclaration@359",
+      "subtype": "js::importdeclaration@359",
       "group": "code",
       "layer": "parse",
       "startLine": 0
     },
     {
-      "id": "app/lib/parseAst.js::CallExpression@372",
+      "id": "app/lib/parseAst.js::CallExpression@386",
       "file": "app/lib/parseAst.js",
       "lines": 55,
       "complexity": 17,
@@ -3045,15 +4179,15 @@
       "_importance": 1.7047480922384253,
       "_radiusHint": 15.228488553430552,
       "_unused": true,
-      "ext": ".js::callexpression@372",
-      "type": "js::callexpression@372",
-      "subtype": "js::callexpression@372",
+      "ext": ".js::callexpression@386",
+      "type": "js::callexpression@386",
+      "subtype": "js::callexpression@386",
       "group": "code",
       "layer": "parse",
       "startLine": 0
     },
     {
-      "id": "app/lib/parseAst.js::ExportNamedDeclaration@431",
+      "id": "app/lib/parseAst.js::ExportNamedDeclaration@445",
       "file": "app/lib/parseAst.js",
       "lines": 20,
       "complexity": 12,
@@ -3074,15 +4208,15 @@
       "_importance": 0.6931471805599453,
       "_radiusHint": 9.158883083359672,
       "_unused": true,
-      "ext": ".js::exportnameddeclaration@431",
-      "type": "js::exportnameddeclaration@431",
-      "subtype": "js::exportnameddeclaration@431",
+      "ext": ".js::exportnameddeclaration@445",
+      "type": "js::exportnameddeclaration@445",
+      "subtype": "js::exportnameddeclaration@445",
       "group": "code",
       "layer": "parse",
       "startLine": 0
     },
     {
-      "id": "app/lib/parseAst.js::ExportDefaultDeclaration@452",
+      "id": "app/lib/parseAst.js::ExportDefaultDeclaration@466",
       "file": "app/lib/parseAst.js",
       "lines": 10,
       "complexity": 2,
@@ -3103,15 +4237,15 @@
       "_importance": 0.6931471805599453,
       "_radiusHint": 9.158883083359672,
       "_unused": true,
-      "ext": ".js::exportdefaultdeclaration@452",
-      "type": "js::exportdefaultdeclaration@452",
-      "subtype": "js::exportdefaultdeclaration@452",
+      "ext": ".js::exportdefaultdeclaration@466",
+      "type": "js::exportdefaultdeclaration@466",
+      "subtype": "js::exportdefaultdeclaration@466",
       "group": "code",
       "layer": "parse",
       "startLine": 0
     },
     {
-      "id": "app/lib/parseAst.js::IfStatement@466",
+      "id": "app/lib/parseAst.js::IfStatement@480",
       "file": "app/lib/parseAst.js",
       "lines": 1,
       "complexity": 0,
@@ -3134,15 +4268,15 @@
       "_importance": 1.7047480922384253,
       "_radiusHint": 15.228488553430552,
       "_unused": true,
-      "ext": ".js::ifstatement@466",
-      "type": "js::ifstatement@466",
-      "subtype": "js::ifstatement@466",
+      "ext": ".js::ifstatement@480",
+      "type": "js::ifstatement@480",
+      "subtype": "js::ifstatement@480",
       "group": "code",
       "layer": "parse",
       "startLine": 0
     },
     {
-      "id": "app/lib/parseAst.js::ForStatement@467",
+      "id": "app/lib/parseAst.js::ForStatement@481",
       "file": "app/lib/parseAst.js",
       "lines": 1,
       "complexity": 0,
@@ -3165,15 +4299,15 @@
       "_importance": 1.7047480922384253,
       "_radiusHint": 15.228488553430552,
       "_unused": true,
-      "ext": ".js::forstatement@467",
-      "type": "js::forstatement@467",
-      "subtype": "js::forstatement@467",
+      "ext": ".js::forstatement@481",
+      "type": "js::forstatement@481",
+      "subtype": "js::forstatement@481",
       "group": "code",
       "layer": "parse",
       "startLine": 0
     },
     {
-      "id": "app/lib/parseAst.js::WhileStatement@468",
+      "id": "app/lib/parseAst.js::WhileStatement@482",
       "file": "app/lib/parseAst.js",
       "lines": 1,
       "complexity": 0,
@@ -3196,15 +4330,15 @@
       "_importance": 1.7047480922384253,
       "_radiusHint": 15.228488553430552,
       "_unused": true,
-      "ext": ".js::whilestatement@468",
-      "type": "js::whilestatement@468",
-      "subtype": "js::whilestatement@468",
+      "ext": ".js::whilestatement@482",
+      "type": "js::whilestatement@482",
+      "subtype": "js::whilestatement@482",
       "group": "code",
       "layer": "parse",
       "startLine": 0
     },
     {
-      "id": "app/lib/parseAst.js::DoWhileStatement@469",
+      "id": "app/lib/parseAst.js::DoWhileStatement@483",
       "file": "app/lib/parseAst.js",
       "lines": 1,
       "complexity": 0,
@@ -3227,15 +4361,15 @@
       "_importance": 1.7047480922384253,
       "_radiusHint": 15.228488553430552,
       "_unused": true,
-      "ext": ".js::dowhilestatement@469",
-      "type": "js::dowhilestatement@469",
-      "subtype": "js::dowhilestatement@469",
+      "ext": ".js::dowhilestatement@483",
+      "type": "js::dowhilestatement@483",
+      "subtype": "js::dowhilestatement@483",
       "group": "code",
       "layer": "parse",
       "startLine": 0
     },
     {
-      "id": "app/lib/parseAst.js::ForInStatement@470",
+      "id": "app/lib/parseAst.js::ForInStatement@484",
       "file": "app/lib/parseAst.js",
       "lines": 1,
       "complexity": 0,
@@ -3258,15 +4392,15 @@
       "_importance": 1.7047480922384253,
       "_radiusHint": 15.228488553430552,
       "_unused": true,
-      "ext": ".js::forinstatement@470",
-      "type": "js::forinstatement@470",
-      "subtype": "js::forinstatement@470",
+      "ext": ".js::forinstatement@484",
+      "type": "js::forinstatement@484",
+      "subtype": "js::forinstatement@484",
       "group": "code",
       "layer": "parse",
       "startLine": 0
     },
     {
-      "id": "app/lib/parseAst.js::ForOfStatement@471",
+      "id": "app/lib/parseAst.js::ForOfStatement@485",
       "file": "app/lib/parseAst.js",
       "lines": 1,
       "complexity": 0,
@@ -3289,15 +4423,15 @@
       "_importance": 1.7047480922384253,
       "_radiusHint": 15.228488553430552,
       "_unused": true,
-      "ext": ".js::forofstatement@471",
-      "type": "js::forofstatement@471",
-      "subtype": "js::forofstatement@471",
+      "ext": ".js::forofstatement@485",
+      "type": "js::forofstatement@485",
+      "subtype": "js::forofstatement@485",
       "group": "code",
       "layer": "parse",
       "startLine": 0
     },
     {
-      "id": "app/lib/parseAst.js::SwitchCase@472",
+      "id": "app/lib/parseAst.js::SwitchCase@486",
       "file": "app/lib/parseAst.js",
       "lines": 1,
       "complexity": 0,
@@ -3320,15 +4454,15 @@
       "_importance": 1.7047480922384253,
       "_radiusHint": 15.228488553430552,
       "_unused": true,
-      "ext": ".js::switchcase@472",
-      "type": "js::switchcase@472",
-      "subtype": "js::switchcase@472",
+      "ext": ".js::switchcase@486",
+      "type": "js::switchcase@486",
+      "subtype": "js::switchcase@486",
       "group": "code",
       "layer": "parse",
       "startLine": 0
     },
     {
-      "id": "app/lib/parseAst.js::CatchClause@473",
+      "id": "app/lib/parseAst.js::CatchClause@487",
       "file": "app/lib/parseAst.js",
       "lines": 1,
       "complexity": 0,
@@ -3351,15 +4485,15 @@
       "_importance": 1.7047480922384253,
       "_radiusHint": 15.228488553430552,
       "_unused": true,
-      "ext": ".js::catchclause@473",
-      "type": "js::catchclause@473",
-      "subtype": "js::catchclause@473",
+      "ext": ".js::catchclause@487",
+      "type": "js::catchclause@487",
+      "subtype": "js::catchclause@487",
       "group": "code",
       "layer": "parse",
       "startLine": 0
     },
     {
-      "id": "app/lib/parseAst.js::ConditionalExpression@474",
+      "id": "app/lib/parseAst.js::ConditionalExpression@488",
       "file": "app/lib/parseAst.js",
       "lines": 1,
       "complexity": 0,
@@ -3382,15 +4516,15 @@
       "_importance": 1.7047480922384253,
       "_radiusHint": 15.228488553430552,
       "_unused": true,
-      "ext": ".js::conditionalexpression@474",
-      "type": "js::conditionalexpression@474",
-      "subtype": "js::conditionalexpression@474",
+      "ext": ".js::conditionalexpression@488",
+      "type": "js::conditionalexpression@488",
+      "subtype": "js::conditionalexpression@488",
       "group": "code",
       "layer": "parse",
       "startLine": 0
     },
     {
-      "id": "app/lib/parseAst.js::LogicalExpression@475",
+      "id": "app/lib/parseAst.js::LogicalExpression@489",
       "file": "app/lib/parseAst.js",
       "lines": 4,
       "complexity": 2,
@@ -3413,15 +4547,15 @@
       "_importance": 1.7047480922384253,
       "_radiusHint": 15.228488553430552,
       "_unused": true,
-      "ext": ".js::logicalexpression@475",
-      "type": "js::logicalexpression@475",
-      "subtype": "js::logicalexpression@475",
+      "ext": ".js::logicalexpression@489",
+      "type": "js::logicalexpression@489",
+      "subtype": "js::logicalexpression@489",
       "group": "code",
       "layer": "parse",
       "startLine": 0
     },
     {
-      "id": "app/lib/parseAst.js::enter@484",
+      "id": "app/lib/parseAst.js::enter@498",
       "file": "app/lib/parseAst.js",
       "lines": 1,
       "complexity": 0,
@@ -3439,20 +4573,20 @@
       "_outIncludes": 0,
       "_callers": [],
       "_callees": [
-        "app/lib/parseAst.js::enterFunction@271"
+        "app/lib/parseAst.js::enterFunction@276"
       ],
       "_importance": 1.7047480922384253,
       "_radiusHint": 15.228488553430552,
       "_unused": true,
-      "ext": ".js::enter@484",
-      "type": "js::enter@484",
-      "subtype": "js::enter@484",
+      "ext": ".js::enter@498",
+      "type": "js::enter@498",
+      "subtype": "js::enter@498",
       "group": "code",
       "layer": "parse",
       "startLine": 0
     },
     {
-      "id": "app/lib/parseAst.js::exit@485",
+      "id": "app/lib/parseAst.js::exit@499",
       "file": "app/lib/parseAst.js",
       "lines": 1,
       "complexity": 0,
@@ -3470,14 +4604,14 @@
       "_outIncludes": 0,
       "_callers": [],
       "_callees": [
-        "app/lib/parseAst.js::exitFunction@315"
+        "app/lib/parseAst.js::exitFunction@329"
       ],
       "_importance": 1.7047480922384253,
       "_radiusHint": 15.228488553430552,
       "_unused": true,
-      "ext": ".js::exit@485",
-      "type": "js::exit@485",
-      "subtype": "js::exit@485",
+      "ext": ".js::exit@499",
+      "type": "js::exit@499",
+      "subtype": "js::exit@499",
       "group": "code",
       "layer": "parse",
       "startLine": 0
@@ -3501,7 +4635,7 @@
       "_outIncludes": 0,
       "_callers": [
         "app/lib/autoMode.js::tryParseReferencedTextFile@514",
-        "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115"
+        "app/lib/buildMetricsFromEntrypoint.js::parseOrThrow@563"
       ],
       "_callees": [
         "app/lib/parseFile.js::countLines@115",
@@ -3652,16 +4786,17 @@
       "kind": "function",
       "name": "resolveImports",
       "exported": true,
-      "_inbound": 2,
+      "_inbound": 3,
       "_outbound": 7,
-      "_inCalls": 1,
+      "_inCalls": 2,
       "_outCalls": 7,
       "_inUses": 0,
       "_outUses": 0,
       "_inIncludes": 1,
       "_outIncludes": 0,
       "_callers": [
-        "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115"
+        "app/lib/buildMetricsFromEntrypoint.js::addImportEdges@350",
+        "app/lib/buildMetricsFromEntrypoint.js::resolveTargetFileIdFromSource@421"
       ],
       "_callees": [
         "app/lib/resolveImports.js::stripQueryAndHash@173",
@@ -3672,8 +4807,8 @@
         "app/lib/resolveImports.js::normalizeWebPathToRelative@220",
         "app/lib/resolveImports.js::getPublicRoots@296"
       ],
-      "_importance": 3.4011973816621555,
-      "_radiusHint": 25.407184289972932,
+      "_importance": 3.5115454388310208,
+      "_radiusHint": 26.069272632986124,
       "_unused": false,
       "ext": ".js::resolveimports@98",
       "type": "js::resolveimports@98",
@@ -4045,7 +5180,7 @@
       "_inIncludes": 1,
       "_outIncludes": 0,
       "_callers": [
-        "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115"
+        "app/lib/buildMetricsFromEntrypoint.js::scanStructure@263"
       ],
       "_callees": [
         "app/lib/scanProjectTree.js::walkDir@150"
@@ -5394,67 +6529,237 @@
     },
     {
       "source": "app/lib/buildMetricsFromEntrypoint.js",
-      "target": "app/lib/buildMetricsFromEntrypoint.js::addNode@165",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::addNode@135",
       "type": "include"
     },
     {
       "source": "app/lib/buildMetricsFromEntrypoint.js",
-      "target": "app/lib/buildMetricsFromEntrypoint.js::addLink@176",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::addLink@140",
       "type": "include"
     },
     {
       "source": "app/lib/buildMetricsFromEntrypoint.js",
-      "target": "app/lib/buildMetricsFromEntrypoint.js::enqueue@202",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::toRelId@157",
       "type": "include"
     },
     {
       "source": "app/lib/buildMetricsFromEntrypoint.js",
-      "target": "app/lib/buildMetricsFromEntrypoint.js::toRelId@260",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::validateEntrypointArgs@223",
       "type": "include"
     },
     {
       "source": "app/lib/buildMetricsFromEntrypoint.js",
-      "target": "app/lib/buildMetricsFromEntrypoint.js::resolveFnIdByNameInFile@399",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::createEnqueue@239",
       "type": "include"
     },
     {
       "source": "app/lib/buildMetricsFromEntrypoint.js",
-      "target": "app/lib/buildMetricsFromEntrypoint.js::toProjectRelativeId@628",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::addStableRootNode@251",
       "type": "include"
     },
     {
       "source": "app/lib/buildMetricsFromEntrypoint.js",
-      "target": "app/lib/buildMetricsFromEntrypoint.js::readUtf8@643",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::scanStructure@263",
       "type": "include"
     },
     {
       "source": "app/lib/buildMetricsFromEntrypoint.js",
-      "target": "app/lib/buildMetricsFromEntrypoint.js::statFileOrThrow@648",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::forEachParsedFunction@303",
       "type": "include"
     },
     {
       "source": "app/lib/buildMetricsFromEntrypoint.js",
-      "target": "app/lib/buildMetricsFromEntrypoint.js::isInsideRoot@665",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::buildFunctionNode@310",
       "type": "include"
     },
     {
       "source": "app/lib/buildMetricsFromEntrypoint.js",
-      "target": "app/lib/buildMetricsFromEntrypoint.js::initDerivedStats@690",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::addFunctionNodes@338",
       "type": "include"
     },
     {
       "source": "app/lib/buildMetricsFromEntrypoint.js",
-      "target": "app/lib/buildMetricsFromEntrypoint.js::pushUniqueCapped@722",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::addImportEdges@350",
       "type": "include"
     },
     {
       "source": "app/lib/buildMetricsFromEntrypoint.js",
-      "target": "app/lib/buildMetricsFromEntrypoint.js::finalizeGraphStats@746",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::addCallEdges@367",
       "type": "include"
     },
     {
       "source": "app/lib/buildMetricsFromEntrypoint.js",
-      "target": "app/lib/buildMetricsFromEntrypoint.js::getId@759",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::resolveFnIdByNameInFile@371",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::resolveFromId@380",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::linkBareLocalIfPossible@386",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::linkQualifiedLocalIfPossible@393",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::getImportBinding@419",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::resolveTargetFileIdFromSource@421",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::normalizeImported@431",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::linkCrossFileIfPossible@433",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::resolveDeferredCalls@466",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::strictSanityCheck@501",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::markUnusedFunctions@517",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::enforceCanonicalFields@529",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::dequeueNextAbs@545",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::parseOrThrow@563",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::addFileNode@576",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::bfsTraverse@587",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::toProjectRelativeId@635",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::readUtf8@650",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::statFileOrThrow@655",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::isInsideRoot@672",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::initDerivedStats@697",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::ensureFinite@700",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::ensureArray@704",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::pushUniqueCapped@736",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::indexNodesById@761",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::getEndpointId@776",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::forEachValidLink@784",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::resolveNodePair@795",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::applyDegree@803",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::applyEdgeTypeStats@809",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::applyImportanceAndRadius@834",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::finalizeGraphStats@856",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::assertNonEmptyString@872",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::statDirOrThrow@879",
+      "type": "include"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::assertInsideRootOrThrow@889",
       "type": "include"
     },
     {
@@ -5489,82 +6794,317 @@
     },
     {
       "source": "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115",
-      "target": "app/lib/buildMetricsFromEntrypoint.js::isInsideRoot@665",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::validateEntrypointArgs@223",
       "type": "call"
     },
     {
       "source": "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115",
-      "target": "app/lib/buildMetricsFromEntrypoint.js::addNode@165",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::addStableRootNode@251",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::createEnqueue@239",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::scanStructure@263",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::toRelId@157",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::toProjectRelativeId@635",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::bfsTraverse@587",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::resolveDeferredCalls@466",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::strictSanityCheck@501",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::finalizeGraphStats@856",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::markUnusedFunctions@517",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::enforceCanonicalFields@529",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::toRelId@157",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::validateEntrypointArgs@223",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::assertNonEmptyString@872",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::validateEntrypointArgs@223",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::statDirOrThrow@879",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::validateEntrypointArgs@223",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::statFileOrThrow@655",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::validateEntrypointArgs@223",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::assertInsideRootOrThrow@889",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::addStableRootNode@251",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::addNode@135",
       "type": "call"
     },
     {
       "source": "app/lib/buildMetricsFromEntrypoint.js",
-      "target": "app/lib/buildMetricsFromEntrypoint.js::addNode@165",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::addNode@135",
       "type": "call"
     },
     {
       "source": "app/lib/buildMetricsFromEntrypoint.js",
-      "target": "app/lib/buildMetricsFromEntrypoint.js::addLink@176",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::addLink@140",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::addFunctionNodes@338",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::forEachParsedFunction@303",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::addFunctionNodes@338",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::buildFunctionNode@310",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::addFunctionNodes@338",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::addNode@135",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::addFunctionNodes@338",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::addLink@140",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::addImportEdges@350",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::isInsideRoot@672",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::addImportEdges@350",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::toRelId@157",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::addImportEdges@350",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::addLink@140",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::linkBareLocalIfPossible@386",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::resolveFnIdByNameInFile@371",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::linkBareLocalIfPossible@386",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::addLink@140",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::linkQualifiedLocalIfPossible@393",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::addLink@140",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::linkQualifiedLocalIfPossible@393",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::resolveFnIdByNameInFile@371",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::resolveTargetFileIdFromSource@421",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::isInsideRoot@672",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::resolveTargetFileIdFromSource@421",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::toRelId@157",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::linkCrossFileIfPossible@433",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::getImportBinding@419",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::linkCrossFileIfPossible@433",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::resolveTargetFileIdFromSource@421",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::linkCrossFileIfPossible@433",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::normalizeImported@431",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::linkCrossFileIfPossible@433",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::addLink@140",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::addCallEdges@367",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::resolveFromId@380",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::addCallEdges@367",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::linkBareLocalIfPossible@386",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::addCallEdges@367",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::linkQualifiedLocalIfPossible@393",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::addCallEdges@367",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::linkCrossFileIfPossible@433",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::resolveDeferredCalls@466",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::addLink@140",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::parseOrThrow@563",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::statFileOrThrow@655",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::parseOrThrow@563",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::readUtf8@650",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::addFileNode@576",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::addNode@135",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::bfsTraverse@587",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::dequeueNextAbs@545",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::bfsTraverse@587",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::parseOrThrow@563",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::bfsTraverse@587",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::toRelId@157",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::bfsTraverse@587",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::addFileNode@576",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::bfsTraverse@587",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::addFunctionNodes@338",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::bfsTraverse@587",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::addImportEdges@350",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::bfsTraverse@587",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::addCallEdges@367",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::initDerivedStats@697",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::ensureFinite@700",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::initDerivedStats@697",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::ensureArray@704",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::indexNodesById@761",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::initDerivedStats@697",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::forEachValidLink@784",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::getEndpointId@776",
       "type": "call"
     },
     {
       "source": "app/lib/buildMetricsFromEntrypoint.js",
-      "target": "app/lib/buildMetricsFromEntrypoint.js::enqueue@202",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::pushUniqueCapped@736",
       "type": "call"
     },
     {
-      "source": "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115",
-      "target": "app/lib/buildMetricsFromEntrypoint.js::enqueue@202",
+      "source": "app/lib/buildMetricsFromEntrypoint.js::finalizeGraphStats@856",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::indexNodesById@761",
       "type": "call"
     },
     {
-      "source": "app/lib/buildMetricsFromEntrypoint.js::toRelId@260",
-      "target": "app/lib/buildMetricsFromEntrypoint.js::toProjectRelativeId@628",
+      "source": "app/lib/buildMetricsFromEntrypoint.js::finalizeGraphStats@856",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::forEachValidLink@784",
       "type": "call"
     },
     {
-      "source": "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115",
-      "target": "app/lib/buildMetricsFromEntrypoint.js::statFileOrThrow@648",
+      "source": "app/lib/buildMetricsFromEntrypoint.js::finalizeGraphStats@856",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::resolveNodePair@795",
       "type": "call"
     },
     {
-      "source": "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115",
-      "target": "app/lib/buildMetricsFromEntrypoint.js::readUtf8@643",
+      "source": "app/lib/buildMetricsFromEntrypoint.js::finalizeGraphStats@856",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::applyDegree@803",
       "type": "call"
     },
     {
-      "source": "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115",
-      "target": "app/lib/buildMetricsFromEntrypoint.js::toRelId@260",
+      "source": "app/lib/buildMetricsFromEntrypoint.js::finalizeGraphStats@856",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::applyEdgeTypeStats@809",
       "type": "call"
     },
     {
-      "source": "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115",
-      "target": "app/lib/buildMetricsFromEntrypoint.js::addLink@176",
+      "source": "app/lib/buildMetricsFromEntrypoint.js::finalizeGraphStats@856",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::applyImportanceAndRadius@834",
       "type": "call"
     },
     {
-      "source": "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115",
-      "target": "app/lib/buildMetricsFromEntrypoint.js::resolveFnIdByNameInFile@399",
-      "type": "call"
-    },
-    {
-      "source": "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115",
-      "target": "app/lib/buildMetricsFromEntrypoint.js::finalizeGraphStats@746",
-      "type": "call"
-    },
-    {
-      "source": "app/lib/buildMetricsFromEntrypoint.js::finalizeGraphStats@746",
-      "target": "app/lib/buildMetricsFromEntrypoint.js::initDerivedStats@690",
-      "type": "call"
-    },
-    {
-      "source": "app/lib/buildMetricsFromEntrypoint.js::finalizeGraphStats@746",
-      "target": "app/lib/buildMetricsFromEntrypoint.js::getId@759",
-      "type": "call"
-    },
-    {
-      "source": "app/lib/buildMetricsFromEntrypoint.js::finalizeGraphStats@746",
-      "target": "app/lib/buildMetricsFromEntrypoint.js::pushUniqueCapped@722",
+      "source": "app/lib/buildMetricsFromEntrypoint.js::assertInsideRootOrThrow@889",
+      "target": "app/lib/buildMetricsFromEntrypoint.js::isInsideRoot@672",
       "type": "call"
     },
     {
@@ -5789,97 +7329,97 @@
     },
     {
       "source": "app/lib/parseAst.js",
-      "target": "app/lib/parseAst.js::inferFnName@225",
+      "target": "app/lib/parseAst.js::inferFnName@230",
       "type": "include"
     },
     {
       "source": "app/lib/parseAst.js",
-      "target": "app/lib/parseAst.js::enterFunction@271",
+      "target": "app/lib/parseAst.js::enterFunction@276",
       "type": "include"
     },
     {
       "source": "app/lib/parseAst.js",
-      "target": "app/lib/parseAst.js::exitFunction@315",
+      "target": "app/lib/parseAst.js::exitFunction@329",
       "type": "include"
     },
     {
       "source": "app/lib/parseAst.js",
-      "target": "app/lib/parseAst.js::ImportDeclaration@345",
+      "target": "app/lib/parseAst.js::ImportDeclaration@359",
       "type": "include"
     },
     {
       "source": "app/lib/parseAst.js",
-      "target": "app/lib/parseAst.js::CallExpression@372",
+      "target": "app/lib/parseAst.js::CallExpression@386",
       "type": "include"
     },
     {
       "source": "app/lib/parseAst.js",
-      "target": "app/lib/parseAst.js::ExportNamedDeclaration@431",
+      "target": "app/lib/parseAst.js::ExportNamedDeclaration@445",
       "type": "include"
     },
     {
       "source": "app/lib/parseAst.js",
-      "target": "app/lib/parseAst.js::ExportDefaultDeclaration@452",
+      "target": "app/lib/parseAst.js::ExportDefaultDeclaration@466",
       "type": "include"
     },
     {
       "source": "app/lib/parseAst.js",
-      "target": "app/lib/parseAst.js::IfStatement@466",
+      "target": "app/lib/parseAst.js::IfStatement@480",
       "type": "include"
     },
     {
       "source": "app/lib/parseAst.js",
-      "target": "app/lib/parseAst.js::ForStatement@467",
+      "target": "app/lib/parseAst.js::ForStatement@481",
       "type": "include"
     },
     {
       "source": "app/lib/parseAst.js",
-      "target": "app/lib/parseAst.js::WhileStatement@468",
+      "target": "app/lib/parseAst.js::WhileStatement@482",
       "type": "include"
     },
     {
       "source": "app/lib/parseAst.js",
-      "target": "app/lib/parseAst.js::DoWhileStatement@469",
+      "target": "app/lib/parseAst.js::DoWhileStatement@483",
       "type": "include"
     },
     {
       "source": "app/lib/parseAst.js",
-      "target": "app/lib/parseAst.js::ForInStatement@470",
+      "target": "app/lib/parseAst.js::ForInStatement@484",
       "type": "include"
     },
     {
       "source": "app/lib/parseAst.js",
-      "target": "app/lib/parseAst.js::ForOfStatement@471",
+      "target": "app/lib/parseAst.js::ForOfStatement@485",
       "type": "include"
     },
     {
       "source": "app/lib/parseAst.js",
-      "target": "app/lib/parseAst.js::SwitchCase@472",
+      "target": "app/lib/parseAst.js::SwitchCase@486",
       "type": "include"
     },
     {
       "source": "app/lib/parseAst.js",
-      "target": "app/lib/parseAst.js::CatchClause@473",
+      "target": "app/lib/parseAst.js::CatchClause@487",
       "type": "include"
     },
     {
       "source": "app/lib/parseAst.js",
-      "target": "app/lib/parseAst.js::ConditionalExpression@474",
+      "target": "app/lib/parseAst.js::ConditionalExpression@488",
       "type": "include"
     },
     {
       "source": "app/lib/parseAst.js",
-      "target": "app/lib/parseAst.js::LogicalExpression@475",
+      "target": "app/lib/parseAst.js::LogicalExpression@489",
       "type": "include"
     },
     {
       "source": "app/lib/parseAst.js",
-      "target": "app/lib/parseAst.js::enter@484",
+      "target": "app/lib/parseAst.js::enter@498",
       "type": "include"
     },
     {
       "source": "app/lib/parseAst.js",
-      "target": "app/lib/parseAst.js::exit@485",
+      "target": "app/lib/parseAst.js::exit@499",
       "type": "include"
     },
     {
@@ -5888,88 +7428,88 @@
       "type": "call"
     },
     {
-      "source": "app/lib/parseAst.js::enterFunction@271",
+      "source": "app/lib/parseAst.js::enterFunction@276",
       "target": "app/lib/parseAst.js::isInlineCallback@154",
       "type": "call"
     },
     {
-      "source": "app/lib/parseAst.js::enterFunction@271",
-      "target": "app/lib/parseAst.js::inferFnName@225",
+      "source": "app/lib/parseAst.js::enterFunction@276",
+      "target": "app/lib/parseAst.js::inferFnName@230",
       "type": "call"
     },
     {
-      "source": "app/lib/parseAst.js::enterFunction@271",
+      "source": "app/lib/parseAst.js::enterFunction@276",
       "target": "app/lib/parseAst.js::lineOf@178",
       "type": "call"
     },
     {
-      "source": "app/lib/parseAst.js::enterFunction@271",
+      "source": "app/lib/parseAst.js::enterFunction@276",
       "target": "app/lib/parseAst.js::mkFnId@183",
       "type": "call"
     },
     {
-      "source": "app/lib/parseAst.js::CallExpression@372",
+      "source": "app/lib/parseAst.js::CallExpression@386",
       "target": "app/lib/parseAst.js::currentFn@202",
       "type": "call"
     },
     {
-      "source": "app/lib/parseAst.js::IfStatement@466",
+      "source": "app/lib/parseAst.js::IfStatement@480",
       "target": "app/lib/parseAst.js::bumpCx@212",
       "type": "call"
     },
     {
-      "source": "app/lib/parseAst.js::ForStatement@467",
+      "source": "app/lib/parseAst.js::ForStatement@481",
       "target": "app/lib/parseAst.js::bumpCx@212",
       "type": "call"
     },
     {
-      "source": "app/lib/parseAst.js::WhileStatement@468",
+      "source": "app/lib/parseAst.js::WhileStatement@482",
       "target": "app/lib/parseAst.js::bumpCx@212",
       "type": "call"
     },
     {
-      "source": "app/lib/parseAst.js::DoWhileStatement@469",
+      "source": "app/lib/parseAst.js::DoWhileStatement@483",
       "target": "app/lib/parseAst.js::bumpCx@212",
       "type": "call"
     },
     {
-      "source": "app/lib/parseAst.js::ForInStatement@470",
+      "source": "app/lib/parseAst.js::ForInStatement@484",
       "target": "app/lib/parseAst.js::bumpCx@212",
       "type": "call"
     },
     {
-      "source": "app/lib/parseAst.js::ForOfStatement@471",
+      "source": "app/lib/parseAst.js::ForOfStatement@485",
       "target": "app/lib/parseAst.js::bumpCx@212",
       "type": "call"
     },
     {
-      "source": "app/lib/parseAst.js::SwitchCase@472",
+      "source": "app/lib/parseAst.js::SwitchCase@486",
       "target": "app/lib/parseAst.js::bumpCx@212",
       "type": "call"
     },
     {
-      "source": "app/lib/parseAst.js::CatchClause@473",
+      "source": "app/lib/parseAst.js::CatchClause@487",
       "target": "app/lib/parseAst.js::bumpCx@212",
       "type": "call"
     },
     {
-      "source": "app/lib/parseAst.js::ConditionalExpression@474",
+      "source": "app/lib/parseAst.js::ConditionalExpression@488",
       "target": "app/lib/parseAst.js::bumpCx@212",
       "type": "call"
     },
     {
-      "source": "app/lib/parseAst.js::LogicalExpression@475",
+      "source": "app/lib/parseAst.js::LogicalExpression@489",
       "target": "app/lib/parseAst.js::bumpCx@212",
       "type": "call"
     },
     {
-      "source": "app/lib/parseAst.js::enter@484",
-      "target": "app/lib/parseAst.js::enterFunction@271",
+      "source": "app/lib/parseAst.js::enter@498",
+      "target": "app/lib/parseAst.js::enterFunction@276",
       "type": "call"
     },
     {
-      "source": "app/lib/parseAst.js::exit@485",
-      "target": "app/lib/parseAst.js::exitFunction@315",
+      "source": "app/lib/parseAst.js::exit@499",
+      "target": "app/lib/parseAst.js::exitFunction@329",
       "type": "call"
     },
     {
@@ -6493,38 +8033,43 @@
       "type": "call"
     },
     {
-      "source": "app/lib/buildMetricsFromEntrypoint.js::addNode@165",
-      "target": "app/lib/nodeClassification.js::ensureCanonicalNodeFields@203",
-      "type": "call"
-    },
-    {
-      "source": "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115",
-      "target": "app/lib/scanProjectTree.js::scanProjectTree@96",
-      "type": "call"
-    },
-    {
-      "source": "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115",
-      "target": "app/lib/parseFile.js::parseFile@51",
-      "type": "call"
-    },
-    {
-      "source": "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115",
-      "target": "app/lib/autoMode.js::applyAutoRefs@154",
-      "type": "call"
-    },
-    {
-      "source": "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115",
-      "target": "app/lib/resolveImports.js::resolveImports@98",
-      "type": "call"
-    },
-    {
-      "source": "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115",
+      "source": "app/lib/buildMetricsFromEntrypoint.js::addNode@135",
       "target": "app/lib/nodeClassification.js::ensureCanonicalNodeFields@203",
       "type": "call"
     },
     {
       "source": "app/lib/buildMetricsFromEntrypoint.js::buildMetricsFromEntrypoint@115",
       "target": "app/lib/nodeClassification.js::defaultLayerY@182",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::scanStructure@263",
+      "target": "app/lib/scanProjectTree.js::scanProjectTree@96",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::addImportEdges@350",
+      "target": "app/lib/resolveImports.js::resolveImports@98",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::resolveTargetFileIdFromSource@421",
+      "target": "app/lib/resolveImports.js::resolveImports@98",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::enforceCanonicalFields@529",
+      "target": "app/lib/nodeClassification.js::ensureCanonicalNodeFields@203",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::parseOrThrow@563",
+      "target": "app/lib/parseFile.js::parseFile@51",
+      "type": "call"
+    },
+    {
+      "source": "app/lib/buildMetricsFromEntrypoint.js::bfsTraverse@587",
+      "target": "app/lib/autoMode.js::applyAutoRefs@154",
       "type": "call"
     },
     {

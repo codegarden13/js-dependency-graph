@@ -346,6 +346,63 @@
   /* ====================================================================== */
 
   /**
+   * Best-effort cyclomatic complexity getter.
+   *
+   * Notes:
+   * - True "logical paths" (cyclomatic complexity) should ideally be computed on the backend AST.
+   * - UI can only use fields present on nodes; we do not parse source code here.
+   */
+  CodeGraphData.getCyclomaticComplexity = function getCyclomaticComplexity(n) {
+    if (!n || typeof n !== "object") return 0;
+
+    // Prefer explicit cyclomatic fields if backend provides them.
+    const v =
+      n.cyclomatic ??
+      n.cyclomaticComplexity ??
+      n.cc ??
+      n.complexity;
+
+    const num = Number(v);
+    if (Number.isFinite(num)) return num;
+
+    // Fallback heuristic: degree-based proxy (keeps old behavior).
+    const inbound = Number(n._inbound || 0);
+    const outbound = Number(n._outbound || 0);
+    return inbound + outbound;
+  };
+
+  /** Extract a best-effort "line count" metric from a node. */
+  function getNodeLines(n) {
+    return n?.lines ?? n?.loc ?? n?.size ?? n?.lineCount ?? n?.length ?? 0;
+  }
+
+  /**
+   * Normalize to 0..1 with safety guards.
+   * Returns 0 if v is not finite or range is too small.
+   */
+  function safeNormalize(v, min, max, eps) {
+    if (!Number.isFinite(v)) return 0;
+    const range = max - min;
+    if (!Number.isFinite(range) || range < eps) return 0;
+    return (v - min) / range;
+  }
+
+  /** Compute min/max in one pass (faster and avoids Math.min(...bigArray)). */
+  function minMax(arr) {
+    let min = Infinity;
+    let max = -Infinity;
+    for (const v of arr) {
+      const x = Number(v);
+      if (!Number.isFinite(x)) continue;
+      if (x < min) min = x;
+      if (x > max) max = x;
+    }
+    if (min === Infinity) min = 0;
+    if (max === -Infinity) max = 0;
+    return { min, max };
+  }
+
+  /**
    * Compute and assign inbound and outbound degree counts for each node.
    * @param {Array} nodes - The array of node objects.
    * @param {Array} links - The array of link objects.
@@ -375,30 +432,24 @@
    * @returns {void}
    */
   CodeGraphData.buildLineAndComplexityScores = function buildLineAndComplexityScores(nodes) {
+    if (!Array.isArray(nodes) || nodes.length === 0) return;
+
     const eps = 1e-6;
 
-    const getLines = (n) => n.lines ?? n.loc ?? n.size ?? n.lineCount ?? n.length ?? 0;
-    const getComplexity = (n) => n.complexity ?? n.cc ?? ((n._inbound || 0) + (n._outbound || 0));
+    const linesArr = nodes.map((n) => Number(getNodeLines(n) || 0));
+    const cxArr = nodes.map((n) => Number(CodeGraphData.getCyclomaticComplexity(n) || 0));
 
-    const linesArr = nodes.map((n) => Number(getLines(n) || 0));
-    const cxArr = nodes.map((n) => Number(getComplexity(n) || 0));
-
+    // Log-scale lines so very large files don't dominate.
     const logLinesArr = linesArr.map((v) => Math.log10(Math.max(1, v)));
-    const minLog = Math.min(...logLinesArr);
-    const maxLog = Math.max(...logLinesArr);
 
-    const minCx = Math.min(...cxArr);
-    const maxCx = Math.max(...cxArr);
+    const { min: minLog, max: maxLog } = minMax(logLinesArr);
+    const { min: minCx, max: maxCx } = minMax(cxArr);
 
-    const norm = (v, min, max) => {
-      if (!isFinite(v)) return 0;
-      if (max - min < eps) return 0;
-      return (v - min) / (max - min);
-    };
+    for (let i = 0; i < nodes.length; i++) {
+      const n = nodes[i];
 
-    nodes.forEach((n, i) => {
-      const lineScore = norm(logLinesArr[i], minLog, maxLog);
-      const cxScore = norm(cxArr[i], minCx, maxCx);
+      const lineScore = safeNormalize(logLinesArr[i], minLog, maxLog, eps);
+      const cxScore = safeNormalize(cxArr[i], minCx, maxCx, eps);
 
       n._lineScore = lineScore;
       n._complexityScore = cxScore;
@@ -408,7 +459,7 @@
 
       n.__displayLines = linesArr[i];
       n.__displayComplexity = cxArr[i];
-    });
+    }
   };
 
   /**

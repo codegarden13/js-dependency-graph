@@ -7,7 +7,7 @@
   <title>NodeAnalyzer</title>
 
   <!-- Bootstrap -->
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="/assets/css/bootstrap.min.css" rel="stylesheet" />
 
   <!-- app -->
   <link href="/assets/css/style.css" rel="stylesheet" />
@@ -31,7 +31,7 @@
       <main class="col-12 col-lg-7 col-xl-8">
         <div class="card shadow-sm">
           <div class="card-header py-2 d-flex align-items-center justify-content-between">
-            <span class="small fw-semibold">Graph</span>
+            <span class="small fw-semibold" id="graphInfoHeader">Graph</span>
             <span class="small text-secondary">Click a node to inspect</span>
           </div>
           <div class="card-body p-2">
@@ -42,53 +42,82 @@
 
       <!-- RIGHT: apps + panels -->
       <aside class="col-12 col-lg-5 col-xl-4">
-        <div class="sidePanels">
+        <div class="accordion" id="rightAccordion">
 
-          <!-- Apps list -->
-          <div class="card shadow-sm">
-            <div class="card-header py-2 d-flex align-items-center justify-content-between">
-              <span class="small fw-semibold">Apps</span>
-          
-            </div>
+          <!-- Apps -->
+          <div class="accordion-item">
+            <h2 class="accordion-header" id="accAppsHdr">
+              <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse" data-bs-target="#accApps" aria-expanded="false" aria-controls="accApps">
+                <span class="small fw-semibold">Apps</span>
+                <span class="badge bg-secondary ms-2" id="appsCountBadge">0</span>
+              </button>
+            </h2>
+            <div id="accApps" class="accordion-collapse collapse" aria-labelledby="accAppsHdr" data-bs-parent="#rightAccordion">
+              <div class="accordion-body p-2">
+                <div id="appList" class="appsList appsScroll" role="list">
+                  <div class="text-secondary small px-2 py-2">Loading…</div>
+                </div>
 
-            <div class="card-body p-2">
-              <div id="appList" class="appsList appsScroll" role="list">
-                <div class="text-secondary small px-2 py-2">Loading…</div>
+                <!-- Hidden state used by runAnalysis() -->
+                <input type="hidden" id="appSelect" value="" />
+
+                <div class="d-flex gap-2 align-items-center mt-2">
+                  <button type="button" class="btn btn-outline-secondary btn-sm" id="helpBtn">Help</button>
+                </div>
               </div>
-             
-              <!-- Hidden state used by runAnalysis() -->
-              <input type="hidden" id="appSelect" value="" />
-            </div>
-
-            <div class="card-footer py-2 d-flex gap-2 align-items-center">
-            
-              <button type="button" class="btn btn-outline-secondary btn-sm" id="helpBtn">Help</button>
             </div>
           </div>
 
-
-           <!-- Selection panel -->
-          <div class="card shadow-sm">
-            <div class="card-header py-2">
-              <span class="small fw-semibold">Legend & Filter</span>
+          <!-- Recommendations -->
+          <div class="accordion-item">
+            <h2 class="accordion-header" id="accRecoHdr">
+              <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse" data-bs-target="#accReco" aria-expanded="false" aria-controls="accReco">
+                <span class="small fw-semibold">Recommendations</span>
+                <span class="badge bg-secondary ms-2" id="recoCountBadge">0</span>
+              </button>
+            </h2>
+            <div id="accReco" class="accordion-collapse collapse" aria-labelledby="accRecoHdr" data-bs-parent="#rightAccordion">
+              <div class="accordion-body panelScroll" id="recommendationsPanel"></div>
             </div>
-            <div class="card-body panelScroll" id="legendFilterPanel"></div>
           </div>
 
-          <!-- Selection panel -->
-          <div class="card shadow-sm">
-            <div class="card-header py-2">
-              <span class="small fw-semibold">Selection</span>
+          <!-- Legend & Filter -->
+          <div class="accordion-item">
+            <h2 class="accordion-header" id="accLegendHdr">
+              <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse" data-bs-target="#accLegend" aria-expanded="false" aria-controls="accLegend">
+                <span class="small fw-semibold">Legend &amp; Filter</span>
+                <span class="small text-secondary ms-2" id="filterSummary">architecture</span>
+              </button>
+            </h2>
+            <div id="accLegend" class="accordion-collapse collapse" aria-labelledby="accLegendHdr" data-bs-parent="#rightAccordion">
+              <div class="accordion-body panelScroll" id="legendFilterPanel"></div>
             </div>
-            <div class="card-body panelScroll" id="graphInfoPanel"></div>
           </div>
 
-          <!-- README panel -->
-          <div class="card shadow-sm">
-            <div class="card-header py-2">
-              <span class="small fw-semibold">README</span>
+          <!-- Selection -->
+          <div class="accordion-item">
+            <h2 class="accordion-header" id="accSelectionHdr">
+              <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse" data-bs-target="#accSelection" aria-expanded="false" aria-controls="accSelection">
+                <span class="small fw-semibold">Selection</span>
+                <span class="small text-secondary ms-2" id="selectionSummary">none</span>
+              </button>
+            </h2>
+            <div id="accSelection" class="accordion-collapse collapse" aria-labelledby="accSelectionHdr" data-bs-parent="#rightAccordion">
+              <div class="accordion-body panelScroll" id="graphInfoPanel"></div>
             </div>
-            <div class="card-body panelScroll" id="readmePanel"></div>
+          </div>
+
+          <!-- README -->
+          <div class="accordion-item">
+            <h2 class="accordion-header" id="accReadmeHdr">
+              <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse" data-bs-target="#accReadme" aria-expanded="false" aria-controls="accReadme">
+                <span class="small fw-semibold">README</span>
+                <span class="small text-secondary ms-2" id="readmeSummary">none</span>
+              </button>
+            </h2>
+            <div id="accReadme" class="accordion-collapse collapse" aria-labelledby="accReadmeHdr" data-bs-parent="#rightAccordion">
+              <div class="accordion-body panelScroll" id="readmePanel"></div>
+            </div>
           </div>
 
         </div>
@@ -98,6 +127,19 @@
 
   <!-- libs -->
   <script src="/assets/js/d3.v7.min.js"></script>
+  <!-- Bootstrap JS (required for accordion/collapse) -->
+ 
+
+
+
+    <!-- Bootstrap JS Bundle (required for accordion/collapse) -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous">
+
+  </script>
+
+
+
+
 
   <!-- codeGraph modules -->
   <script src="/assets/js/codeGraph/data.js"></script>
@@ -115,12 +157,17 @@
   <!-- app glue -->
   <script src="/assets/js/app.js"></script>
 
-  <!-- clear panels button -->
+  <!-- clear panels button (optional; only wired if the button exists) -->
   <script>
-    document.getElementById("clearPanelsBtn")?.addEventListener("click", () => {
-      document.getElementById("graphInfoPanel")?.replaceChildren();
-      document.getElementById("readmePanel")?.replaceChildren();
-    });
+    (function () {
+      const btn = document.getElementById("clearPanelsBtn");
+      if (!btn) return;
+
+      btn.addEventListener("click", () => {
+        document.getElementById("graphInfoPanel")?.replaceChildren();
+        document.getElementById("readmePanel")?.replaceChildren();
+      });
+    })();
   </script>
 
 
