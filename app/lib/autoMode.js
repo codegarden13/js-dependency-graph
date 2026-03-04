@@ -286,6 +286,131 @@ export function applyAutoRefs({
   }
 }
 
+function shouldApplySkeletonFallback(nodeCount, linkCount) {
+  // Conservative trigger: only if we basically found nothing.
+  return !(nodeCount > 5 || linkCount > 1);
+}
+
+function ensureRootNode(ensureNode) {
+  const rootId = ".";
+  ensureNode({
+    id: rootId,
+    file: rootId,
+    kind: "root",
+    type: "root",
+    lines: 0,
+    complexity: 0,
+    headerComment: ""
+  });
+  return rootId;
+}
+
+function ensureDirNode(ensureNode, dirId) {
+  ensureNode({
+    id: dirId,
+    file: dirId,
+    kind: "dir",
+    type: "dir",
+    lines: 0,
+    complexity: 0,
+    headerComment: ""
+  });
+}
+
+function classifyOnce(fileAbs) {
+  return classifyFileByExt(fileAbs);
+}
+
+function ensureFileNode(ensureNode, fileId, fileAbs) {
+  const cls = classifyOnce(fileAbs);
+  ensureNode({
+    id: fileId,
+    file: fileId,
+    kind: cls.kind,
+    type: cls.type,
+    ext: cls.ext,
+    lines: 0,
+    complexity: 0,
+    headerComment: ""
+  });
+}
+
+function isSpecialTopFileName(name) {
+  return name === "Dockerfile" || name === "Makefile" || name === "LICENSE";
+}
+
+function isAllowedSkeletonFile(name) {
+  if (!name) return false;
+  if (AUTO_SKIP_NAMES.has(name)) return false;
+  if (name.startsWith(".")) return false;
+
+  const ext = String(path.extname(name)).toLowerCase();
+  const isSpecial = isSpecialTopFileName(name);
+
+  // If it has an extension, it must be in the allowlist. Special files are allowed without an ext.
+  if (!isSpecial && ext && !AUTO_ASSET_EXT_ALLOW.has(ext)) return false;
+
+  return true;
+}
+
+function addSkeletonFilesInDir({ rootAbs, dirAbs, dirId, ensureNode, ensureLink }) {
+  const entries = safeReadDir(dirAbs);
+
+  let fileCount = 0;
+  for (const name of entries) {
+    if (fileCount >= AUTO_MAX_SKELETON_FILES_PER_DIR) break;
+    if (!isAllowedSkeletonFile(name)) continue;
+
+    const childAbs = path.join(dirAbs, name);
+    const st = safeStat(childAbs);
+    if (!st || !st.isFile()) continue;
+
+    const childId = toProjectRelativeId(rootAbs, childAbs);
+
+    ensureFileNode(ensureNode, childId, childAbs);
+    ensureLink(dirId, childId, "include");
+
+    fileCount++;
+  }
+}
+
+function addPreferredDirsSkeleton({ rootAbs, rootId, ensureNode, ensureLink }) {
+  let addedDirs = 0;
+
+  for (const dirName of AUTO_PREFERRED_DIRS) {
+    if (addedDirs >= AUTO_MAX_SKELETON_DIRS) break;
+    if (!dirName || AUTO_SKIP_NAMES.has(dirName)) continue;
+
+    const dirAbs = path.join(rootAbs, dirName);
+    const st = safeStat(dirAbs);
+    if (!st || !st.isDirectory()) continue;
+
+    const dirId = toProjectRelativeId(rootAbs, dirAbs);
+
+    ensureDirNode(ensureNode, dirId);
+    ensureLink(rootId, dirId, "include");
+
+    addSkeletonFilesInDir({ rootAbs, dirAbs, dirId, ensureNode, ensureLink });
+
+    addedDirs++;
+  }
+}
+
+function addTopLevelFilesSkeleton({ rootAbs, rootId, ensureNode, ensureLink }) {
+  for (const name of AUTO_TOP_FILES) {
+    if (!name) continue;
+
+    const abs = path.join(rootAbs, name);
+    const st = safeStat(abs);
+    if (!st || !st.isFile()) continue;
+
+    const id = toProjectRelativeId(rootAbs, abs);
+
+    ensureFileNode(ensureNode, id, abs);
+    ensureLink(rootId, id, "include");
+  }
+}
+
 /**
  * Skeleton fallback: add a shallow, read-only “project map” when the graph
  * is nearly empty (common for single-file apps).
@@ -304,106 +429,13 @@ export function applySkeletonFallback({
   ensureNode,
   ensureLink
 }) {
-  // Conservative trigger: only if we basically found nothing.
-  if (nodeCount > 5 || linkCount > 1) return;
+  if (!shouldApplySkeletonFallback(nodeCount, linkCount)) return;
 
   const rootAbs = path.resolve(projectRootAbs);
-  const rootId = ".";
+  const rootId = ensureRootNode(ensureNode);
 
-  ensureNode({
-    id: rootId,
-    file: rootId,
-    kind: "root",
-    type: "root",
-    lines: 0,
-    complexity: 0,
-    headerComment: ""
-  });
-
-  // Preferred dirs.
-  let addedDirs = 0;
-  for (const dirName of AUTO_PREFERRED_DIRS) {
-    if (addedDirs >= AUTO_MAX_SKELETON_DIRS) break;
-    if (!dirName || AUTO_SKIP_NAMES.has(dirName)) continue;
-
-    const dirAbs = path.join(rootAbs, dirName);
-    const st = safeStat(dirAbs);
-    if (!st || !st.isDirectory()) continue;
-
-    const dirId = toProjectRelativeId(rootAbs, dirAbs);
-
-    ensureNode({
-      id: dirId,
-      file: dirId,
-      kind: "dir",
-      type: "dir",
-      lines: 0,
-      complexity: 0,
-      headerComment: ""
-    });
-
-    ensureLink(rootId, dirId, "include");
-
-    // Shallow list files in the directory.
-    const entries = safeReadDir(dirAbs);
-
-    let fileCount = 0;
-    for (const name of entries) {
-      if (fileCount >= AUTO_MAX_SKELETON_FILES_PER_DIR) break;
-      if (!name) continue;
-      if (AUTO_SKIP_NAMES.has(name)) continue;
-      if (name.startsWith(".")) continue;
-
-      const childAbs = path.join(dirAbs, name);
-      const childSt = safeStat(childAbs);
-      if (!childSt || !childSt.isFile()) continue;
-
-      const ext = String(path.extname(name)).toLowerCase();
-      const isSpecialNoExt = name === "Dockerfile" || name === "Makefile" || name === "LICENSE";
-      if (!isSpecialNoExt && ext && !AUTO_ASSET_EXT_ALLOW.has(ext)) continue;
-
-      const childId = toProjectRelativeId(rootAbs, childAbs);
-
-      ensureNode({
-        id: childId,
-        file: childId,
-        kind: classifyFileByExt(childAbs).kind,
-        type: classifyFileByExt(childAbs).type,
-        ext: classifyFileByExt(childAbs).ext,
-        lines: 0,
-        complexity: 0,
-        headerComment: ""
-      });
-
-      ensureLink(dirId, childId, "include");
-      fileCount++;
-    }
-
-    addedDirs++;
-  }
-
-  // Top-level files.
-  for (const name of AUTO_TOP_FILES) {
-    if (!name) continue;
-    const abs = path.join(rootAbs, name);
-    const st = safeStat(abs);
-    if (!st || !st.isFile()) continue;
-
-    const id = toProjectRelativeId(rootAbs, abs);
-
-    ensureNode({
-      id,
-      file: id,
-      kind: classifyFileByExt(abs).kind,
-      type: classifyFileByExt(abs).type,
-      ext: classifyFileByExt(abs).ext,
-      lines: 0,
-      complexity: 0,
-      headerComment: ""
-    });
-
-    ensureLink(rootId, id, "include");
-  }
+  addPreferredDirsSkeleton({ rootAbs, rootId, ensureNode, ensureLink });
+  addTopLevelFilesSkeleton({ rootAbs, rootId, ensureNode, ensureLink });
 }
 
 /* ========================================================================== */
