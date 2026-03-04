@@ -44,41 +44,67 @@ function typeFromExt(ext) {
 /* GROUP (COARSE UI BUCKET)                                                    */
 /* ========================================================================== */
 
+// Extension sets for deterministic coarse grouping.
+const GROUP_DOC_EXTS = new Set([".md", ".txt"]);
+const GROUP_DATA_EXTS = new Set([".json", ".jsonc", ".csv", ".tsv", ".yml", ".yaml", ".sql", ".env"]);
+const GROUP_IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico"]);
+const GROUP_CODE_EXTS = new Set([".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"]);
+
+function inExtSet(set, ext) {
+  return set.has(String(ext || "").toLowerCase());
+}
+
+// Fast kind → group mapping (structural kinds override extension-based grouping).
+const KIND_TO_GROUP = Object.freeze({
+  root: "root",
+  dir: "dir",
+  function: "code"
+});
+
+// Ordered extension → group rules (first match wins).
+const EXT_GROUP_RULES = Object.freeze([
+  { group: "doc", exts: GROUP_DOC_EXTS },
+  { group: "data", exts: GROUP_DATA_EXTS },
+  { group: "image", exts: GROUP_IMAGE_EXTS },
+  { group: "code", exts: GROUP_CODE_EXTS }
+]);
+
+function groupFromKindOnly(kind) {
+  return KIND_TO_GROUP[String(kind || "")] || "";
+}
+
+function groupFromExtOnly(ext) {
+  const e = String(ext || "").toLowerCase();
+  for (const r of EXT_GROUP_RULES) {
+    if (inExtSet(r.exts, e)) return r.group;
+  }
+  return "";
+}
+
+function defaultGroupForKind(kind) {
+  // Conservative default: files are shown as code; non-file nodes as data.
+  return String(kind || "") === "file" ? "code" : "data";
+}
+
 /**
  * Map a node kind + extension to the user-visible group.
+ *
  * Groups are intentionally coarse: root, dir, code, doc, data, image.
- * @param {string} kind
- * @param {string} ext
- * @returns {"root"|"dir"|"code"|"doc"|"data"|"image"}
+ *
+ * Precedence
+ * ----------
+ * 1) Structural kinds win (root/dir/function) to keep the UI stable.
+ * 2) Otherwise classify by extension via ordered rules (first match wins).
+ * 3) Fallback is conservative: kind "file" => "code", else "data".
  */
 export function groupFromKindAndExt(kind, ext) {
-  const k = String(kind || "");
-  const e = String(ext || "").toLowerCase();
+  const byKind = groupFromKindOnly(kind);
+  if (byKind) return byKind;
 
-  if (k === "root") return "root";
-  if (k === "dir") return "dir";
-  if (k === "function") return "code";
+  const byExt = groupFromExtOnly(ext);
+  if (byExt) return byExt;
 
-  // docs
-  if (e === ".md" || e === ".txt") return "doc";
-
-  // data
-  if (e === ".json" || e === ".jsonc" || e === ".csv" || e === ".tsv" || e === ".yml" || e === ".yaml" || e === ".sql" || e === ".env") {
-    return "data";
-  }
-
-  // images
-  if (e === ".png" || e === ".jpg" || e === ".jpeg" || e === ".gif" || e === ".svg" || e === ".webp" || e === ".ico") {
-    return "image";
-  }
-
-  // code
-  if (e === ".js" || e === ".mjs" || e === ".cjs" || e === ".ts" || e === ".tsx" || e === ".jsx") {
-    return "code";
-  }
-
-  // Default to code if the node is a file but extension is unknown.
-  return k === "file" ? "code" : "data";
+  return defaultGroupForKind(kind);
 }
 
 /* ========================================================================== */
@@ -119,74 +145,88 @@ function endsWithAny(haystack, suffixes) {
   return false;
 }
 
+function normalizeLayerInputs(kind, ext, fileId) {
+  return {
+    k: String(kind || ""),
+    e: String(ext || "").toLowerCase(),
+    id: String(fileId || ""),
+    lower: String(fileId || "").toLowerCase()
+  };
+}
+
+function matchDirs(lower, dirs) {
+  return includesAny(lower, dirs);
+}
+
+function matchEnds(lower, suffixes) {
+  return endsWithAny(lower, suffixes);
+}
+
+function matchAny(lower, tokens) {
+  // Token match is intentionally simple: substring checks for robustness.
+  return includesAny(lower, tokens);
+}
+
+function firstMatchingLayer(rules, ctx) {
+  for (const r of rules) {
+    if (!r || typeof r.match !== "function") continue;
+    if (r.match(ctx)) return r.layer;
+  }
+  return "";
+}
+
+// Ordered heuristics for code layers (first match wins).
+const LAYER_RULES = [
+  {
+    layer: "ui",
+    match: (ctx) => matchDirs(ctx.lower, ["/public/", "/assets/", "/views/"]) || matchEnds(ctx.lower, ["/app.js"])
+  },
+  {
+    layer: "http",
+    match: (ctx) => matchDirs(ctx.lower, ["/routes/", "/controllers/"])
+  },
+  {
+    layer: "parse",
+    match: (ctx) => matchAny(ctx.lower, ["parse", "@babel"]) || matchEnds(ctx.lower, ["parsefile.js", "parseast.js"])
+  },
+  {
+    layer: "io",
+    match: (ctx) => matchAny(ctx.lower, ["scan", "watch", "fs"]) || matchEnds(ctx.lower, ["scanprojecttree.js", "livechangefeed.js"])
+  },
+  {
+    layer: "graph",
+    match: (ctx) => matchAny(ctx.lower, ["graph"]) || matchEnds(ctx.lower, ["graphstore.js"])
+  },
+  {
+    layer: "resolve",
+    match: (ctx) => matchAny(ctx.lower, ["resolve"]) || matchEnds(ctx.lower, ["resolveimports.js"])
+  }
+];
+
 /**
  * Map a node to an architecture layer.
  *
- * This is intentionally deterministic and conservative: the backend decides once,
+ * This is deterministic and conservative: the backend decides once,
  * the UI only renders.
  *
- * Layers are used for:
- * - hull grouping
- * - optional vertical pinning (forceY)
- * - legend/badges
- *
- * @param {string} kind
- * @param {string} ext
- * @param {string} fileId
- * @returns {string}
+ * 1) Root/dir are structural layers.
+ * 2) Non-code assets/docs/data are layered deterministically by extension.
+ * 3) Code is layered by ordered heuristics over the project-relative path.
  */
 export function layerFromKindExtAndFile(kind, ext, fileId) {
-  const k = String(kind || "");
-  const e = String(ext || "").toLowerCase();
-  const id = String(fileId || "");
+  const ctx = normalizeLayerInputs(kind, ext, fileId);
 
-  if (k === "root") return "root";
-  if (k === "dir") return "structure";
+  if (ctx.k === "root") return "root";
+  if (ctx.k === "dir") return "structure";
 
   // Non-code assets/docs/data
-  if (inSet(DOC_EXTS, e)) return "doc";
-  if (inSet(DATA_EXTS, e)) return "data";
-  if (inSet(ASSET_EXTS, e)) return "asset";
+  if (inSet(DOC_EXTS, ctx.e)) return "doc";
+  if (inSet(DATA_EXTS, ctx.e)) return "data";
+  if (inSet(ASSET_EXTS, ctx.e)) return "asset";
 
-  // Heuristics for code layers by file path/name
-  // NOTE: fileId is project-relative, POSIX separators.
-  const lower = id.toLowerCase();
-
-  // UI/public
-  const UI_DIR_HINTS = ["/public/", "/assets/", "/views/"];
-  const UI_FILE_HINTS = ["/app.js"]; // keep conservative; matches project-relative ids
-
-  if (includesAny(lower, UI_DIR_HINTS) || endsWithAny(lower, UI_FILE_HINTS)) {
-    return "ui";
-  }
-
-  // HTTP/routes
-  if (lower.includes("/routes/") || lower.includes("/controllers/")) {
-    return "http";
-  }
-
-  // Parsing/AST
-  if (lower.includes("parse") || lower.includes("@babel") || lower.endsWith("parsefile.js") || lower.endsWith("parseast.js")) {
-    return "parse";
-  }
-
-  // IO / filesystem / scanning
-  if (lower.includes("scan") || lower.includes("watch") || lower.includes("fs") || lower.endsWith("scanprojecttree.js") || lower.endsWith("livechangefeed.js")) {
-    return "io";
-  }
-
-  // Graph/storage
-  if (lower.includes("graph") || lower.endsWith("graphstore.js")) {
-    return "graph";
-  }
-
-  // Resolution/deps
-  if (lower.includes("resolve") || lower.endsWith("resolveimports.js")) {
-    return "resolve";
-  }
-
-  // Default: generic app logic
-  return "app";
+  // Code heuristics (first match wins).
+  const byRule = firstMatchingLayer(LAYER_RULES, ctx);
+  return byRule || "app";
 }
 
 /* ========================================================================== */
@@ -231,39 +271,87 @@ export function defaultLayerY(order = DEFAULT_LAYER_ORDER) {
 /* CANONICALIZATION                                                           */
 /* ========================================================================== */
 
-/**
- * Ensure a node object contains the canonical classification fields.
- * This makes the exported JSON self-contained for UI rendering.
- *
- * @param {any} n Node object (mutated).
- */
-export function ensureCanonicalNodeFields(n) {
-  if (!n || typeof n !== "object") return;
+function isPlainObject(v) {
+  return Boolean(v) && typeof v === "object";
+}
 
-  const id = String(n.id || "");
-  const kind = String(n.kind || "file");
+function nodeId(n) {
+  return String(n?.id || "");
+}
 
-  // ext/type/subtype
-  const ext = String(n.ext || extFromId(id) || "").toLowerCase();
-  const type = String(n.type || (ext ? typeFromExt(ext) : "") || "");
+function nodeKind(n) {
+  return String(n?.kind || "file");
+}
+
+function computeExt(n, id) {
+  return String(n?.ext || extFromId(id) || "").toLowerCase();
+}
+
+function computeType(n, ext) {
+  if (n?.type) return String(n.type);
+  if (!ext) return "";
+  return String(typeFromExt(ext) || "");
+}
+
+function ensureExtTypeSubtype(n, id) {
+  const ext = computeExt(n, id);
+  const type = computeType(n, ext);
 
   n.ext = ext;
   n.type = type;
   n.subtype = String(n.subtype || type);
 
-  // group
+  return { ext, type };
+}
+
+function ensureGroup(n, kind, ext) {
   n.group = n.group || groupFromKindAndExt(kind, ext);
+}
 
-  // layer (for hull grouping / forceY). UI should not guess.
-  if (typeof n.layer !== "string" || !n.layer) {
-    n.layer = layerFromKindExtAndFile(kind, ext, String(n.file || id));
-  }
+function hasValidLayer(n) {
+  return typeof n?.layer === "string" && Boolean(n.layer);
+}
 
-  // numbers (avoid undefined)
+function ensureLayer(n, kind, ext, fileId, fallbackId) {
+  if (hasValidLayer(n)) return;
+  const fid = String(fileId || fallbackId);
+  n.layer = layerFromKindExtAndFile(kind, ext, fid);
+}
+
+function ensureNumbers(n) {
   if (!Number.isFinite(n.lines)) n.lines = Number(n.lines || 0) || 0;
   if (!Number.isFinite(n.complexity)) n.complexity = Number(n.complexity || 0) || 0;
+}
 
-  // strings
+function ensureStrings(n, id) {
   if (typeof n.file !== "string") n.file = String(n.file || id);
   if (typeof n.headerComment !== "string") n.headerComment = String(n.headerComment || "");
+}
+
+/**
+ * Ensure a node object contains the canonical classification fields.
+ * This makes the exported JSON self-contained for UI rendering.
+ *
+ * Responsibilities (kept intentionally separate)
+ * ---------------------------------------------
+ * - ext/type/subtype: derived from `id` unless already provided
+ * - group: derived from kind+ext unless already provided
+ * - layer: derived from kind+ext+fileId unless already provided
+ * - numeric/string hygiene: avoid undefined/null in the exported payload
+ *
+ * @param {any} n Node object (mutated).
+ */
+export function ensureCanonicalNodeFields(n) {
+  if (!isPlainObject(n)) return;
+
+  const id = nodeId(n);
+  const kind = nodeKind(n);
+
+  const { ext } = ensureExtTypeSubtype(n, id);
+
+  ensureGroup(n, kind, ext);
+  ensureLayer(n, kind, ext, n.file, id);
+
+  ensureNumbers(n);
+  ensureStrings(n, id);
 }
