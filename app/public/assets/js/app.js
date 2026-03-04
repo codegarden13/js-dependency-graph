@@ -38,19 +38,28 @@
     );
   }
 
-  let __warnedStatusDup = false;
+  function normId(v) {
+    return String(v || "");
+  }
+
+  function isSameId(a, b) {
+    return normId(a) === normId(b);
+  }
+
+  function isSelectedNodeMessage(msg) {
+    return isSameId(window.__selectedNode?.id, msg?.id);
+  }
+
   function setStatus(text) {
     const els = document.querySelectorAll("#status");
-    if (els.length > 1 && !__warnedStatusDup) {
-      __warnedStatusDup = true;
-      console.warn(`Expected 1 #status, found ${els.length}. Updating all.`);
-    }
+
     els.forEach((el) => {
       try {
         el.textContent = text || "";
       } catch { }
     });
   }
+
 
   function ensurePanelsExist() {
     const missing = [];
@@ -63,9 +72,47 @@
     return true;
   }
 
+
   /* ======================================================================= */
   /* MessageBox                                                               */
   /* ======================================================================= */
+
+  function msgBoxTitle(cfg) {
+    return String(cfg?.title || "Message");
+  }
+
+  function msgBoxMessage(cfg) {
+    return String(cfg?.message || "");
+  }
+
+  function safeJsonStringify(v) {
+    try {
+      return JSON.stringify(v, null, 2);
+    } catch {
+      return "";
+    }
+  }
+
+  function msgBoxDetailsText(cfg) {
+    if (cfg?.details == null) return "";
+
+    const json = safeJsonStringify(cfg.details);
+    if (json) return json;
+
+    // Fallback for non-serializable values (e.g. circular references)
+    return String(cfg?.details || "");
+  }
+
+  function hasUsefulDetails(detailsText) {
+    const t = String(detailsText || "");
+    return Boolean(t) && t !== "null";
+  }
+
+  function buildMessageBoxText(title, message, detailsText) {
+    const head = `${title}\n\n${message}`;
+    if (!hasUsefulDetails(detailsText)) return head;
+    return `${head}\n\nDetails:\n${detailsText}`;
+  }
 
   /**
    * Lightweight message box for analysis diagnostics.
@@ -77,23 +124,11 @@
    * }} cfg
    */
   function showMessageBox(cfg) {
-    const title = String(cfg?.title || "Message");
-    const message = String(cfg?.message || "");
+    const title = msgBoxTitle(cfg);
+    const message = msgBoxMessage(cfg);
+    const detailsText = msgBoxDetailsText(cfg);
 
-    let detailsText = "";
-    try {
-      if (cfg?.details != null) {
-        detailsText = JSON.stringify(cfg.details, null, 2);
-      }
-    } catch {
-      detailsText = String(cfg?.details || "");
-    }
-
-    const full =
-      detailsText && detailsText !== "null"
-        ? `${title}\n\n${message}\n\nDetails:\n${detailsText}`
-        : `${title}\n\n${message}`;
-
+    const full = buildMessageBoxText(title, message, detailsText);
     alert(full);
   }
 
@@ -101,17 +136,41 @@
    * Show a dedicated message for unsupported targets (e.g. CommonJS-only projects).
    * @param {any} data
    */
-  function showUnsupportedTargetMessage(data) {
-    const reason = String(data?.reason || data?.analysisStatus || "unsupported");
-    const msg = String(
+  function unsupportedReason(data) {
+    return String(data?.reason || data?.analysisStatus || "unsupported");
+  }
+
+  function unsupportedUserMessage(data) {
+    return String(
       data?.message || "This target is not supported by the current analyzer mode."
     );
+  }
+
+  function unsupportedDetails(data) {
+    return data?.details || data;
+  }
+
+  /**
+   * Show a dedicated message for unsupported targets.
+   *
+   * Why we need this
+   * ---------------
+   * The analyzer cannot reliably analyze every project type/mode (e.g. CommonJS-only,
+   * dynamic exports, missing entrypoint assumptions). In those cases the backend returns
+   * `analysisStatus: "unsupported"` plus optional `reason/message/details`.
+   *
+   * Instead of failing with a generic error, we surface a clear, actionable explanation
+   * to the user so they understand *why* no graph is shown and what to change.
+   */
+  function showUnsupportedTargetMessage(data) {
+    const msg = unsupportedUserMessage(data);
+    const reason = unsupportedReason(data);
 
     showMessageBox({
       title: "Unsupported target",
       severity: "warn",
       message: `${msg}\n\nReason: ${reason}`,
-      details: data?.details || data,
+      details: unsupportedDetails(data),
     });
   }
 
@@ -135,6 +194,63 @@
     return r.json();
   }
 
+  function isHttpNotFound(r) {
+    return Number(r?.status) === 404;
+  }
+
+  function getContentType(r) {
+    return String(r?.headers?.get?.("content-type") || "");
+  }
+
+  function isJsonContentType(ct) {
+    return String(ct).includes("application/json");
+  }
+
+  function buildResponseContext(url, r) {
+    const ct = getContentType(r);
+    return {
+      url: String(url || ""),
+      status: Number(r?.status || 0),
+      statusText: String(r?.statusText || ""),
+      contentType: ct,
+      isJson: isJsonContentType(ct)
+    };
+  }
+
+  async function readResponseBodySafely(r, isJson) {
+    try {
+      return isJson ? await r.json() : await r.text();
+    } catch {
+      return null;
+    }
+  }
+
+  function extractServerMessage(body) {
+    const serverMsg = body?.error?.message || body?.message;
+    if (serverMsg) return String(serverMsg);
+
+    const text = typeof body === "string" ? body.trim() : "";
+    return text || "";
+  }
+
+  function buildHttpError(ctx, body) {
+    const serverMsg = extractServerMessage(body);
+    const msg = serverMsg || `HTTP ${ctx.status} ${ctx.statusText}`;
+
+    const err = new Error(msg);
+    /** @type {any} */ (err).status = ctx.status;
+    /** @type {any} */ (err).code = body?.error?.code;
+    /** @type {any} */ (err).details = body?.error?.details;
+    return err;
+  }
+
+  function assertJsonResponse(ctx) {
+    if (ctx.isJson) return;
+    throw new Error(
+      `Expected JSON response from ${ctx.url}, got content-type: ${ctx.contentType || "(missing)"}`
+    );
+  }
+
   /**
    * Fetch JSON but treat HTTP 404 as a normal "not found" result.
    * @param {string} url
@@ -143,40 +259,13 @@
    */
   async function fetchJsonOrNullOn404(url, init) {
     const r = await fetch(url, init);
-    if (r.status === 404) return null;
+    if (isHttpNotFound(r)) return null;
 
-    const ct = String(r.headers.get("content-type") || "");
-    const isJson = ct.includes("application/json");
+    const ctx = buildResponseContext(url, r);
+    const body = await readResponseBodySafely(r, ctx.isJson);
 
-    /** @type {any} */
-    let body = null;
-
-    try {
-      body = isJson ? await r.json() : await r.text();
-    } catch {
-      body = null;
-    }
-
-    if (!r.ok) {
-      const serverMsg = body?.error?.message || body?.message;
-      const msg = serverMsg
-        ? String(serverMsg)
-        : typeof body === "string" && body.trim()
-          ? body.trim()
-          : `HTTP ${r.status} ${r.statusText}`;
-
-      const err = new Error(msg);
-      /** @type {any} */ (err).status = r.status;
-      /** @type {any} */ (err).code = body?.error?.code;
-      /** @type {any} */ (err).details = body?.error?.details;
-      throw err;
-    }
-
-    if (!isJson) {
-      throw new Error(
-        `Expected JSON response from ${url}, got content-type: ${ct || "(missing)"}`
-      );
-    }
+    if (!r.ok) throw buildHttpError(ctx, body);
+    assertJsonResponse(ctx);
 
     return body;
   }
@@ -240,56 +329,103 @@
     `;
   }
 
-  /**
-   * Render README for a selected node.
-   * @param {any} node
-   * @param {AbortSignal} signal
-   */
-  async function renderReadmeForNode(node, signal) {
-    const root = byId("readmePanel");
-    if (!root) return;
+  function getReadmeRoot() {
+    return byId("readmePanel");
+  }
 
-    const fileRel = String(node?.file || node?.parent || node?.id || "").trim();
-    if (!fileRel) {
-      root.innerHTML = "";
-      return;
-    }
+  function getNodeRelPath(node) {
+    return String(node?.file || node?.parent || node?.id || "").trim();
+  }
 
+  function clearReadme(root) {
+    root.innerHTML = "";
+  }
+
+  function showReadmeSearching(root) {
     root.innerHTML = `<div class="text-muted small">Searching…</div>`;
+  }
 
-    const appId = String((/** @type {HTMLInputElement} */ (byId("appSelect"))).value || "").trim();
-    if (!appId) {
-      root.innerHTML = `<div class="text-muted small">Select an app to load README.</div>`;
-      return;
-    }
+  function showReadmeSelectApp(root) {
+    root.innerHTML = `<div class="text-muted small">Select an app to load README.</div>`;
+  }
 
-    const url = `/readme?appId=${encodeURIComponent(appId)}&file=${encodeURIComponent(fileRel)}`;
+  function showReadmeNotFound(root) {
+    root.innerHTML = `<div class="text-muted small">No README found for this node.</div>`;
+  }
 
-    let data = null;
+  function buildReadmeUrl(appId, fileRel) {
+    const a = encodeURIComponent(String(appId || ""));
+    const f = encodeURIComponent(String(fileRel || ""));
+    return `/readme?appId=${a}&file=${f}`;
+  }
+
+  function isAbortError(e) {
+    return String(e?.name || "") === "AbortError";
+  }
+
+  function isAborted(signal) {
+    return Boolean(signal?.aborted);
+  }
+
+  async function fetchReadmeDataOrNull(url, signal) {
     try {
-      data = await fetchJsonOrNullOn404(url, { signal });
+      return await fetchJsonOrNullOn404(url, { signal });
     } catch (e) {
-      if (e?.name === "AbortError" || signal?.aborted) return;
+      if (isAbortError(e) || isAborted(signal)) return null;
       console.warn("README fetch failed:", e);
-      root.innerHTML = "";
-      return;
+      return null;
     }
+  }
 
-    if (signal?.aborted) return;
+  function markdownToHtml(md) {
+    const text = String(md || "");
+    return window.marked?.parse ? window.marked.parse(text) : `<pre>${esc(text)}</pre>`;
+  }
 
-    if (!data || data.found === false) {
-      root.innerHTML = `<div class="text-muted small">No README found for this node.</div>`;
-      return;
-    }
+  function sanitizeHtml(rawHtml) {
+    return window.DOMPurify?.sanitize ? window.DOMPurify.sanitize(rawHtml) : rawHtml;
+  }
 
-    const md = String(data.markdown || "");
-    const rawHtml = window.marked?.parse ? window.marked.parse(md) : `<pre>${esc(md)}</pre>`;
-    const safeHtml = window.DOMPurify?.sanitize ? window.DOMPurify.sanitize(rawHtml) : rawHtml;
+  function renderReadmeMarkdown(root, data) {
+    const md = String(data?.markdown || "");
+    const rawHtml = markdownToHtml(md);
+    const safeHtml = sanitizeHtml(rawHtml);
 
     root.innerHTML = `
-      <div class="small text-secondary mb-2">${esc(data.readmePath || "")}</div>
+      <div class="small text-secondary mb-2">${esc(data?.readmePath || "")}</div>
       <div class="content markdown">${safeHtml}</div>
     `;
+  }
+
+  async function renderReadmeForNode(node, signal) {
+    const root = getReadmeRoot();
+    if (!root) return;
+
+    const fileRel = getNodeRelPath(node);
+    if (!fileRel) {
+      clearReadme(root);
+      return;
+    }
+
+    showReadmeSearching(root);
+
+    const appId = getSelectedAppId();
+    if (!appId) {
+      showReadmeSelectApp(root);
+      return;
+    }
+
+    const url = buildReadmeUrl(appId, fileRel);
+    const data = await fetchReadmeDataOrNull(url, signal);
+
+    if (isAborted(signal)) return;
+
+    if (!data || data.found === false) {
+      showReadmeNotFound(root);
+      return;
+    }
+
+    renderReadmeMarkdown(root, data);
   }
 
   /* ======================================================================= */
@@ -436,78 +572,112 @@
     }
   }
 
-  /**
-   * Restart action:
-   * We intentionally try multiple endpoints because your backend naming may differ.
-   * - If none exist, you still get a clean error message (instead of “nothing happens”).
-   *
-   * @param {string} appId
-   */
-  async function restartApp(appId) {
-    const id = String(appId || "").trim();
-    if (!id) return;
 
-    // Try a few common patterns (first successful response wins).
-    const tries = [
-      { url: "/restart", body: { appId: id } },
-      { url: "/apps/restart", body: { appId: id } },
-      { url: `/apps/${encodeURIComponent(id)}/restart`, body: { appId: id } },
+  function normalizeAppId(appId) {
+    return String(appId || "").trim();
+  }
+
+  function buildRestartTries(appId) {
+    const idEnc = encodeURIComponent(String(appId || ""));
+    const body = { appId: String(appId || "") };
+
+    // Try a few common endpoint patterns (first successful response wins).
+    return [
+      { url: "/restart", body },
+      { url: "/apps/restart", body },
+      { url: `/apps/${idEnc}/restart`, body },
     ];
+  }
 
+  function buildRestartRequestInit(body) {
+    return {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    };
+  }
+
+  async function postRestartTry(t) {
+    return fetchJson(t.url, buildRestartRequestInit(t.body));
+  }
+
+  function restartStatusMessage(res) {
+    return String(res?.message || res?.status || "Restart requested.");
+  }
+
+  function setRestartStatus(appId, res) {
+    const msg = restartStatusMessage(res);
+    setStatus(`Restart: ${appId} (${msg})`);
+  }
+
+  async function restartFirstSuccessful(appId) {
     let lastErr = null;
 
-    for (const t of tries) {
+    for (const t of buildRestartTries(appId)) {
       try {
-        const res = await fetchJson(t.url, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(t.body),
-        });
-
-        // If backend returns something structured, show a short status.
-        const msg =
-          res?.message ||
-          res?.status ||
-          "Restart requested.";
-
-        setStatus(`Restart: ${id} (${msg})`);
-        return;
+        const res = await postRestartTry(t);
+        return { res, lastErr: null };
       } catch (e) {
         lastErr = e;
       }
     }
 
-    throw lastErr || new Error("Restart failed (no endpoint responded).");
+    return { res: null, lastErr };
   }
 
-  async function loadApps() {
-    const list = byId("appList");
-    const hidden = /** @type {HTMLInputElement|null} */ (byId("appSelect"));
-    if (!list || !hidden) return;
+  /**
+   * Request an app restart.
+   *
+   * Why this function tries multiple URLs
+   * -------------------------------
+   * NodeAnalyzer can be embedded / renamed across projects. Different backends
+   * may expose different restart endpoints. To keep the UI resilient, we try a
+   * small list of common patterns and accept the first that responds with 2xx.
+   *
+   * Outcome
+   * -------
+   * - On success: updates the status line with a short backend message.
+   * - On failure: throws the last error (or a generic error if nothing responded).
+   */
+  async function restartApp(appId) {
+    const id = normalizeAppId(appId);
+    if (!id) return;
 
-    list.innerHTML = `<div class="text-secondary small px-2 py-2">Loading…</div>`;
+    const { res, lastErr } = await restartFirstSuccessful(id);
+    if (!res) throw lastErr || new Error("Restart failed (no endpoint responded).");
 
-    let data;
-    try {
-      data = await fetchJson("/apps");
-    } catch (e) {
-      console.warn("Failed to load apps:", e);
-      list.innerHTML = `<div class="text-danger small px-2 py-2">Failed to load apps.</div>`;
-      setSelectedAppId("");
-      return;
-    }
+    setRestartStatus(id, res);
+  }
 
-    const apps = data?.apps || [];
-    if (!apps.length) {
-      list.innerHTML = `<div class="text-secondary small px-2 py-2">No apps configured.</div>`;
-      setSelectedAppId("");
-      return;
-    }
+  /* ----------------------------------------------------------------------- */
+  /* Apps list helpers                                                       */
+  /* ----------------------------------------------------------------------- */
 
-    const current = getSelectedAppId() || apps[0].id;
-    setSelectedAppId(current);
+  /** Render a compact status/placeholder message inside the apps list. */
+  function renderAppListMessage(list, html) {
+    list.innerHTML = String(html || "");
+  }
 
-    // Header row (keep it compact; style .appHdr/.appRow in CSS)
+  /** Fetch `/apps` and return its `apps` array (throws on HTTP errors). */
+  async function fetchAppsOrThrow() {
+    const data = await fetchJson("/apps");
+    return data?.apps || [];
+  }
+
+  /**
+   * Choose the app id that should be selected after loading the list.
+   * Priority:
+   *  1) previously selected app stored in the hidden `#appSelect`
+   *  2) first app from the backend
+   */
+  function chooseInitialAppId(apps) {
+    const remembered = getSelectedAppId();
+    if (remembered) return remembered;
+    return String(apps?.[0]?.id || "");
+  }
+
+  /** Render the static header row (column labels). */
+  function renderAppsHeader(list) {
     list.innerHTML = `
       <div class="appHdr">
         <div></div>
@@ -517,116 +687,285 @@
         <div class="appActionsHdr">Actions</div>
       </div>
     `;
+  }
 
-    // Build rows (no per-row click handlers; we use ONE delegated handler below)
-    for (const a of apps) {
-      const row = document.createElement("div");
-      row.className = "appRow" + (a.id === current ? " isActive" : "");
-      row.setAttribute("role", "listitem");
-      row.dataset.appId = String(a.id || "");
-      row.dataset.appUrl = String(a.url || "");
+  /**
+   * Build one `.appRow` element.
+   * - Stores app id + url as data-* for delegated click handling.
+   * - Escapes all user-visible values used in innerHTML.
+   */
+  function buildAppRow(app, currentId) {
+    const a = app || {};
 
-      row.innerHTML = `
-        <span class="appDot" aria-hidden="true"></span>
-        <div class="appName" title="${esc(a.name || a.id)}">${esc(a.name || a.id)}</div>
-        <div class="appMeta" title="${esc(a.entry || "(auto)")}">${esc(a.entry || "(auto)")}</div>
-        <div class="appMeta appUrl" title="${esc(a.url || "")}">${esc(a.url || "")}</div>
+    const id = String(a.id || "");
+    const name = String(a.name || a.id || "");
+    const entry = String(a.entry || "(auto)");
+    const url = String(a.url || "");
 
-        <div class="appActions">
-          <button type="button" class="btn btn-sm btn-outline-secondary"
-                  data-action="restart" data-app-id="${esc(a.id || "")}">
-            Restart
-          </button>
-          <button type="button" class="btn btn-sm btn-outline-primary"
-                  data-action="open" data-url="${esc(a.url || "")}">
-            Show
-          </button>
-        </div>
-      `;
+    const row = document.createElement("div");
+    row.className = "appRow" + (id === currentId ? " isActive" : "");
+    row.setAttribute("role", "listitem");
 
-      list.appendChild(row);
+    row.dataset.appId = id;
+    row.dataset.appUrl = url;
+
+    row.innerHTML = `
+      <span class="appDot" aria-hidden="true"></span>
+      <div class="appName" title="${esc(name)}">${esc(name)}</div>
+      <div class="appMeta" title="${esc(entry)}">${esc(entry)}</div>
+      <div class="appMeta appUrl" title="${esc(url)}">${esc(url)}</div>
+
+      <div class="appActions">
+        <button type="button" class="btn btn-sm btn-outline-secondary"
+                data-action="restart" data-app-id="${esc(id)}">
+          Restart
+        </button>
+        <button type="button" class="btn btn-sm btn-outline-primary"
+                data-action="open" data-url="${esc(url)}">
+          Show
+        </button>
+      </div>
+    `;
+
+    return row;
+  }
+
+  /** Render all apps below the header. */
+  function renderAppRows(list, apps, currentId) {
+    for (const a of apps || []) {
+      list.appendChild(buildAppRow(a, currentId));
     }
+  }
 
-    // Ensure we only bind the delegated handler once, even if loadApps() runs again.
-    if (!list.__actionsBound) {
-      Object.defineProperty(list, "__actionsBound", { value: true });
-
-      list.addEventListener("click", (ev) => {
-        const target = /** @type {HTMLElement|null} */ (ev.target || null);
-        if (!target) return;
-
-        // 1) Button actions
-        const btn = target.closest?.("[data-action]");
-        if (btn) {
-          ev.preventDefault();
-          ev.stopPropagation();
-
-          const action = String(btn.getAttribute("data-action") || "");
-          const appId = String(btn.getAttribute("data-app-id") || btn.closest(".appRow")?.dataset?.appId || "");
-          const url = String(btn.getAttribute("data-url") || btn.closest(".appRow")?.dataset?.appUrl || "");
-
-          if (action === "open") {
-            openWebsite(url);
-            return;
-          }
-
-          if (action === "restart") {
-            setStatus("Restarting…");
-            restartApp(appId)
-              .then(() => {
-                // Optional: re-run analysis after restart (small delay so server can come up)
-                setTimeout(() => {
-                  // Keep current selection; just analyze again.
-                  runAnalysis().catch((e) => console.error(e));
-                }, 300);
-              })
-              .catch((e) => {
-                console.error("Restart failed:", e);
-                showMessageBox({
-                  title: "Restart failed",
-                  severity: "error",
-                  message: String(e?.message || e || "Unknown error"),
-                  details: { status: e?.status, code: e?.code, details: e?.details },
-                });
-                setStatus("Restart failed.");
-              });
-            return;
-          }
-
-          // Unknown action (ignore)
-          return;
-        }
-
-        // 2) Row selection (ignore clicks inside actions container)
-        if (isActionClick(ev)) return;
-
-        const row = target.closest?.(".appRow");
-        if (!row) return;
-
-        const newId = String(row.dataset.appId || "").trim();
-        if (!newId) return;
-
-        setSelectedAppId(newId);
-        setAppActiveRow(list, newId);
-        runAnalysis().catch((e) => console.error(e));
-      });
-    }
-
-    // Auto-analyze initially selected app (first load)
+  /**
+   * Auto-run analysis once after the initial list load if no graph exists yet.
+   * Uses a 0ms timeout so the DOM paint happens first.
+   */
+  function maybeAutoAnalyzeOnFirstLoad() {
     setTimeout(() => {
-      const hasGraph =
-        Array.isArray(window.lastGraphState?.nodes) && window.lastGraphState.nodes.length > 0;
+      const hasGraph = Array.isArray(window.lastGraphState?.nodes) && window.lastGraphState.nodes.length > 0;
       if (!hasGraph) runAnalysis().catch((e) => console.error(e));
     }, 0);
   }
 
+  /* ----------------------------------------------------------------------- */
+  /* Delegated click handling (defined once, not recreated per loadApps run)  */
+  /* ----------------------------------------------------------------------- */
+
+  function getClosestActionButton(target) {
+    return /** @type {HTMLElement|null} */ (target?.closest?.("[data-action]") || null);
+  }
+
+  function getClosestAppRow(target) {
+    return /** @type {HTMLElement|null} */ (target?.closest?.(".appRow") || null);
+  }
+
+  function getAttr(el, name) {
+    return String(el?.getAttribute?.(name) || "");
+  }
+
+  function getDataset(el, key) {
+    return String(el?.dataset?.[key] || "");
+  }
+
+  function safeRunAnalysis() {
+    runAnalysis().catch((e) => console.error(e));
+  }
+
+  function scheduleRerunAnalysis(delayMs = 300) {
+    setTimeout(() => safeRunAnalysis(), delayMs);
+  }
+
+  function getActionContext(btn) {
+    const action = getAttr(btn, "data-action");
+    const row = getClosestAppRow(btn);
+
+    const appId = getAttr(btn, "data-app-id") || getDataset(row, "appId");
+    const url = getAttr(btn, "data-url") || getDataset(row, "appUrl");
+
+    return { action, appId, url };
+  }
+
+  function showRestartFailed(e) {
+    console.error("Restart failed:", e);
+    showMessageBox({
+      title: "Restart failed",
+      severity: "error",
+      message: String(e?.message || e || "Unknown error"),
+      details: { status: e?.status, code: e?.code, details: e?.details },
+    });
+    setStatus("Restart failed.");
+  }
+
+  function handleOpenAction(url) {
+    openWebsite(url);
+  }
+
+  function handleRestartAction(appId) {
+    setStatus("Restarting…");
+    restartApp(appId)
+      .then(() => {
+        // Optional: re-run analysis after restart (small delay so server can come up)
+        scheduleRerunAnalysis(300);
+      })
+      .catch(showRestartFailed);
+  }
+
+  function tryHandleAppActionClick(ev, target) {
+    const btn = getClosestActionButton(target);
+    if (!btn) return false;
+
+    // Button click: consume the event so the row doesn't get selected.
+    ev.preventDefault();
+    ev.stopPropagation();
+
+    const ctx = getActionContext(btn);
+
+    if (ctx.action === "open") {
+      handleOpenAction(ctx.url);
+      return true;
+    }
+
+    if (ctx.action === "restart") {
+      handleRestartAction(ctx.appId);
+      return true;
+    }
+
+    // Unknown action: ignore but consume.
+    return true;
+  }
+
+  function handleAppRowSelectionClick(ev, target, listEl) {
+    // Row selection: ignore clicks inside the actions area.
+    if (isActionClick(ev)) return;
+
+    const row = getClosestAppRow(target);
+    if (!row) return;
+
+    const newId = String(row.dataset.appId || "").trim();
+    if (!newId) return;
+
+    setSelectedAppId(newId);
+    setAppActiveRow(listEl, newId);
+    safeRunAnalysis();
+  }
+
+  /**
+   * Bind one delegated click handler to the list.
+   * This is important because `loadApps()` may re-render the list multiple times.
+   */
+  function ensureAppsListActionsBound(list) {
+    if (list.__actionsBound) return;
+    Object.defineProperty(list, "__actionsBound", { value: true });
+
+    list.addEventListener("click", (ev) => {
+      const target = /** @type {HTMLElement|null} */ (ev?.target || null);
+      if (!target) return;
+
+      if (tryHandleAppActionClick(ev, target)) return;
+      handleAppRowSelectionClick(ev, target, list);
+    });
+  }
+
+  /**
+   * Lädt die App-Presets vom Backend (`/apps`) und rendert sie in die Sidebar.
+   *
+   * Ablauf
+   * ------
+   * 1) DOM-Elemente finden (#appList, #appSelect)
+   * 2) `/apps` laden
+   * 3) Auswahl festlegen (gemerkte Auswahl oder erstes Preset)
+   * 4) Liste rendern (Header + Rows)
+   * 5) Delegierten Click-Handler einmalig binden (open/restart/select)
+   * 6) Optional: initiale Analyse triggern, wenn noch kein Graph existiert
+   */
+  async function loadApps() {
+    const list = byId("appList");
+    const hidden = /** @type {HTMLInputElement|null} */ (byId("appSelect"));
+    if (!list || !hidden) return;
+
+    // Sofortiges UI-Feedback.
+    renderAppListMessage(list, `<div class="text-secondary small px-2 py-2">Loading…</div>`);
+
+    let apps = [];
+    try {
+      apps = await fetchAppsOrThrow();
+    } catch (e) {
+      console.warn("Failed to load apps:", e);
+      renderAppListMessage(list, `<div class="text-danger small px-2 py-2">Failed to load apps.</div>`);
+      setSelectedAppId("");
+      return;
+    }
+
+    if (!apps.length) {
+      renderAppListMessage(list, `<div class="text-secondary small px-2 py-2">No apps configured.</div>`);
+      setSelectedAppId("");
+      return;
+    }
+
+    // Auswahl: gemerkt oder erstes Preset.
+    const current = chooseInitialAppId(apps);
+    setSelectedAppId(current);
+
+    // Rendern: Header + Rows.
+    renderAppsHeader(list);
+    renderAppRows(list, apps, current);
+
+    // Delegierter Click-Handler (nur 1x binden).
+    ensureAppsListActionsBound(list);
+
+    // Initial-Analyse beim ersten Boot.
+    maybeAutoAnalyzeOnFirstLoad();
+  }
+
   /* ======================================================================= */
-  /* Live Change Feed (SSE)                                                   */
+  /* Live Change Feed (SSE) mit currentRunToken                                                 */
   /* ======================================================================= */
 
   let currentRunToken = null;
+
+  // currentRunToken ist eine Analyse-„Run-ID“ (Token), die vom Backend vergeben wird.
+  //
+  // Woher kommt er?
+  // - Das Backend sendet ihn über SSE:
+  //   - Event "hello": msg.activeAnalysis.runToken
+  //   - Event "analysis": msg.runToken
+  // - Zusätzlich kann /analyze ebenfalls `runToken` zurückgeben (wird in runAnalysis gesetzt).
+  //
+  // Wozu dient er?
+  // - Er verhindert, dass veraltete fs-change Events (von einem älteren Analyse-Lauf)
+  //   den aktuell angezeigten Graphen „falsch“ als geändert markieren.
+  // - Das ist wichtig, weil SSE-Events asynchron eintreffen und zwischen zwei Läufen
+  //   noch Events vom vorherigen Lauf nachlaufen können.
+  //
+  // Regel:
+  // - Wenn sowohl currentRunToken als auch msg.runToken vorhanden sind und NICHT gleich sind,
+  //   gilt das Event als „stale“ und wird ignoriert.
+  // - Wenn einer der Tokens fehlt, lassen wir das Event durch (best-effort / kompatibel).
+
+
+
+
   /** @type {EventSource|null} */
   let sse = null;
+
+  function hasToken(v) {
+    return Boolean(String(v || "").trim());
+  }
+
+  function isStaleRunToken(currentToken, msgToken) {
+    // Nur filtern, wenn BEIDE Tokens existieren (sonst best-effort kompatibel bleiben).
+    if (!hasToken(currentToken)) return false;
+    if (!hasToken(msgToken)) return false;
+    return String(msgToken) !== String(currentToken);
+  }
+
+  function shouldIgnoreFsChange(msg, currentToken) {
+    return isStaleRunToken(currentToken, msg?.runToken);
+  }
+
+
+
 
   function startLiveEvents() {
     if (sse) return;
@@ -655,8 +994,8 @@
         return;
       }
 
-      if (currentRunToken && msg.runToken && msg.runToken !== currentRunToken) return;
-
+      // Ignoriere veraltete Change-Events aus einem anderen Analyse-Lauf.
+      if (shouldIgnoreFsChange(msg, currentRunToken)) return;
       if (typeof window.graphMarkChanged === "function") {
         window.graphMarkChanged({
           id: msg.id,
@@ -665,9 +1004,8 @@
         });
       }
 
-      if (String(window.__selectedNode?.id || "") === String(msg.id || "")) {
-        refreshSelectedPanels();
-      }
+      if (!isSelectedNodeMessage(msg)) return;
+      refreshSelectedPanels();
     });
 
     sse.addEventListener("fs-watch-error", (ev) => {
@@ -691,37 +1029,140 @@
   let analyzeInFlight = false;
   let analyzePending = false;
 
-  async function runAnalysis() {
+  function requestAnalyzeRerun() {
+    analyzePending = true;
+  }
+
+  function tryBeginAnalysis() {
     if (analyzeInFlight) {
-      analyzePending = true;
-      return;
+      requestAnalyzeRerun();
+      return false;
     }
 
     analyzeInFlight = true;
     analyzePending = false;
+    return true;
+  }
 
+  function finishAnalysisAndMaybeRerun(runFn) {
+    analyzeInFlight = false;
+
+    if (!analyzePending) return;
+    analyzePending = false;
+
+    // Re-run once after the current run finishes.
+    runFn().catch((err) => console.error(err));
+  }
+
+  function getSelectedAppIdOrShowStatus() {
+    const appId = getSelectedAppId();
+    if (appId) return appId;
+    setStatus("Select an app first.");
+    return "";
+  }
+
+  async function postAnalyze(appId) {
+    return fetchJson("/analyze", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ appId }),
+    });
+  }
+
+  function isUnsupportedAnalysis(data) {
+    return String(data?.analysisStatus || "") === "unsupported";
+  }
+
+  function handleUnsupportedAnalysis(data) {
+    clearPanels();
+    window.__selectedNode = null;
+    showUnsupportedTargetMessage(data);
+    setStatus("Unsupported target (see details).");
+  }
+
+  function ensureGraphRendererLoaded() {
+    if (typeof window.initcodeStructureChart === "function") return;
+    throw new Error(
+      "Graph renderer not loaded (initcodeStructureChart missing). Check script order."
+    );
+  }
+
+  function renderGraph(metrics) {
+    clearPanels();
+    window.__selectedNode = null;
+    window.initcodeStructureChart("codeStructureSvg", metrics);
+  }
+
+  function pickNodes(metrics) {
+    return metrics?.nodes || metrics?.data?.nodes || [];
+  }
+
+  function countFunctions(nodes) {
+    let count = 0;
+    for (const n of nodes || []) {
+      if (String(n?.kind || n?.type) === "function") count++;
+    }
+    return count;
+  }
+
+  function sumLoc(nodes) {
+    let loc = 0;
+    for (const n of nodes || []) {
+      loc += Number(n?.lines ?? n?.locLines ?? 0) || 0;
+    }
+    return loc;
+  }
+
+  function updateGraphHeader(metrics) {
     try {
-      const appIdEl = /** @type {HTMLInputElement|null} */ (byId("appSelect"));
-      const appId = String(appIdEl?.value || "").trim();
+      const appId = getSelectedAppId();
+      const nodes = pickNodes(metrics);
+      const fnCount = countFunctions(nodes);
+      const loc = sumLoc(nodes);
 
-      if (!appId) {
-        setStatus("Select an app first.");
+      if (window.CodeGraphUI?.updateGraphHeader) {
+        window.CodeGraphUI.updateGraphHeader({ appName: appId, functions: fnCount, loc });
         return;
       }
 
+      const h = document.getElementById("graphInfoHeader");
+      if (h) h.textContent = `${appId} · ƒ ${fnCount} · LOC ${loc}`;
+    } catch {
+      // Non-fatal UI header enrichment.
+    }
+  }
+
+  function statusDone(data) {
+    setStatus(`Done. Nodes: ${data.summary?.nodes ?? "?"}, Links: ${data.summary?.links ?? "?"}`);
+  }
+
+  function handleAnalyzeError(e) {
+    console.error("Analyze failed:", e);
+    showMessageBox({
+      title: "Analyze failed",
+      severity: "error",
+      message: String(e?.message || e || "Unknown error"),
+      details: {
+        status: e?.status,
+        code: e?.code,
+        details: e?.details,
+      },
+    });
+    setStatus("Analysis failed.");
+  }
+
+  async function runAnalysis() {
+    if (!tryBeginAnalysis()) return;
+
+    try {
+      const appId = getSelectedAppIdOrShowStatus();
+      if (!appId) return;
+
       setStatus("Running analysis…");
 
-      const data = await fetchJson("/analyze", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ appId }),
-      });
-
-      if (data?.analysisStatus === "unsupported") {
-        clearPanels();
-        window.__selectedNode = null;
-        showUnsupportedTargetMessage(data);
-        setStatus("Unsupported target (see details).");
+      const data = await postAnalyze(appId);
+      if (isUnsupportedAnalysis(data)) {
+        handleUnsupportedAnalysis(data);
         return;
       }
 
@@ -729,61 +1170,15 @@
 
       const metrics = await fetchJson(data.metricsUrl);
 
-      if (typeof window.initcodeStructureChart !== "function") {
-        throw new Error(
-          "Graph renderer not loaded (initcodeStructureChart missing). Check script order."
-        );
-      }
+      ensureGraphRendererLoaded();
+      renderGraph(metrics);
+      updateGraphHeader(metrics);
 
-      clearPanels();
-      window.__selectedNode = null;
-
-      window.initcodeStructureChart("codeStructureSvg", metrics);
-
-
-      try {
-        const appId = getSelectedAppId(); // liest #appSelect
-        const nodes = metrics?.nodes || metrics?.data?.nodes || []; // je nach payload
-        const fnCount = (nodes || []).filter(n => String(n?.kind || n?.type) === "function").length;
-
-        let loc = 0;
-        for (const n of (nodes || [])) loc += Number(n?.lines ?? n?.locLines ?? 0) || 0;
-
-        if (window.CodeGraphUI?.updateGraphHeader) {
-          window.CodeGraphUI.updateGraphHeader({ appName: appId, functions: fnCount, loc });
-        } else {
-          const h = document.getElementById("graphInfoHeader");
-          if (h) h.textContent = `${appId} · ƒ ${fnCount} · LOC ${loc}`;
-        }
-      } catch { }
-
-
-
-
-
-      setStatus(
-        `Done. Nodes: ${data.summary?.nodes ?? "?"}, Links: ${data.summary?.links ?? "?"}`
-      );
+      statusDone(data);
     } catch (e) {
-      console.error("Analyze failed:", e);
-      showMessageBox({
-        title: "Analyze failed",
-        severity: "error",
-        message: String(e?.message || e || "Unknown error"),
-        details: {
-          status: e?.status,
-          code: e?.code,
-          details: e?.details,
-        },
-      });
-      setStatus("Analysis failed.");
+      handleAnalyzeError(e);
     } finally {
-      analyzeInFlight = false;
-
-      if (analyzePending) {
-        analyzePending = false;
-        runAnalysis().catch((err) => console.error(err));
-      }
+      finishAnalysisAndMaybeRerun(runAnalysis);
     }
   }
 

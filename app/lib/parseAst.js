@@ -227,49 +227,59 @@ export function parseJsTsAst(src, filename, baseDir, out, helpers) {
     fnObj.cc = next; // explicit alias for cyclomatic complexity
   };
 
+  const getKeyName = (key) => {
+    if (!key) return null;
+    if (key.type === "Identifier") return key.name;
+    if (key.type === "StringLiteral") return key.value;
+    return null;
+  };
+
+  const getAssignmentTargetName = (left) => {
+    if (!left) return null;
+    if (left.type === "Identifier") return left.name;
+    if (left.type === "MemberExpression" && left.property) return getKeyName(left.property);
+    return null;
+  };
+
+  const isAccessorMethod = (n) => {
+    const kind = n?.kind;
+    const ty = n?.type;
+    const isMethod = ty === "ClassMethod" || ty === "ObjectMethod";
+    return isMethod && (kind === "get" || kind === "set");
+  };
+
+  const isConstructorMethod = (n) => n?.type === "ClassMethod" && n.kind === "constructor";
+
   const inferFnName = (p) => {
     const n = p?.node;
+    if (!n) return null;
 
-    // ---------------------------------------------------------------------
     // Architecture mode: skip low-signal class fragments.
-    // ---------------------------------------------------------------------
-    if (!effIncludeClassAccessors) {
-      if (n?.type === "ClassMethod" && (n.kind === "get" || n.kind === "set")) return null;
-      if (n?.type === "ObjectMethod" && (n.kind === "get" || n.kind === "set")) return null;
-    }
-
-    if (!effIncludeClassConstructor) {
-      if (n?.type === "ClassMethod" && n.kind === "constructor") return null;
-    }
+    if (!effIncludeClassAccessors && isAccessorMethod(n)) return null;
+    if (!effIncludeClassConstructor && isConstructorMethod(n)) return null;
 
     // FunctionDeclaration
-    if (n?.type === "FunctionDeclaration" && n.id?.name) return n.id.name;
+    if (n.type === "FunctionDeclaration") return n.id?.name || null;
 
     // ClassMethod / ObjectMethod (real methods)
-    if ((n?.type === "ClassMethod" || n?.type === "ObjectMethod") && n.key) {
-      if (n.key.type === "Identifier") return n.key.name;
-      if (n.key.type === "StringLiteral") return n.key.value;
+    if ((n.type === "ClassMethod" || n.type === "ObjectMethod") && n.key) {
+      return getKeyName(n.key);
     }
 
     const parent = p?.parentPath?.node;
+    if (!parent) return effIncludeAnonymousFunctions ? "anon" : null;
 
     // const foo = () => {}
-    if (parent?.type === "VariableDeclarator" && parent.id?.type === "Identifier") {
+    if (parent.type === "VariableDeclarator" && parent.id?.type === "Identifier") {
       return parent.id.name;
     }
 
     // foo.bar = function() {}
-    if (parent?.type === "AssignmentExpression") {
-      const left = parent.left;
-      if (left?.type === "Identifier") return left.name;
-      if (left?.type === "MemberExpression" && left.property) {
-        if (left.property.type === "Identifier") return left.property.name;
-        if (left.property.type === "StringLiteral") return left.property.value;
-      }
+    if (parent.type === "AssignmentExpression") {
+      return getAssignmentTargetName(parent.left);
     }
 
     // Deliberately do NOT invent callback names.
-    // Anonymous functions can be kept (for debugging) only if explicitly enabled.
     return effIncludeAnonymousFunctions ? "anon" : null;
   };
 
@@ -352,115 +362,197 @@ export function parseJsTsAst(src, filename, baseDir, out, helpers) {
   // 4) Traverse
   // ---------------------------------------------------------------------------
 
+  const recordImportBinding = (local, spec, imported) => {
+    if (!local || !spec) return;
+    out.importBindings[local] = { source: spec, imported: String(imported || "") };
+  };
+
+  const getImportSourceSpec = (p) => String(p?.node?.source?.value || "").trim();
+
+  const getImportedName = (s) => s?.imported?.name || s?.imported?.value || "";
+
+  const importSpecifierHandlers = {
+    ImportSpecifier: (s, spec) => {
+      const local = s?.local?.name;
+      const imported = getImportedName(s);
+      recordImportBinding(local, spec, imported);
+    },
+    ImportDefaultSpecifier: (s, spec) => {
+      const local = s?.local?.name;
+      recordImportBinding(local, spec, "default");
+    },
+    ImportNamespaceSpecifier: (s, spec) => {
+      const local = s?.local?.name;
+      recordImportBinding(local, spec, "*");
+    }
+  };
+
+  const applyImportSpecifier = (s, spec) => {
+    const ty = s?.type;
+    const fn = importSpecifierHandlers[ty];
+    if (fn) fn(s, spec);
+  };
+
+  const handleImportDeclaration = (p) => {
+    const spec = getImportSourceSpec(p);
+    if (spec) out.imports.push(spec);
+
+    for (const s of p?.node?.specifiers || []) {
+      applyImportSpecifier(s, spec);
+    }
+  };
+
+  const isRequireCall = (callee, arg0) =>
+    callee?.type === "Identifier" &&
+    callee.name === "require" &&
+    arg0?.type === "StringLiteral";
+
+  const recordCall = (calleeName) => {
+    const nm = String(calleeName || "").trim();
+    if (!nm) return;
+    out.calls.push({ from: currentFn(), callee: nm });
+  };
+
+  const getCalleeAndFirstArg = (p) => {
+    const node = p?.node;
+    const callee = node?.callee;
+    const arg0 = node?.arguments && node.arguments[0];
+    return { callee, arg0 };
+  };
+
+  const maybeRecordRequireImport = (callee, arg0) => {
+    if (!isRequireCall(callee, arg0)) return false;
+    const spec = String(arg0.value || "").trim();
+    if (spec) out.imports.push(spec);
+    return true;
+  };
+
+  const maybeRecordIdentifierCall = (callee) => {
+    if (callee?.type !== "Identifier") return false;
+    recordCall(callee.name);
+    return true;
+  };
+
+  const isMemberLike = (callee) =>
+    callee?.type === "MemberExpression" || callee?.type === "OptionalMemberExpression";
+
+  const hasOwn = (obj, key) =>
+    Boolean(obj) && Boolean(key) && Object.prototype.hasOwnProperty.call(obj, key);
+
+  const maybeRecordMemberCall = (callee) => {
+    if (!isMemberLike(callee)) return false;
+
+    const obj = callee.object;
+    const prop = callee.property;
+
+    const objName = obj?.type === "Identifier" ? obj.name : "";
+
+    // Imported namespace call: keep attribution on the namespace identifier.
+    if (hasOwn(out.importBindings, objName)) {
+      recordCall(objName);
+      return true;
+    }
+
+    // Local object method call: attribute to the property.
+    const propName = getKeyName(prop);
+    if (propName) {
+      recordCall(propName);
+      return true;
+    }
+
+    // Fallback: if we only have an object identifier, keep old behavior.
+    if (objName) {
+      recordCall(objName);
+      return true;
+    }
+
+    return true;
+  };
+
+  const handleCallExpression = (p) => {
+    const { callee, arg0 } = getCalleeAndFirstArg(p);
+
+    if (maybeRecordRequireImport(callee, arg0)) return;
+    if (maybeRecordIdentifierCall(callee)) return;
+
+    // Member calls (best-effort)
+    maybeRecordMemberCall(callee);
+  };
+
+  const addExportedName = (name) => {
+    const n = String(name || "").trim();
+    if (n) exportedNames.add(n);
+  };
+
+  const getExportedFromSpecifier = (s) => s?.exported?.name || s?.exported?.value || "";
+  const getLocalFromSpecifier = (s) => s?.local?.name || s?.local?.value || "";
+
+  const declExportNameExtractors = {
+    FunctionDeclaration: (decl) => {
+      const nm = decl?.id?.name;
+      return nm ? [nm] : [];
+    },
+    VariableDeclaration: (decl) => {
+      const names = [];
+      for (const d of decl?.declarations || []) {
+        const nm = d?.id?.type === "Identifier" ? d.id.name : "";
+        if (nm) names.push(nm);
+      }
+      return names;
+    }
+  };
+
+  const extractExportNamesFromDeclaration = (decl) => {
+    const ty = decl?.type;
+    const fn = ty ? declExportNameExtractors[ty] : null;
+    return fn ? fn(decl) : [];
+  };
+
+  const addExportedFromDeclaration = (decl) => {
+    for (const nm of extractExportNamesFromDeclaration(decl)) {
+      addExportedName(nm);
+    }
+  };
+
+  const addExportedFromSpecifiers = (specifiers) => {
+    for (const s of specifiers || []) {
+      const exported = getExportedFromSpecifier(s);
+      if (exported) {
+        addExportedName(exported);
+        continue;
+      }
+
+      const local = getLocalFromSpecifier(s);
+      if (local) addExportedName(local);
+    }
+  };
+
+  const handleExportNamedDeclaration = (p) => {
+    const node = p?.node;
+    if (!node) return;
+
+    addExportedFromDeclaration(node.declaration);
+    addExportedFromSpecifiers(node.specifiers);
+  };
+
   traverseAst(ast, {
     // -----------------------------------------------------------------------
     // Imports + bindings
     // -----------------------------------------------------------------------
     ImportDeclaration(p) {
-      const spec = String(p.node?.source?.value || "").trim();
-      if (spec) out.imports.push(spec);
-
-      for (const s of p.node.specifiers || []) {
-        // import { boot as b } from "./x"
-        if (s.type === "ImportSpecifier") {
-          const local = s.local?.name;
-          const imported = s.imported?.name || s.imported?.value;
-          if (local && spec) out.importBindings[local] = { source: spec, imported: String(imported || "") };
-        }
-
-        // import boot from "./x"
-        if (s.type === "ImportDefaultSpecifier") {
-          const local = s.local?.name;
-          if (local && spec) out.importBindings[local] = { source: spec, imported: "default" };
-        }
-
-        // import * as api from "./x"
-        if (s.type === "ImportNamespaceSpecifier") {
-          const local = s.local?.name;
-          if (local && spec) out.importBindings[local] = { source: spec, imported: "*" };
-        }
-      }
+      handleImportDeclaration(p);
     },
 
     // require("x")
     CallExpression(p) {
-      const callee = p.node.callee;
-      const arg0 = p.node.arguments && p.node.arguments[0];
-
-      if (
-        callee?.type === "Identifier" &&
-        callee.name === "require" &&
-        arg0?.type === "StringLiteral"
-      ) {
-        const spec = String(arg0.value || "").trim();
-        if (spec) out.imports.push(spec);
-        // Note: CommonJS require bindings are hard to infer reliably.
-      }
-
-      // -------------------------------------------------------------------
-      // Call sites (best-effort)
-      // -------------------------------------------------------------------
-      // 1) Identifier calls: foo(...)
-      if (callee?.type === "Identifier") {
-        out.calls.push({ from: currentFn(), callee: callee.name });
-        return;
-      }
-
-      // 2) Member calls: api.renderOptions(...)
-      // Heuristic:
-      // - If `obj` is an import binding, attribute to `obj` (namespace/module call).
-      // - Otherwise attribute to the property (local object method call).
-      if (callee?.type === "MemberExpression" || callee?.type === "OptionalMemberExpression") {
-        const obj = callee.object;
-        const prop = callee.property;
-
-        const objName = (obj?.type === "Identifier") ? obj.name : null;
-
-        // Imported namespace call: keep attribution on the namespace identifier.
-        if (objName && out.importBindings && Object.prototype.hasOwnProperty.call(out.importBindings, objName)) {
-          out.calls.push({ from: currentFn(), callee: objName });
-          return;
-        }
-
-        // Local object method call: attribute to the property.
-        if (prop?.type === "Identifier") {
-          out.calls.push({ from: currentFn(), callee: prop.name });
-          return;
-        }
-        if (prop?.type === "StringLiteral") {
-          out.calls.push({ from: currentFn(), callee: String(prop.value || "") });
-          return;
-        }
-
-        // Fallback: if we only have an object identifier, keep old behavior.
-        if (objName) {
-          out.calls.push({ from: currentFn(), callee: objName });
-        }
-      }
+      handleCallExpression(p);
     },
 
     // -----------------------------------------------------------------------
     // Export discovery (names)
     // -----------------------------------------------------------------------
     ExportNamedDeclaration(p) {
-      const decl = p.node.declaration;
-
-      if (decl?.type === "FunctionDeclaration" && decl.id?.name) {
-        exportedNames.add(decl.id.name);
-      }
-
-      if (decl?.type === "VariableDeclaration") {
-        for (const d of decl.declarations || []) {
-          if (d.id?.type === "Identifier") exportedNames.add(d.id.name);
-        }
-      }
-
-      for (const s of p.node.specifiers || []) {
-        const exported = s.exported?.name || s.exported?.value;
-        const local = s.local?.name || s.local?.value;
-        if (exported) exportedNames.add(String(exported));
-        else if (local) exportedNames.add(String(local));
-      }
+      handleExportNamedDeclaration(p);
     },
 
     ExportDefaultDeclaration(p) {

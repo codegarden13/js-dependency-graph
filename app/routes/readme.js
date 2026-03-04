@@ -23,99 +23,40 @@ const router = express.Router();
 
 router.get("/readme", (req, res) => {
   try {
-    // ---------------------------------------------------------------------
-    // Inputs
-    // ---------------------------------------------------------------------
-    // file: project-relative path within the *selected app* (graph node id)
-    // appId: selects which app rootDir to use (from app/config/apps.json)
-    const fileRelRaw = String(req.query?.file || "").trim();
-    const appId = String(req.query?.appId || "").trim();
-
+    const fileRelRaw = getQueryString(req, "file");
     if (!fileRelRaw) return res.status(400).send("file query param missing");
 
-    // Normalize URL-ish paths and Windows separators to forward slash
     const fileRel = normalizeRel(fileRelRaw);
 
-    // ---------------------------------------------------------------------
     // 1) Special-case: global help doc (NodeAnalyzer UI help)
-    // ---------------------------------------------------------------------
-    // You created: app/public/readme.md
-    // This endpoint must ALSO work for analyzed apps, so help is a separate mode.
-    // We accept a few equivalent inputs to reduce friction.
-    const analyzerRoot = process.cwd();
-    const HELP_RELS = new Set([
-      "help",
-      "app/public/readme.md",
-      "app/public/README.md",
-      "public/readme.md",
-      "public/README.md"
-    ]);
-
-    if (HELP_RELS.has(fileRel)) {
-      const helpAbs = path.resolve(analyzerRoot, "app/public/readme.md");
-      const out = readFileIfExists(helpAbs);
-      if (!out) return res.json({ found: false });
-
-      return res.json({
-        found: true,
-        readmePath: toRelPosix(analyzerRoot, helpAbs),
-        markdown: out
-      });
+    const helpResult = tryServeAnalyzerHelp(fileRel);
+    if (helpResult) {
+      return res.json(helpResult);
     }
 
-    // ---------------------------------------------------------------------
     // 2) Resolve target project root (analyzed app)
-    // ---------------------------------------------------------------------
-    // IMPORTANT:
-    // Graph nodes are relative to the *analyzed app rootDir*, NOT to NodeAnalyzer.
-    // Therefore, we MUST resolve fileRel under that selected app root.
-    if (!appId) {
-      return res.status(400).send("appId query param missing");
-    }
+    const appId = getQueryString(req, "appId");
+    if (!appId) return res.status(400).send("appId query param missing");
 
     const appRootAbs = resolveAppRootAbs(appId);
-    if (!appRootAbs) {
-      return res.status(400).send(`Unknown appId: ${appId}`);
-    }
+    if (!appRootAbs) return res.status(400).send(`Unknown appId: ${appId}`);
 
     // Resolve absolute and enforce project boundary
-    const fileAbs = path.resolve(appRootAbs, fileRel);
-    if (!isInsideRoot(fileAbs, appRootAbs)) {
-      return res.status(400).send("file outside target app rootDir");
-    }
+    const fileAbs = resolveInsideRootOrNull(appRootAbs, fileRel);
+    if (!fileAbs) return res.status(400).send("file outside target app rootDir");
 
-    // ---------------------------------------------------------------------
     // 3) Validate target exists
-    // ---------------------------------------------------------------------
-    if (!fs.existsSync(fileAbs)) {
-      return res.status(404).send("file not found");
-    }
+    if (!fs.existsSync(fileAbs)) return res.status(404).send("file not found");
 
-    // Starting directory: file's dir (or itself if already a directory)
-    let dir = fs.statSync(fileAbs).isDirectory() ? fileAbs : path.dirname(fileAbs);
+    // 4) Walk upward for README
+    const found = findNearestReadme({ appRootAbs, fileAbs });
+    if (!found) return res.json({ found: false });
 
-    // ---------------------------------------------------------------------
-    // 4) Walk upward for README (README.md + readme.md)
-    // ---------------------------------------------------------------------
-    while (true) {
-      const readmeAbs = findReadmeInDir(dir);
-      if (readmeAbs) {
-        const markdown = fs.readFileSync(readmeAbs, "utf8");
-        return res.json({
-          found: true,
-          readmePath: toRelPosix(appRootAbs, readmeAbs),
-          markdown
-        });
-      }
-
-      if (samePath(dir, appRootAbs)) break;
-
-      const parent = path.dirname(dir);
-      if (parent === dir) break;
-      dir = parent;
-    }
-
-    return res.json({ found: false });
+    return res.json({
+      found: true,
+      readmePath: toRelPosix(appRootAbs, found.readmeAbs),
+      markdown: found.markdown
+    });
   } catch (err) {
     return res.status(500).send(err?.stack || String(err));
   }
@@ -173,6 +114,59 @@ function readFileIfExists(absPath) {
     return fs.readFileSync(absPath, "utf8");
   } catch {
     return null;
+  }
+}
+
+function getQueryString(req, key) {
+  return String(req?.query?.[key] || "").trim();
+}
+
+function tryServeAnalyzerHelp(fileRel) {
+  const analyzerRoot = process.cwd();
+  const HELP_RELS = new Set([
+    "help",
+    "app/public/readme.md",
+    "app/public/README.md",
+    "public/readme.md",
+    "public/README.md"
+  ]);
+
+  if (!HELP_RELS.has(fileRel)) return null;
+
+  const helpAbs = path.resolve(analyzerRoot, "app/public/readme.md");
+  const out = readFileIfExists(helpAbs);
+  if (!out) return { found: false };
+
+  return {
+    found: true,
+    readmePath: toRelPosix(analyzerRoot, helpAbs),
+    markdown: out
+  };
+}
+
+function resolveInsideRootOrNull(rootAbs, relPosix) {
+  const abs = path.resolve(rootAbs, relPosix);
+  return isInsideRoot(abs, rootAbs) ? abs : "";
+}
+
+function findNearestReadme({ appRootAbs, fileAbs }) {
+  // Starting directory: file's dir (or itself if already a directory)
+  let dir = fs.statSync(fileAbs).isDirectory() ? fileAbs : path.dirname(fileAbs);
+
+  while (true) {
+    const readmeAbs = findReadmeInDir(dir);
+    if (readmeAbs) {
+      return {
+        readmeAbs,
+        markdown: fs.readFileSync(readmeAbs, "utf8")
+      };
+    }
+
+    if (samePath(dir, appRootAbs)) return null;
+
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
   }
 }
 

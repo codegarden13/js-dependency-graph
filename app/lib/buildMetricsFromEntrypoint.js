@@ -92,12 +92,46 @@ import { ensureCanonicalNodeFields, DEFAULT_LAYER_ORDER, defaultLayerY } from ".
 
 // File extensions we consider cheap/valuable to parse for dependency extraction.
 // This list is intentionally conservative (avoid binaries / huge vendor files).
+
 const PARSEABLE_EXTS = new Set([
   ".js", ".mjs", ".cjs",
   ".ts", ".tsx", ".jsx",
   ".json", ".md",
   ".html", ".css"
 ]);
+
+// Code extensions (used to classify scanned files as "file" vs "asset").
+const CODE_EXTS = new Set([".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"]);
+
+function normalizeExt(ext) {
+  return String(ext || "").toLowerCase();
+}
+
+function kindFromExt(ext) {
+  return CODE_EXTS.has(ext) ? "file" : "asset";
+}
+
+function addScannedFileNode({ addNode, file, kind, ext }) {
+  addNode({
+    id: file.id,
+    file: file.id,
+    lines: 0,
+    complexity: 0,
+    headerComment: "",
+    kind,
+    ext
+  });
+}
+
+function linkIncludeIfParent(addLink, parent, childId) {
+  if (!parent) return;
+  addLink(parent.id, childId, "include");
+}
+
+function enqueueIfParseable(enqueue, ext, absPath) {
+  if (!PARSEABLE_EXTS.has(ext)) return;
+  enqueue(absPath);
+}
 
 
 /* ========================================================================== */
@@ -278,23 +312,12 @@ function scanStructure({ projectRootAbs, maxDirDepth, addNode, addLink, enqueue 
       if (parent) addLink(parent.id, dir.id, "include");
     },
     onFile: (file, parent) => {
-      const ext = String(file.ext || "").toLowerCase();
-      const kind = (ext === ".js" || ext === ".mjs" || ext === ".cjs" || ext === ".ts" || ext === ".tsx" || ext === ".jsx")
-        ? "file"
-        : "asset";
+      const ext = normalizeExt(file.ext);
+      const kind = kindFromExt(ext);
 
-      addNode({
-        id: file.id,
-        file: file.id,
-        lines: 0,
-        complexity: 0,
-        headerComment: "",
-        kind,
-        ext
-      });
-
-      if (parent) addLink(parent.id, file.id, "include");
-      if (PARSEABLE_EXTS.has(ext)) enqueue(file.abs);
+      addScannedFileNode({ addNode, file, kind, ext });
+      linkIncludeIfParent(addLink, parent, file.id);
+      enqueueIfParseable(enqueue, ext, file.abs);
     }
   });
 }
@@ -306,15 +329,26 @@ function forEachParsedFunction(parsed, fn) {
   for (const item of fns) fn(item);
 }
 
+function toTrimmedString(v) {
+  return String(v || "").trim();
+}
+
+function toNonNegativeNumber(v) {
+  const n = Number(v || 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function positiveOrOne(v) {
+  const n = toNonNegativeNumber(v);
+  return n > 0 ? n : 1;
+}
+
 /** Build a canonical function node (returns null if fn has no usable id). */
 function buildFunctionNode(fileId, fn) {
-  const fnIdRaw = String(fn?.id || "").trim();
+  const fnIdRaw = toTrimmedString(fn?.id);
   if (!fnIdRaw) return null;
 
   const fnNodeId = `${fileId}::${fnIdRaw}`;
-
-  const locLines = Number(fn?.locLines || 0);
-  const startLine = Number(fn?.startLine || 0);
 
   return {
     id: fnNodeId,
@@ -322,15 +356,15 @@ function buildFunctionNode(fileId, fn) {
 
     // Use function span (LOC) as size driver in the renderer.
     // Falls back to 1 so functions are not all identical in size.
-    lines: locLines > 0 ? locLines : 1,
+    lines: positiveOrOne(fn?.locLines),
 
-    complexity: Number(fn?.complexity || 0),
+    complexity: toNonNegativeNumber(fn?.complexity),
     headerComment: "",
 
     kind: "function",
-    name: String(fn?.name || ""),
+    name: toTrimmedString(fn?.name),
     exported: Boolean(fn?.exported),
-    startLine
+    startLine: toNonNegativeNumber(fn?.startLine)
   };
 }
 
@@ -780,14 +814,27 @@ function getEndpointId(x) {
   return "";
 }
 
+function normalizeId(x) {
+  return String(x || "").trim();
+}
+
+function getLinkType(l) {
+  return normalizeId(l?.type) || "default";
+}
+
+function getValidLinkIdsOrNull(l) {
+  const sId = normalizeId(getEndpointId(l?.source));
+  const tId = normalizeId(getEndpointId(l?.target));
+  if (!sId || !tId) return null;
+  return { sId, tId };
+}
+
 /** Iterate links and yield only those with valid (non-empty) endpoint ids. */
 function forEachValidLink(links, fn) {
-  for (const l of links) {
-    const sId = String(getEndpointId(l?.source) || "").trim();
-    const tId = String(getEndpointId(l?.target) || "").trim();
-    if (!sId || !tId) continue;
-    const ty = String(l?.type || "default");
-    fn(sId, tId, ty);
+  for (const l of links || []) {
+    const ids = getValidLinkIdsOrNull(l);
+    if (!ids) continue;
+    fn(ids.sId, ids.tId, getLinkType(l));
   }
 }
 
@@ -805,13 +852,55 @@ function applyDegree(s, t) {
   t._inbound++;
 }
 
-/** Apply edge-type-specific derived stats. */
-function applyEdgeTypeStats(s, t, sId, tId, ty) {
-  const handlers = edgeTypeHandlers;
-  const fn = handlers[ty];
-  if (fn) fn(s, t, sId, tId);
+/**
+ * Look up the handler for a given edge type.
+ *
+ * Why a lookup?
+ * - We keep edge-type logic in `edgeTypeHandlers` (single source of truth)
+ * - `applyEdgeTypeStats` stays as a tiny dispatcher
+ *
+ * @param {string} ty link.type (e.g. "call" | "use" | "include")
+ * @returns {(s:any, t:any, sId:string, tId:string)=>void | null}
+ */
+function getEdgeTypeHandler(ty) {
+  const type = normalizeId(ty);
+  return edgeTypeHandlers[type] || null;
 }
 
+/**
+ * Apply edge-type-specific derived stats.
+ *
+ * What this does
+ * --------------
+ * - This is a small dispatcher that routes each link to the matching handler
+ *   in `edgeTypeHandlers`.
+ * - Handlers mutate the involved node objects (`s` and `t`) in place by
+ *   incrementing derived counters (e.g. _outCalls/_inCalls) and maintaining
+ *   small capped relationship lists (e.g. _callers/_callees).
+ *
+ * Why this uses `getEdgeTypeHandler(ty)`
+ * -------------------------------------
+ * - Normalizes `ty` (trim, defaulting handled elsewhere) so callers can pass
+ *   raw `link.type` values safely.
+ * - Centralizes the handler lookup and keeps this function flat / low-branch.
+ *
+ * Tolerance / robustness
+ * ----------------------
+ * - Unknown edge types are intentionally ignored (no throw). This keeps the
+ *   graph builder resilient if new link types are introduced or if a link is
+ *   partially malformed.
+ *
+ * @param {any} s Resolved source node object (mutated).
+ * @param {any} t Resolved target node object (mutated).
+ * @param {string} sId Source node id (used for relationship lists).
+ * @param {string} tId Target node id (used for relationship lists).
+ * @param {string} ty Link type (e.g. "call" | "use" | "include").
+ */
+function applyEdgeTypeStats(s, t, sId, tId, ty) {
+  const fn = getEdgeTypeHandler(ty);
+  if (!fn) return;
+  fn(s, t, sId, tId);
+}
 const edgeTypeHandlers = {
   call: (s, t, sId, tId) => {
     s._outCalls++;
@@ -830,27 +919,49 @@ const edgeTypeHandlers = {
   }
 };
 
+/** Iterate only object-like nodes (skips nulls/primitives). */
+function forEachNodeObject(nodes, fn) {
+  for (const n of nodes || []) {
+    if (!n || typeof n !== "object") continue;
+    fn(n);
+  }
+}
+
+function readMetric(n, key) {
+  const v = Number(n?.[key] || 0);
+  return Number.isFinite(v) ? v : 0;
+}
+
+function computeImportanceRaw({ inbound, outbound, inCalls, outCalls }) {
+  // Calls are usually more semantically important than includes.
+  return (inbound + outbound) + 2.5 * (inCalls + outCalls);
+}
+
+function safeLogImportance(raw) {
+  const r = Math.max(0, Number(raw || 0));
+  const imp = Math.log1p(r);
+  return Number.isFinite(imp) ? imp : 0;
+}
+
+function safeRadiusFromImportance(importance) {
+  const r = 5 + 6 * Number(importance || 0);
+  return Number.isFinite(r) ? r : 8;
+}
+
 /** Compute per-node importance score + suggested radius. */
 function applyImportanceAndRadius(nodes) {
-  for (const n of nodes) {
-    if (!n || typeof n !== "object") continue;
+  forEachNodeObject(nodes, (n) => {
+    const inbound = readMetric(n, "_inbound");
+    const outbound = readMetric(n, "_outbound");
+    const inCalls = readMetric(n, "_inCalls");
+    const outCalls = readMetric(n, "_outCalls");
 
-    const inbound = Number(n._inbound || 0);
-    const outbound = Number(n._outbound || 0);
-    const inCalls = Number(n._inCalls || 0);
-    const outCalls = Number(n._outCalls || 0);
+    const raw = computeImportanceRaw({ inbound, outbound, inCalls, outCalls });
+    const importance = safeLogImportance(raw);
 
-    // Calls are usually more semantically important than includes.
-    const raw = (inbound + outbound) + 2.5 * (inCalls + outCalls);
-
-    // Log-scale to keep values stable across project sizes.
-    const importance = Math.log1p(Math.max(0, raw));
-    n._importance = Number.isFinite(importance) ? importance : 0;
-
-    // Suggested radius. Keep it conservative; UI may clamp.
-    const radius = 5 + 6 * n._importance;
-    n._radiusHint = Number.isFinite(radius) ? radius : 8;
-  }
+    n._importance = importance;
+    n._radiusHint = safeRadiusFromImportance(importance);
+  });
 }
 
 function finalizeGraphStats(nodes, links) {
