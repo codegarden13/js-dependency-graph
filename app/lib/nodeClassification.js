@@ -85,6 +85,40 @@ export function groupFromKindAndExt(kind, ext) {
 /* LAYER (ARCHITECTURE)                                                       */
 /* ========================================================================== */
 
+// Extension sets used for deterministic layer classification.
+const DOC_EXTS = new Set([".md", ".txt"]);
+const DATA_EXTS = new Set([
+  ".json",
+  ".jsonc",
+  ".csv",
+  ".tsv",
+  ".yml",
+  ".yaml",
+  ".sql",
+  ".env"
+]);
+const ASSET_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico"]);
+
+function inSet(set, value) {
+  return set.has(String(value || "").toLowerCase());
+}
+
+function includesAny(haystack, needles) {
+  const h = String(haystack || "");
+  for (const n of needles || []) {
+    if (h.includes(n)) return true;
+  }
+  return false;
+}
+
+function endsWithAny(haystack, suffixes) {
+  const h = String(haystack || "");
+  for (const s of suffixes || []) {
+    if (h.endsWith(s)) return true;
+  }
+  return false;
+}
+
 /**
  * Map a node to an architecture layer.
  *
@@ -110,16 +144,19 @@ export function layerFromKindExtAndFile(kind, ext, fileId) {
   if (k === "dir") return "structure";
 
   // Non-code assets/docs/data
-  if (e === ".md" || e === ".txt") return "doc";
-  if (e === ".json" || e === ".jsonc" || e === ".csv" || e === ".tsv" || e === ".yml" || e === ".yaml" || e === ".sql" || e === ".env") return "data";
-  if (e === ".png" || e === ".jpg" || e === ".jpeg" || e === ".gif" || e === ".svg" || e === ".webp" || e === ".ico") return "asset";
+  if (inSet(DOC_EXTS, e)) return "doc";
+  if (inSet(DATA_EXTS, e)) return "data";
+  if (inSet(ASSET_EXTS, e)) return "asset";
 
   // Heuristics for code layers by file path/name
   // NOTE: fileId is project-relative, POSIX separators.
   const lower = id.toLowerCase();
 
   // UI/public
-  if (lower.includes("/public/") || lower.includes("/assets/") || lower.includes("/views/") || lower.endsWith("/app.js")) {
+  const UI_DIR_HINTS = ["/public/", "/assets/", "/views/"];
+  const UI_FILE_HINTS = ["/app.js"]; // keep conservative; matches project-relative ids
+
+  if (includesAny(lower, UI_DIR_HINTS) || endsWithAny(lower, UI_FILE_HINTS)) {
     return "ui";
   }
 
