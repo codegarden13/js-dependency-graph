@@ -1,4 +1,11 @@
 // public/assets/js/d3_codeStructure.js
+// ESM version: explicit imports (no window namespace bridge)
+
+import CodeGraphData from "./codeGraph/data.js";
+import CodeGraphInteractions from "./codeGraph/interactions.js";
+import CodeGraphHulls from "./codeGraph/hulls.js";
+import * as CodeGraphUI from "./codeGraph/ui.js";
+import { ensureTooltip, showTooltip, moveTooltip, hideTooltip } from "./codeGraph/ui.tooltip.js";
 /**
  * D3 Code Structure Graph Renderer
  * ===========================
@@ -13,22 +20,25 @@
  * - window.CodeGraphData.normalize(metrics) -> { nodes, links }
  * - window.CodeGraphInteractions.attachNodeInteractions(nodeSel, opts)
  * - window.CodeGraphHulls.renderTypeHulls(hullGroup, nodes, clusterColorScale)
- * - window.CodeGraphUI.setupGraphFilters(...)
- * - window.CodeGraphUI.buildGraphLegend(...)
- * - window.CodeGraphUI.buildGraphDiagnosticsPanel(...)
- * - window.CodeGraphUI.escapeHtml(...)
+ * - CodeGraphUI.setupGraphFilters(...)
+ * - CodeGraphUI.buildGraphLegend(...)
+ * - CodeGraphUI.buildGraphDiagnosticsPanel(...)
+ * - CodeGraphUI.escapeHtml(...)
  *
  * Integration Hooks
  * -----------------
- * - window.onGraphNodeSelected(node): optional async hook on node click
- * - window.NAV_REDIRECT_ON_CLICK === true: enables legacy redirects on click
- * - window.initHighlightId: if set, highlights a node after render
- * - window.graphMarkChanged({ id, ev, at }): optional hook to mark a node as changed (live file watch)
- * - window.__codeGraphAppName: optional; set by app.js so the renderer can update the graph header
+ * - opts.onNodeSelected(node): optional async hook on node click (passed to init)
+ * - opts.initHighlightId: optional node id to highlight after initial render
+ *
+ * Return Value
+ * -----------
+ * initcodeStructureChart(...) returns a controller object:
+ * - { svg, nodes, links, simulation, markChanged(), destroy() }
+ *
+ * This keeps the renderer free of global `window.*` bridges.
  */
 
-(function () {
-  "use strict";
+"use strict";
 
   /* ======================================================================
      Configuration (Colors)
@@ -412,13 +422,94 @@
    * - Derive force layout defaults and run simulation
    * - Render links, nodes, labels, hulls, and integrate UI helpers
    */
-  window.initcodeStructureChart = function initcodeStructureChart(svgId, metrics) {
+export function initcodeStructureChart(svgId, metrics, opts = {}) {
     // 0) Validate external helpers early (fail loudly in dev)
-    assertGlobals();
+    assertDeps();
+
+    // Optional callback supplied by the app (no window bridge).
+    // Called when the user clicks a node in the graph.
+    const onNodeSelected = typeof opts?.onNodeSelected === "function" ? opts.onNodeSelected : null;
+
+    // Optional: deep-link highlight (formerly `window.initHighlightId`).
+    const initHighlightId = String(opts?.initHighlightId || "").trim();
 
     // -------------------------------------------------------------------
     // Local helpers (keep renderer self-contained, no extra files)
     // -------------------------------------------------------------------
+
+    /**
+     * Build tooltip HTML for a node.
+     *
+     * NOTE:
+     * We keep this renderer-local (ESM, no window bridge) because the tooltip
+     * content is tightly coupled to how the graph encodes nodes/metrics.
+     *
+     * The tooltip shows:
+     * - display label + type
+     * - lines + complexity (prefers normalized display fields when present)
+     * - for function nodes: call stats + exported/unused flags + small caller/callee lists
+     *
+     * @param {any} d Node datum
+     * @returns {string} Safe HTML string
+     */
+    function buildTooltipHtml(d) {
+      const esc = CodeGraphUI?.escapeHtml ? CodeGraphUI.escapeHtml : (s) => String(s ?? "");
+
+      const lines =
+        d?.__displayLines ??
+        d?.lines ??
+        d?.loc ??
+        d?.size ??
+        "?";
+
+      const cx =
+        d?.__displayComplexity ??
+        d?.complexity ??
+        d?.cc ??
+        ((d?._inbound || 0) + (d?._outbound || 0)) ??
+        "?";
+
+      const display = d?.__displayLabel ? esc(d.__displayLabel) : esc(d?.id);
+      const t = esc(d?.type || d?.kind || "file");
+
+      const fnDiag = (() => {
+        if (!isFunctionNode(d)) return "";
+
+        const inCalls = toSafeInt(d?._inCalls);
+        const outCalls = toSafeInt(d?._outCalls);
+        const exported = d?.exported === true ? "yes" : "no";
+        const unused = d?._unused === true ? "yes" : "no";
+
+        const callers = Array.isArray(d?._callers) ? d._callers : [];
+        const callees = Array.isArray(d?._callees) ? d._callees : [];
+
+        const topCallers = callers.slice(0, 5).map((x) => esc(String(x))).join(", ");
+        const topCallees = callees.slice(0, 5).map((x) => esc(String(x))).join(", ");
+
+        const callersHtml = callers.length
+          ? `<br><small>Top callers: ${topCallers}</small>`
+          : `<br><small>Top callers: (none)</small>`;
+
+        const calleesHtml = callees.length
+          ? `<br><small>Top callees: ${topCallees}</small>`
+          : `<br><small>Top callees: (none)</small>`;
+
+        return (
+          `<br><small>Calls: in ${esc(String(inCalls))} / out ${esc(String(outCalls))}</small>` +
+          `<br><small>Exported: ${esc(exported)} | Unused: ${esc(unused)}</small>` +
+          callersHtml +
+          calleesHtml
+        );
+      })();
+
+      return (
+        `<strong>${display}</strong>` +
+        `<br><small>Type: ${t}</small>` +
+        `<br><small>Lines: ${esc(lines)}</small>` +
+        `<br><small>Complexity: ${esc(cx)}</small>` +
+        fnDiag
+      );
+    }
 
     function selectAndResetSvg(svgId) {
       const svg = d3.select("#" + svgId);
@@ -458,21 +549,24 @@
     }
 
     function getTooltipOrNull() {
-      return window.CodeStructure?.tooltip?.ensureTooltip
-        ? window.CodeStructure.tooltip.ensureTooltip()
-        : null;
+      // Tooltip module is optional but bundled in this project.
+      try {
+        return ensureTooltip();
+      } catch {
+        return null;
+      }
     }
 
     function normalizeGraph(metrics) {
-      if (!window.CodeGraphData?.normalize) {
-        throw new Error("CodeGraphData.normalize missing. Check script order (codeGraph/data.js).");
+      if (!CodeGraphData?.normalize) {
+        throw new Error("CodeGraphData.normalize missing.");
       }
-      return window.CodeGraphData.normalize(metrics);
+      return CodeGraphData.normalize(metrics);
     }
 
     function validateGroupsOnce(nodes) {
       try {
-        const diag = window.CodeGraphData?.validateNodeGroups?.(nodes, NODE_GROUP_COLORS) || { missing: [], unknown: [] };
+        const diag = CodeGraphData?.validateNodeGroups?.(nodes, NODE_GROUP_COLORS) || { missing: [], unknown: [] };
         const missing = diag.missing || [];
         const unknown = diag.unknown || [];
 
@@ -641,15 +735,15 @@
         .on("mouseover", (event, d) => {
           if (!tooltip) return;
           const html = buildTooltipHtml(d);
-          window.CodeStructure?.tooltip?.showTooltip?.(tooltip, event, html);
+          showTooltip(tooltip, event, html);
         })
         .on("mousemove", (event) => {
           if (!tooltip) return;
-          window.CodeStructure?.tooltip?.moveTooltip?.(tooltip, event);
+          moveTooltip(tooltip, event);
         })
         .on("mouseout", () => {
           if (!tooltip) return;
-          window.CodeStructure?.tooltip?.hideTooltip?.(tooltip);
+          hideTooltip(tooltip);
         });
     }
 
@@ -702,18 +796,18 @@
     }
 
     function wireInteractions({ nodeShapeSel, simulation, highlightLayer }) {
-      window.CodeGraphInteractions.attachNodeInteractions(nodeShapeSel, {
+      CodeGraphInteractions.attachNodeInteractions(nodeShapeSel, {
         simulation,
         thresholdPx: 5,
         onSelected: async (node) => {
-          if (typeof window.onGraphNodeSelected === "function") {
-            await window.onGraphNodeSelected(node);
+          if (onNodeSelected) {
+            await onNodeSelected(node);
           }
           if (window.NAV_REDIRECT_ON_CLICK === true) {
             handleNodeClick(node);
           }
 
-          window.CodeGraphInteractions.drawHighlight(node, highlightLayer);
+          CodeGraphInteractions.drawHighlight(node, highlightLayer);
         },
         enableLegacyRedirect: false,
         legacyRedirect: null
@@ -732,23 +826,23 @@
         labelSel.attr("transform", (d) => `translate(${d.x},${d.y})`);
 
 
-        window.CodeGraphInteractions.anchorHighlight(highlightLayer);
-        window.CodeGraphHulls.renderTypeHulls(hullGroup, nodes, clusterColor);
+        CodeGraphInteractions.anchorHighlight(highlightLayer);
+        CodeGraphHulls.renderTypeHulls(hullGroup, nodes, clusterColor);
       });
     }
 
     function wireSimulationEnd({ simulation, svgId, nodes, links, width, height }) {
       simulation.on("end", () => {
-        window.CodeGraphUI.buildGraphDiagnosticsPanel(svgId, nodes, links, width, height);
+        CodeGraphUI.buildGraphDiagnosticsPanel(svgId, nodes, links, width, height);
       });
     }
 
     function restoreHighlightIfNeeded({ nodes, highlightLayer }) {
       // If the host app requests an initial highlight (e.g. deep-link), restore it
       // AFTER the graph is rendered and the highlight layer exists.
-      if (!window.initHighlightId) return;
+      if (!initHighlightId) return;
 
-      const match = nodes.find((n) => n.id === window.initHighlightId);
+      const match = nodes.find((n) => n.id === initHighlightId);
       if (!match) return;
 
       // Highlight helpers live in CodeGraphInteractions (keeps renderer thinner).
@@ -757,16 +851,18 @@
       }
     }
 
-    function exposeState(svg, svgId, { nodes, links, simulation, highlightLayer }, renderRefs) {
-      svg.node().__graphState = { nodes, links, highlightLayer };
-      svg.node().__graphRenderRefs = { svgId, nodes, ...renderRefs };
-      window.lastGraphState = { nodes, links, simulation };
-      console.info("Graph state available at window.lastGraphState");
-    }
-
-    function installGraphMarkChanged(nodes, repaintNodes) {
-      window.graphMarkChanged = function graphMarkChanged(evt) {
+    function createMarkChangedController(nodes, repaintNodes) {
+      /**
+       * Mark exactly one node as "changed".
+       *
+       * Used by the host app when it receives file change events (watch/SSE).
+       * This replaces the old global `window.graphMarkChanged(...)` hook.
+       *
+       * @param {string|{id:string, ev?:string, at?:string}} evtOrId
+       */
+      function markChanged(evtOrId) {
         try {
+          const evt = (typeof evtOrId === "string") ? { id: evtOrId } : (evtOrId || {});
           const id = String(evt?.id || "").trim();
           if (!id) return;
 
@@ -781,9 +877,11 @@
 
           repaintNodes();
         } catch (e) {
-          console.warn("graphMarkChanged failed:", e);
+          console.warn("markChanged failed:", e);
         }
-      };
+      }
+
+      return { markChanged };
     }
 
     function wireLegendAndFilters({ svgId, metrics, nodes, links, nodeShapeSel, labelSel, linkSel, unusedBadgeSel }) {
@@ -793,8 +891,8 @@
       // These two functions existed before the unified Legend&Filter panel.
       // Keeping them allows older pages / CSS to continue working while we
       // migrate logic into `codeGraph/ui.js`.
-      window.CodeGraphUI.setupGraphFilters(svgId, metrics, nodeShapeSel, linkSel);
-      window.CodeGraphUI.buildGraphLegend(svgId, nodes, links, NODE_GROUP_COLORS, LINK_TYPE_COLORS, clusterColor);
+      CodeGraphUI.setupGraphFilters(svgId, metrics, nodeShapeSel, linkSel);
+      CodeGraphUI.buildGraphLegend(svgId, nodes, links, NODE_GROUP_COLORS, LINK_TYPE_COLORS, clusterColor);
 
       // -----------------------------------------------------------------
       // Unified Legend & Filter Panel (event-driven)
@@ -807,19 +905,14 @@
       // Renderer responsibility: provide the D3 selections that should be
       // shown/hidden.
 
-      if (window.CodeGraphUI?.buildLegendFilterPanel) {
-        window.CodeGraphUI.buildLegendFilterPanel(svgId, nodes, links, {
-          nodeShapeSel,
-          labelSel,
-          linkSel,
-          unusedBadgeSel
-        });
-      }
+    if (CodeGraphUI?.buildLegendFilterPanel) {
+      CodeGraphUI.buildLegendFilterPanel(svgId, nodes, links);
+    }
 
       // NEW: central wiring that listens once per svgId and applies filters.
       // This is the missing piece when changing the panel did not update the graph.
-      if (window.CodeGraphUI?.attachLegendFilterWiring) {
-        window.CodeGraphUI.attachLegendFilterWiring(svgId, nodes, links, {
+    if (CodeGraphUI?.attachLegendFilterWiring) {
+      CodeGraphUI.attachLegendFilterWiring(svgId, nodes, links, {
           nodeShapeSel,
           labelSel,
           linkSel,
@@ -920,16 +1013,9 @@
     });
 
     // -------------------------------------------------------------------
-    // 8) Expose state + live change hook
+    // 8) Controller helpers (no window bridge)
     // -------------------------------------------------------------------
-    exposeState(svg, svgId, { nodes, links, simulation, highlightLayer: layers.highlightLayer }, {
-      nodeBodySel,
-      fnRingSel,
-      labelSel,
-      repaintNodes
-    });
-
-    installGraphMarkChanged(nodes, repaintNodes);
+    const { markChanged } = createMarkChangedController(nodes, repaintNodes);
 
     // -------------------------------------------------------------------
     // 9) Update graph header (app name + function count + LOC)
@@ -939,17 +1025,11 @@
     //
     // Source of app name (best-effort):
     // - metrics.appName / metrics.meta.appName (preferred)
-    // - window.__codeGraphAppName (set by app.js during runAnalysis)
     // - fallback: ""
     try {
-      const appName = String(
-        metrics?.appName ??
-        metrics?.meta?.appName ??
-        window.__codeGraphAppName ??
-        ""
-      ).trim();
+      const appName = String(metrics?.appName ?? metrics?.meta?.appName ?? "").trim();
 
-      if (window.CodeGraphUI?.updateGraphHeader) {
+      if (CodeGraphUI?.updateGraphHeader) {
         const fnCount = nodes.filter((n) => String(n?.type || n?.kind) === "function").length;
 
         let loc = 0;
@@ -957,7 +1037,7 @@
           loc += Number(n?.lines ?? n?.locLines ?? 0) || 0;
         }
 
-        window.CodeGraphUI.updateGraphHeader({
+        CodeGraphUI.updateGraphHeader({
           appName,
           functions: fnCount,
           loc
@@ -967,7 +1047,13 @@
       // ignore
     }
 
-    return { svg, nodes, links, simulation };
+    function destroy() {
+      try { simulation?.stop?.(); } catch { }
+      try { hideTooltip(tooltip); } catch { }
+      try { svg?.selectAll?.("*")?.remove?.(); } catch { }
+    }
+
+    return { svg, nodes, links, simulation, markChanged, destroy };
   };
 
 
@@ -1004,28 +1090,27 @@
    * Dev-time assertion helper.
    * Verifies required global modules are loaded in the correct order.
    */
-  function assertGlobals() {
+  function assertDeps() {
     const missing = [];
 
-    if (!window.CodeGraphData?.normalize) missing.push("CodeGraphData.normalize");
-    if (!window.CodeGraphInteractions?.attachNodeInteractions) missing.push("CodeGraphInteractions.attachNodeInteractions");
-    if (!window.CodeGraphInteractions?.drawHighlight) missing.push("CodeGraphInteractions.drawHighlight");
-    if (!window.CodeGraphInteractions?.anchorHighlight) missing.push("CodeGraphInteractions.anchorHighlight");
-    
-    if (!window.CodeGraphHulls?.renderTypeHulls) missing.push("CodeGraphHulls.renderTypeHulls");
-    
-    if (!window.CodeGraphUI?.buildGraphDiagnosticsPanel) missing.push("CodeGraphUI.buildGraphDiagnosticsPanel");
-    if (!window.CodeGraphUI?.setupGraphFilters) missing.push("CodeGraphUI.setupGraphFilters");
-    if (!window.CodeGraphUI?.buildGraphLegend) missing.push("CodeGraphUI.buildGraphLegend");
-    if (!window.CodeGraphUI?.escapeHtml) missing.push("CodeGraphUI.escapeHtml");
-    if (!window.CodeGraphUI?.attachLegendFilterWiring) missing.push("CodeGraphUI.attachLegendFilterWiring");
+    // D3 is still loaded as a global script.
+    if (!window.d3) missing.push("d3 (global)");
+
+    if (!CodeGraphData?.normalize) missing.push("CodeGraphData.normalize");
+    if (!CodeGraphInteractions?.attachNodeInteractions) missing.push("CodeGraphInteractions.attachNodeInteractions");
+    if (!CodeGraphInteractions?.drawHighlight) missing.push("CodeGraphInteractions.drawHighlight");
+    if (!CodeGraphInteractions?.anchorHighlight) missing.push("CodeGraphInteractions.anchorHighlight");
+
+    if (!CodeGraphHulls?.renderTypeHulls) missing.push("CodeGraphHulls.renderTypeHulls");
+
+    if (!CodeGraphUI?.escapeHtml) missing.push("CodeGraphUI.escapeHtml");
+    if (!CodeGraphUI?.attachLegendFilterWiring) missing.push("CodeGraphUI.attachLegendFilterWiring");
 
 
     if (missing.length) {
-      console.warn(
-        "d3_codeStructure.js missing required globals. Check script load order:\n- " +
-        missing.join("\n- ")
-      );
+      console.warn("d3_codeStructure.js missing required deps:\n- " + missing.join("\n- "));
     }
   }
-})();
+
+  // Run once at module init (dev help).
+  assertDeps();

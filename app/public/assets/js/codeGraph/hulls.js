@@ -7,10 +7,9 @@
  * Exposes: window.CodeGraphHulls
  */
 
-(function () {
-  "use strict";
+// ESM: no global namespace. Keep everything as explicit exports.
 
-  const CodeGraphHulls = {};
+const CodeGraphHulls = {};
 
   /**
    * Render convex hulls per cluster.
@@ -42,5 +41,5 @@
       .attr("stroke-opacity", 0.35);
   };
 
-  window.CodeGraphHulls = CodeGraphHulls;
-})();
+export { CodeGraphHulls };
+export default CodeGraphHulls;

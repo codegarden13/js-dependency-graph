@@ -22,10 +22,9 @@
  *   window.CodeGraphData.normalize(metrics) -> { nodes, links }
  */
 
-(function () {
-  "use strict";
+// ESM: no global namespace. Keep everything as explicit exports.
 
-  const CodeGraphData = {};
+const CodeGraphData = {};
 
   /* ====================================================================== */
   /* UI-side enrichment helpers (kept OUT of the D3 renderer)                */
@@ -512,5 +511,5 @@
     return { nodes, links };
   };
 
-  window.CodeGraphData = CodeGraphData;
-})();
+export { CodeGraphData };
+export default CodeGraphData;

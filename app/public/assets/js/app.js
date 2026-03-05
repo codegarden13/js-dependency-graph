@@ -1,10 +1,10 @@
-/* public/assets/js/app.js
+/* public/assets/js/app.js (ESM)
  * NodeAnalyzer UI bootstrap (index.html companion)
  *
  * Responsibilities:
  * - Load app presets (/apps) into a compact selectable list (#appList)
  * - Auto-run analysis when selecting an app (no Analyze button)
- * - Define window.onGraphNodeSelected(node) hook used by the D3 graph
+ * - Provide `onNodeSelected` callback to the D3 graph (no window bridge)
  * - Render README + selection info panels
  * - Subscribe to SSE (/events) and mark changed nodes (color + timestamp)
  *
@@ -12,11 +12,17 @@
  * - Requires marked + DOMPurify for README HTML rendering (optional fallback)
  * - Expects a hidden input: <input type="hidden" id="appSelect" value="">
  * - Expects: #appList, #status, #graphInfoPanel, #readmePanel, #codeStructureSvg
- * - Expects D3 renderer global: window.initcodeStructureChart(svgId, metrics)
- * - Expects D3 change hook global: window.graphMarkChanged({id, ev, at})
+ * - Uses ESM import: initcodeStructureChart(svgId, metrics, { onNodeSelected })
+ * - Uses ESM import for other helpers; no window namespace bridge.
  */
-(function () {
-  "use strict";
+"use strict";
+
+import { initcodeStructureChart } from "./d3_codeStructure.js";
+
+// App-local state (no window globals)
+let selectedNode = null;
+let hasRenderedGraphOnce = false;
+let graphController = null;
 
   /* ======================================================================= */
   /* DOM helpers                                                              */
@@ -47,7 +53,7 @@
   }
 
   function isSelectedNodeMessage(msg) {
-    return isSameId(window.__selectedNode?.id, msg?.id);
+    return isSameId(selectedNode?.id, msg?.id);
   }
 
   function setStatus(text) {
@@ -433,17 +439,17 @@
   /* ======================================================================= */
 
   function getRenderedNodeById(id) {
-    const nodes = window.lastGraphState?.nodes;
+    const nodes = graphController?.nodes;
     if (!Array.isArray(nodes) || !id) return null;
     return nodes.find((n) => n && n.id === id) || null;
   }
 
   function refreshSelectedPanels() {
-    const selectedId = String(window.__selectedNode?.id || "").trim();
+    const selectedId = String(selectedNode?.id || "").trim();
     if (!selectedId) return;
 
-    const latest = getRenderedNodeById(selectedId) || window.__selectedNode;
-    window.__selectedNode = latest;
+    const latest = getRenderedNodeById(selectedId) || selectedNode;
+    selectedNode = latest;
 
     if (ensurePanelsExist()) {
       renderInfoPanel(latest);
@@ -455,13 +461,18 @@
   }
 
   /* ======================================================================= */
-  /* D3 integration hook (global)                                             */
+  /* D3 integration hook (ESM callback)                                       */
   /* ======================================================================= */
 
   let activeReadmeController = null;
 
-  window.onGraphNodeSelected = function onGraphNodeSelected(node) {
-    window.__selectedNode = node || null;
+  /**
+   * Called by the graph renderer when the user selects a node.
+   * (No global window hook; passed as option to initcodeStructureChart.)
+   * @param {any} node
+   */
+  function onNodeSelected(node) {
+    selectedNode = node || null;
 
     if (!ensurePanelsExist()) return;
 
@@ -476,7 +487,7 @@
       const root = byId("readmePanel");
       if (root) root.innerHTML = "";
     });
-  };
+  }
 
   /* ======================================================================= */
   /* Apps list + Actions (Restart / Show Website)                             */
@@ -743,7 +754,7 @@
    */
   function maybeAutoAnalyzeOnFirstLoad() {
     setTimeout(() => {
-      const hasGraph = Array.isArray(window.lastGraphState?.nodes) && window.lastGraphState.nodes.length > 0;
+      const hasGraph = Array.isArray(graphController?.nodes) && graphController.nodes.length > 0;
       if (!hasGraph) runAnalysis().catch((e) => console.error(e));
     }, 0);
   }
@@ -996,13 +1007,11 @@
 
       // Ignoriere veraltete Change-Events aus einem anderen Analyse-Lauf.
       if (shouldIgnoreFsChange(msg, currentRunToken)) return;
-      if (typeof window.graphMarkChanged === "function") {
-        window.graphMarkChanged({
-          id: msg.id,
-          ev: msg.ev,
-          at: msg.at,
-        });
-      }
+
+      // Mark changed node in the *current* rendered graph (if present).
+      try {
+        graphController?.markChanged?.({ id: msg.id, ev: msg.ev, at: msg.at });
+      } catch { }
 
       if (!isSelectedNodeMessage(msg)) return;
       refreshSelectedPanels();
@@ -1075,22 +1084,24 @@
 
   function handleUnsupportedAnalysis(data) {
     clearPanels();
-    window.__selectedNode = null;
+    selectedNode = null;
     showUnsupportedTargetMessage(data);
     setStatus("Unsupported target (see details).");
   }
 
-  function ensureGraphRendererLoaded() {
-    if (typeof window.initcodeStructureChart === "function") return;
-    throw new Error(
-      "Graph renderer not loaded (initcodeStructureChart missing). Check script order."
-    );
-  }
-
   function renderGraph(metrics) {
+    // Clean up any previous graph instance (stops simulation + clears svg)
+    try { graphController?.destroy?.(); } catch { }
+
     clearPanels();
-    window.__selectedNode = null;
-    window.initcodeStructureChart("codeStructureSvg", metrics);
+    selectedNode = null;
+
+    // Init renderer and keep the controller so we can:
+    // - mark changed nodes from SSE
+    // - access the latest rendered nodes for panel refresh
+    graphController = initcodeStructureChart("codeStructureSvg", metrics, {
+      onNodeSelected
+    });
   }
 
   function pickNodes(metrics) {
@@ -1119,11 +1130,6 @@
       const nodes = pickNodes(metrics);
       const fnCount = countFunctions(nodes);
       const loc = sumLoc(nodes);
-
-      if (window.CodeGraphUI?.updateGraphHeader) {
-        window.CodeGraphUI.updateGraphHeader({ appName: appId, functions: fnCount, loc });
-        return;
-      }
 
       const h = document.getElementById("graphInfoHeader");
       if (h) h.textContent = `${appId} · ƒ ${fnCount} · LOC ${loc}`;
@@ -1169,9 +1175,9 @@
       currentRunToken = data?.runToken || currentRunToken;
 
       const metrics = await fetchJson(data.metricsUrl);
-
-      ensureGraphRendererLoaded();
       renderGraph(metrics);
+
+      // Header is updated by the renderer; keep this as a best-effort fallback.
       updateGraphHeader(metrics);
 
       statusDone(data);
@@ -1194,4 +1200,3 @@
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
   else init();
-})();

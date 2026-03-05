@@ -7,10 +7,9 @@
  * Exposes: window.CodeGraphInteractions
  */
 
-(function () {
-  "use strict";
+// ESM: no global namespace. Keep everything as explicit exports.
 
-  const CodeGraphInteractions = {};
+const CodeGraphInteractions = {};
 
   /**
    * Attach drag + click behavior to node selections.
@@ -144,5 +143,5 @@
   CodeGraphInteractions.drawHighlight = drawHighlight;
   CodeGraphInteractions.anchorHighlight = anchorHighlight;
 
-  window.CodeGraphInteractions = CodeGraphInteractions;
-})();
+export { CodeGraphInteractions };
+export default CodeGraphInteractions;
