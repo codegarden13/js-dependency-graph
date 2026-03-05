@@ -312,10 +312,30 @@ function hasValidLayer(n) {
   return typeof n?.layer === "string" && Boolean(n.layer);
 }
 
-function ensureLayer(n, kind, ext, fileId, fallbackId) {
-  if (hasValidLayer(n)) return;
-  const fid = String(fileId || fallbackId);
-  n.layer = layerFromKindExtAndFile(kind, ext, fid);
+/**
+ * Ensure the node has a valid architecture layer.
+ *
+ * Refactoring rationale
+ * ---------------------
+ * CodeScene flagged the previous signature for having more than four
+ * positional arguments. Using a parameter object makes the call-site
+ * clearer and avoids argument-order mistakes.
+ *
+ * @param {{
+ *   node:any,
+ *   kind:string,
+ *   ext:string,
+ *   fileId?:string,
+ *   fallbackId?:string
+ * }} ctx
+ */
+function ensureLayer(ctx) {
+  const { node, kind, ext, fileId, fallbackId } = ctx || {};
+
+  if (hasValidLayer(node)) return;
+
+  const fid = String(fileId || fallbackId || "");
+  node.layer = layerFromKindExtAndFile(kind, ext, fid);
 }
 
 function ensureNumbers(n) {
