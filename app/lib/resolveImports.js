@@ -87,6 +87,64 @@ const publicRootsCache = new Map();
 /* Public API                                                                 */
 /* ========================================================================== */
 
+function normalizeImportSpecifier(spec) {
+  if (!spec || typeof spec !== "string") return "";
+  const cleaned = stripQueryAndHash(String(spec).trim());
+  return String(cleaned || "").trim();
+}
+
+function isExternalSpecifier(cleaned) {
+  // Only resolve relative (./, ../) or path-like imports (/..., file:...)
+  return !cleaned.startsWith(".") && !cleaned.startsWith("/") && !cleaned.startsWith("file:");
+}
+
+function tryResolveFileUrl(cleaned, rootAbs) {
+  if (!cleaned.startsWith("file:")) return null;
+
+  const asPath = fileUrlToPathSafe(cleaned);
+  if (!asPath) return null;
+
+  const hit = resolveWithExtensions(asPath);
+  if (!hit) return null;
+
+  return isInsideRoot(rootAbs, hit) ? hit : null;
+}
+
+function tryResolveRelativeImport(cleaned, fromDir, rootAbs) {
+  if (!cleaned.startsWith(".")) return null;
+
+  const base = path.resolve(fromDir, cleaned);
+  const hit = resolveWithExtensions(base);
+  if (!hit) return null;
+
+  return isInsideRoot(rootAbs, hit) ? hit : null;
+}
+
+function tryResolveAbsoluteOrWebImport(cleaned, rootAbs) {
+  // 1) Absolute filesystem paths (only if inside root)
+  const fsAbs = resolveAbsoluteFilesystemPathIfInsideProject(cleaned, rootAbs);
+  if (fsAbs) return fsAbs;
+
+  // 2) Absolute web-path imports
+  const relWeb = normalizeWebPathToRelative(cleaned);
+  if (!relWeb) return null;
+
+  return tryResolveAgainstPublicRoots(relWeb, rootAbs);
+}
+
+function tryResolveAgainstPublicRoots(relWeb, rootAbs) {
+  const publicRoots = getPublicRoots(rootAbs);
+
+  for (const pr of publicRoots) {
+    const base = path.resolve(pr, relWeb);
+    const hit = resolveWithExtensions(base);
+
+    if (hit && isInsideRoot(rootAbs, hit)) return hit;
+  }
+
+  return null;
+}
+
 /**
  * Resolve an import specifier to an absolute file path inside projectRoot.
  *
@@ -96,70 +154,22 @@ const publicRootsCache = new Map();
  * @returns {string|null}
  */
 export function resolveImports(fromAbs, spec, projectRoot) {
-  if (!spec || typeof spec !== "string") return null;
-
-  const rootAbs = path.resolve(projectRoot);
-  const fromDir = path.dirname(path.resolve(fromAbs));
-
-  const cleaned = stripQueryAndHash(String(spec).trim());
+  const cleaned = normalizeImportSpecifier(spec);
   if (!cleaned) return null;
 
-  // ---------------------------------------------------------------------------
-  // 1) Ignore external imports early
-  // ---------------------------------------------------------------------------
-  // Only resolve relative (./, ../) or path-like imports (/..., file:...)
-  if (!cleaned.startsWith(".") && !cleaned.startsWith("/") && !cleaned.startsWith("file:")) {
-    return null;
-  }
+  if (isExternalSpecifier(cleaned)) return null;
 
-  // ---------------------------------------------------------------------------
-  // 2) file: URLs -> filesystem paths (only if inside root)
-  // ---------------------------------------------------------------------------
-  if (cleaned.startsWith("file:")) {
-    const asPath = fileUrlToPathSafe(cleaned);
-    if (!asPath) return null;
+  const rootAbs = path.resolve(projectRoot);
 
-    const hit = resolveWithExtensions(asPath);
-    if (!hit) return null;
+  const fileUrlHit = tryResolveFileUrl(cleaned, rootAbs);
+  if (fileUrlHit) return fileUrlHit;
 
-    return isInsideRoot(rootAbs, hit) ? hit : null;
-  }
+  const fromDir = path.dirname(path.resolve(fromAbs));
 
-  // ---------------------------------------------------------------------------
-  // 3) Relative imports
-  // ---------------------------------------------------------------------------
-  if (cleaned.startsWith(".")) {
-    const base = path.resolve(fromDir, cleaned);
-    const hit = resolveWithExtensions(base);
-    return hit && isInsideRoot(rootAbs, hit) ? hit : null;
-  }
+  const relativeHit = tryResolveRelativeImport(cleaned, fromDir, rootAbs);
+  if (relativeHit) return relativeHit;
 
-  // ---------------------------------------------------------------------------
-  // 4) "Absolute" imports starting with "/" can mean two different things:
-  //    - POSIX filesystem absolute paths ("/Users/..."), OR
-  //    - browser web-paths ("/assets/js/app.js")
-  //
-  // We disambiguate conservatively:
-  // - If the spec clearly points *into* the selected project root, accept as FS.
-  // - Otherwise treat it as a web-path and try public roots.
-  // ---------------------------------------------------------------------------
-
-  // 4a) Absolute filesystem paths (only if inside root)
-  const fsAbs = resolveAbsoluteFilesystemPathIfInsideProject(cleaned, rootAbs);
-  if (fsAbs) return fsAbs;
-
-  // 4b) Absolute web-path imports
-  const relWeb = normalizeWebPathToRelative(cleaned);
-  if (!relWeb) return null;
-
-  const publicRoots = getPublicRoots(rootAbs);
-  for (const pr of publicRoots) {
-    const base = path.resolve(pr, relWeb);
-    const hit = resolveWithExtensions(base);
-    if (hit && isInsideRoot(rootAbs, hit)) return hit;
-  }
-
-  return null;
+  return tryResolveAbsoluteOrWebImport(cleaned, rootAbs);
 }
 
 /* ========================================================================== */
@@ -264,27 +274,45 @@ function resolveAbsoluteFilesystemPathIfInsideProject(absSpec, rootAbs) {
  * @param {string} baseAbs
  * @returns {string|null}
  */
-function resolveWithExtensions(baseAbs) {
-  // 1) Exact file (already has extension)
-  if (path.extname(baseAbs) && existsFile(baseAbs)) return baseAbs;
+function hasExtension(p) {
+  return Boolean(path.extname(String(p || "")));
+}
 
-  // 2) Try "<base>.<ext>"
-  if (!path.extname(baseAbs)) {
-    for (const ext of ALL_EXTENSIONS) {
-      const cand = baseAbs + ext;
-      if (existsFile(cand)) return cand;
-    }
+function tryResolveByExtensions(baseAbs, exts) {
+  for (const ext of exts) {
+    const cand = baseAbs + ext;
+    if (existsFile(cand)) return cand;
   }
-
-  // 3) Try "<base>/index.<ext>"
-  if (existsDir(baseAbs)) {
-    for (const ext of ALL_EXTENSIONS) {
-      const cand = path.join(baseAbs, "index" + ext);
-      if (existsFile(cand)) return cand;
-    }
-  }
-
   return null;
+}
+
+function tryResolveIndexFile(dirAbs, exts) {
+  for (const ext of exts) {
+    const cand = path.join(dirAbs, "index" + ext);
+    if (existsFile(cand)) return cand;
+  }
+  return null;
+}
+
+/**
+ * Resolve extensionless imports and directory imports (index.*).
+ *
+ * @param {string} baseAbs
+ * @returns {string|null}
+ */
+function resolveWithExtensions(baseAbs) {
+  const base = String(baseAbs || "");
+  if (!base) return null;
+
+  // 1) Exact file (already has extension)
+  if (hasExtension(base) && existsFile(base)) return base;
+
+  // 2) Try "<base>.<ext>" (only if extensionless)
+  const direct = hasExtension(base) ? null : tryResolveByExtensions(base, ALL_EXTENSIONS);
+  if (direct) return direct;
+
+  // 3) Try "<base>/index.<ext>" (only if base is a directory)
+  return existsDir(base) ? tryResolveIndexFile(base, ALL_EXTENSIONS) : null;
 }
 
 /**
