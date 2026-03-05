@@ -157,9 +157,13 @@ export class GraphStore {
     return true;
   }
 
+
+  
   /**
    * Ensure a link exists; returns true if added.
    */
+
+  
   ensureLink(sourceId, targetId, type) {
     const s = String(sourceId || "").trim();
     const t = String(targetId || "").trim();
@@ -173,6 +177,7 @@ export class GraphStore {
     this._linkIndex.add(key);
     return true;
   }
+  
 
   get nodeCount() {
     return this.nodes.length;

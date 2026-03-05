@@ -713,13 +713,6 @@ function linkReferencedFileFromText(ctx, fileAbs) {
   });
 }
 
-function maybeEnqueueTextReferencedCode(ctx, cls, fileAbs) {
-  if (cls.kind !== "code") return;
-  if (typeof ctx.enqueue !== "function") return;
-
-  if (typeof ctx.hasVisited === "function" && ctx.hasVisited(fileAbs)) return;
-  ctx.enqueue(fileAbs);
-}
 
 /* ========================================================================== */
 /* LOW-LEVEL HELPERS                                                         */
@@ -754,10 +747,7 @@ function toAbsFromRelMaybe(projectRootAbs, relOrAbs) {
   return path.resolve(projectRootAbs, raw);
 }
 
-function isScriptFile(p) {
-  const ext = String(path.extname(p || "")).toLowerCase();
-  return ext === ".js" || ext === ".mjs" || ext === ".cjs" || ext === ".ts" || ext === ".tsx" || ext === ".jsx";
-}
+
 
 function toProjectRelativeId(projectRootAbs, absPath) {
   const rootAbs = path.resolve(projectRootAbs);
