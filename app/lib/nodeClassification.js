@@ -316,23 +316,22 @@ function hasValidLayer(n) {
  * Ensure `node.layer` is set.
  *
  * Fail-soft rationale:
- * - Finalize läuft manchmal über „Stub“-/Zwischenstände.
+ * - Finalize läuft manchmal über „Stub"-/Zwischenstände.
  * - In seltenen Fällen wird ensureLayer aufgerufen, bevor ein Node-Objekt existiert.
  * - Dann skippen wir einfach, statt den gesamten Analyze-Run zu crashen.
  *
  * @param {any} n Node object (mutated).
- * @param {string} kind
- * @param {string} ext
- * @param {string} fileId
- * @param {string} fallbackId
+ * @param {{kind?: string, ext?: string, fileId?: string, fallbackId?: string}} opts
  */
-function ensureLayer(n, kind, ext, fileId, fallbackId) {
+function ensureLayer(n, opts = {}) {
+  const { kind, ext, fileId, fallbackId } = opts;
   if (!n || typeof n !== "object") return;     // <<< FIX: guard
   if (hasValidLayer(n)) return;
 
   const fid = String(fileId || fallbackId || "");
   n.layer = layerFromKindExtAndFile(String(kind || ""), String(ext || ""), fid);
 }
+
 function ensureNumbers(n) {
   if (!Number.isFinite(n.lines)) n.lines = Number(n.lines || 0) || 0;
   if (!Number.isFinite(n.complexity)) n.complexity = Number(n.complexity || 0) || 0;
@@ -365,7 +364,7 @@ export function ensureCanonicalNodeFields(n) {
   const { ext } = ensureExtTypeSubtype(n, id);
 
   ensureGroup(n, kind, ext);
-  ensureLayer(n, kind, ext, n.file, id);
+  ensureLayer(n, { kind, ext, fileId: n.file, fallbackId: id });
 
   ensureNumbers(n);
   ensureStrings(n, id);
