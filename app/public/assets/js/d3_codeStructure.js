@@ -1000,6 +1000,7 @@ function formatUnknownExamples(unknown) {
         getNodeStrokeWidth: computeNodeStrokeWidth
       };
     }
+    
 
     function createSimulation(nodes, links, width, height, getRadius) {
       const layout = deriveLayoutDefaults(nodes, links, getRadius);
@@ -1533,6 +1534,8 @@ function readChangeAt(evt) {
   /**
    * Legacy (pre-panel) UI. Still called for backward compatibility.
    */
+  
+  /*
   function renderLegacyLegendAndFilters(svgId, metrics, nodes, links, sels) {
     if (isFn(CodeGraphUI?.setupGraphFilters)) {
       CodeGraphUI.setupGraphFilters(svgId, metrics, sels.nodeShapeSel, sels.linkSel);
@@ -1549,6 +1552,7 @@ function readChangeAt(evt) {
       );
     }
   }
+  */
 
   /**
    * Unified legend/filter panel.
@@ -1590,7 +1594,7 @@ function readChangeAt(evt) {
 
     const sels = pickLegendSelections(c.sels);
 
-    renderLegacyLegendAndFilters(c.svgId, c.metrics, c.nodes, c.links, sels);
+    //renderLegacyLegendAndFilters(c.svgId, c.metrics, c.nodes, c.links, sels);
     renderLegendFilterPanel(c.svgId, c.nodes, c.links);
     attachLegendFilterWiringOrWarn(c.svgId, c.nodes, c.links, sels);
   }

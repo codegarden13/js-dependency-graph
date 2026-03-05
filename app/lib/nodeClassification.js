@@ -313,31 +313,26 @@ function hasValidLayer(n) {
 }
 
 /**
- * Ensure the node has a valid architecture layer.
+ * Ensure `node.layer` is set.
  *
- * Refactoring rationale
- * ---------------------
- * CodeScene flagged the previous signature for having more than four
- * positional arguments. Using a parameter object makes the call-site
- * clearer and avoids argument-order mistakes.
+ * Fail-soft rationale:
+ * - Finalize läuft manchmal über „Stub“-/Zwischenstände.
+ * - In seltenen Fällen wird ensureLayer aufgerufen, bevor ein Node-Objekt existiert.
+ * - Dann skippen wir einfach, statt den gesamten Analyze-Run zu crashen.
  *
- * @param {{
- *   node:any,
- *   kind:string,
- *   ext:string,
- *   fileId?:string,
- *   fallbackId?:string
- * }} ctx
+ * @param {any} n Node object (mutated).
+ * @param {string} kind
+ * @param {string} ext
+ * @param {string} fileId
+ * @param {string} fallbackId
  */
-function ensureLayer(ctx) {
-  const { node, kind, ext, fileId, fallbackId } = ctx || {};
-
-  if (hasValidLayer(node)) return;
+function ensureLayer(n, kind, ext, fileId, fallbackId) {
+  if (!n || typeof n !== "object") return;     // <<< FIX: guard
+  if (hasValidLayer(n)) return;
 
   const fid = String(fileId || fallbackId || "");
-  node.layer = layerFromKindExtAndFile(kind, ext, fid);
+  n.layer = layerFromKindExtAndFile(String(kind || ""), String(ext || ""), fid);
 }
-
 function ensureNumbers(n) {
   if (!Number.isFinite(n.lines)) n.lines = Number(n.lines || 0) || 0;
   if (!Number.isFinite(n.complexity)) n.complexity = Number(n.complexity || 0) || 0;
