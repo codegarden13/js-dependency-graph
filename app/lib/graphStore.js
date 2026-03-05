@@ -32,6 +32,107 @@ export class GraphStore {
     this._linkIndex = new Set();
   }
 
+  toNonEmptyId(value) {
+    const id = String(value || "").trim();
+    return id ? id : "";
+  }
+
+  getExistingNode(id) {
+    return this._nodeIndex.has(id) ? (this._nodeIndex.get(id) || null) : null;
+  }
+
+  mergeStubMetrics(existing, incoming) {
+    // Prefer richer metrics if the existing node is still a stub (0).
+    this.mergeMetric(existing, incoming, "lines");
+    this.mergeMetric(existing, incoming, "complexity");
+
+    if (!existing.headerComment && incoming.headerComment) {
+      existing.headerComment = String(incoming.headerComment || "");
+    }
+  }
+
+  metricNumber(obj, key) {
+    if (!obj) return 0;
+    const raw = obj[key];
+    const n = Number(raw || 0);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  shouldMergeMetricValue(currentValue, nextValue) {
+    if (currentValue !== 0) return false;
+    return nextValue > 0;
+  }
+
+  mergeMetric(existing, incoming, key) {
+    if (!existing || !incoming) return;
+
+    const currentValue = this.metricNumber(existing, key);
+    const nextValue = this.metricNumber(incoming, key);
+
+    if (!this.shouldMergeMetricValue(currentValue, nextValue)) return;
+
+    existing[key] = nextValue;
+  }
+
+  mergeIdentity(existing, incoming) {
+    if (!existing.file && incoming.file) existing.file = String(incoming.file);
+    if (!existing.kind && incoming.kind) existing.kind = String(incoming.kind);
+  }
+
+  mergeFunctionMeta(existing, incoming) {
+    if (existing.name == null && incoming.name != null) existing.name = String(incoming.name);
+    if (existing.exported == null && incoming.exported != null) existing.exported = Boolean(incoming.exported);
+  }
+
+  mergeExistingNode(existing, incoming) {
+    if (!existing || !incoming) return;
+    this.mergeStubMetrics(existing, incoming);
+    this.mergeIdentity(existing, incoming);
+    this.mergeFunctionMeta(existing, incoming);
+  }
+
+  normalizeFile(node, fallbackId) {
+    const f = node && node.file;
+    return String(f || fallbackId);
+  }
+
+  normalizeNumber(value) {
+    return Number(value || 0);
+  }
+
+  normalizeString(value) {
+    return String(value || "");
+  }
+
+  buildBaseNode(id, node) {
+    const file = this.normalizeFile(node, id);
+    const lines = this.normalizeNumber(node?.lines);
+    const complexity = this.normalizeNumber(node?.complexity);
+    const headerComment = this.normalizeString(node?.headerComment);
+
+    return { id, file, lines, complexity, headerComment };
+  }
+
+  applyOptionalNodeFields(out, node) {
+    if (!out || !node) return;
+
+    // kind: only keep meaningful values
+    const kind = node.kind;
+    if (kind) out.kind = String(kind);
+
+    // name: preserve even empty-string names if explicitly present
+    if (node.name != null) out.name = String(node.name);
+
+    // exported: preserve explicit boolean-ish value if present
+    if (node.exported != null) out.exported = Boolean(node.exported);
+  }
+
+  buildNormalizedNode(id, node) {
+    const out = this.buildBaseNode(id, node);
+    this.applyOptionalNodeFields(out, node);
+    return out;
+  }
+
   /**
    * Ensure a node exists; returns true if added.
    *
@@ -41,37 +142,16 @@ export class GraphStore {
    * - Preserve function metadata (name/exported) when present
    */
   ensureNode(node) {
-    const id = String(node?.id || "").trim();
+    const id = this.toNonEmptyId(node?.id);
     if (!id) return false;
 
-    if (this._nodeIndex.has(id)) {
-      const existing = this._nodeIndex.get(id);
-      if (!existing || !node) return false;
-
-      if ((existing.lines || 0) === 0 && (node.lines || 0) > 0) existing.lines = Number(node.lines || 0);
-      if ((existing.complexity || 0) === 0 && (node.complexity || 0) > 0) existing.complexity = Number(node.complexity || 0);
-      if (!existing.headerComment && node.headerComment) existing.headerComment = String(node.headerComment || "");
-
-      if (!existing.file && node.file) existing.file = String(node.file);
-      if (!existing.kind && node.kind) existing.kind = String(node.kind);
-
-      if (existing.name == null && node.name != null) existing.name = String(node.name);
-      if (existing.exported == null && node.exported != null) existing.exported = Boolean(node.exported);
-
+    const existing = this.getExistingNode(id);
+    if (existing) {
+      this.mergeExistingNode(existing, node);
       return false;
     }
 
-    const normalized = {
-      id,
-      file: String(node?.file || id),
-      lines: Number(node?.lines || 0),
-      complexity: Number(node?.complexity || 0),
-      headerComment: String(node?.headerComment || ""),
-      ...(node?.kind ? { kind: String(node.kind) } : null),
-      ...(node?.name != null ? { name: String(node.name) } : null),
-      ...(node?.exported != null ? { exported: Boolean(node.exported) } : null)
-    };
-
+    const normalized = this.buildNormalizedNode(id, node);
     this.nodes.push(normalized);
     this._nodeIndex.set(id, normalized);
     return true;
@@ -102,6 +182,30 @@ export class GraphStore {
     return this.links.length;
   }
 
+  toNonEmptyPrefix(prefix) {
+    const p = String(prefix || "").trim();
+    return p ? p : "";
+  }
+
+  findPrefixInNodeIndex(nodeIndex, prefix) {
+    if (!nodeIndex) return null;
+    if (typeof nodeIndex.keys !== "function") return null;
+
+    for (const id of nodeIndex.keys()) {
+      if (typeof id !== "string") continue;
+      if (id.startsWith(prefix)) return id;
+    }
+
+    return null;
+  }
+
+  findPrefixInNodesArray(nodes, prefix) {
+    if (!Array.isArray(nodes) || !nodes.length) return null;
+
+    const match = nodes.find((n) => typeof n?.id === "string" && n.id.startsWith(prefix));
+    return match?.id || null;
+  }
+
   /**
    * findNodeIdByPrefix(prefix)
    * --------------------------
@@ -120,20 +224,13 @@ export class GraphStore {
    * @returns {string|null}
    */
   findNodeIdByPrefix(prefix) {
-    const p = String(prefix || "").trim();
+    const p = this.toNonEmptyPrefix(prefix);
     if (!p) return null;
 
-    // Prefer the index for speed + determinism.
-    // Falls back to the nodes array if the index ever changes shape.
-    if (this._nodeIndex && typeof this._nodeIndex.keys === "function") {
-      for (const id of this._nodeIndex.keys()) {
-        if (typeof id === "string" && id.startsWith(p)) return id;
-      }
-      return null;
-    }
+    const idFromIndex = this.findPrefixInNodeIndex(this._nodeIndex, p);
+    if (idFromIndex) return idFromIndex;
 
-    const match = this.nodes.find((n) => typeof n?.id === "string" && n.id.startsWith(p));
-    return match?.id || null;
+    return this.findPrefixInNodesArray(this.nodes, p);
   }
 
   /**
