@@ -163,128 +163,125 @@ export const AUTO_TOP_FILES = [
 /* PUBLIC API                                                                */
 /* ========================================================================== */
 
-/**
- * Apply “auto refs” discovered by parseFile() to the graph.
- *
- * @param {object} args
- * @param {string} args.projectRootAbs Absolute path of the selected app root
- * @param {string} args.fromFileAbs    Absolute file path for the current file
- * @param {string} args.fromFileId     Project-relative node id of the current file
- * @param {object} args.parsed         parseFile() result for the current file
- * @param {(absPath:string)=>string} args.toRelId Convert abs path -> project-relative id
- * @param {(node:object)=>boolean} args.ensureNode Dedupe+add node callback
- * @param {(sourceId:string,targetId:string,type:string)=>boolean} args.ensureLink Dedupe+add link callback
- * @param {(absPath:string)=>void} [args.enqueue] Optional: enqueue script file for deeper traversal
- * @param {(absPath:string)=>boolean} [args.hasVisited] Optional: visited check (prevents re-enqueue)
- */
-export function applyAutoRefs({
-  projectRootAbs,
-  fromFileAbs,
-  fromFileId,
-  parsed,
-  toRelId,
-  ensureNode,
-  ensureLink,
-  enqueue,
-  hasVisited
-}) {
-  const rootAbs = path.resolve(projectRootAbs);
+export function applyAutoRefs(args) {
+  const ctx = normalizeAutoRefsArgs(args);
+  if (!ctx) return;
 
-  // Merge ref buckets; parser may expose different properties across versions.
-  /** @type {string[]} */
-  const refs = [];
-  if (Array.isArray(parsed?.fileRefsAbs)) refs.push(...parsed.fileRefsAbs);
-  if (Array.isArray(parsed?.fileRefsRel)) refs.push(...parsed.fileRefsRel);
-  if (Array.isArray(parsed?.assetRefsAbs)) refs.push(...parsed.assetRefsAbs);
-  if (Array.isArray(parsed?.assetRefsRel)) refs.push(...parsed.assetRefsRel);
+  const refs = collectAutoRefs(ctx.parsed);
+  if (!refs.length) return;
 
   for (const ref of refs) {
-    const refAbs = toAbsFromRelMaybe(rootAbs, ref);
-    if (!refAbs) continue;
-
-    // Safety boundary: never go outside selected app.
-    if (!isInsideRoot(rootAbs, refAbs)) continue;
-
-    const st = safeStat(refAbs);
-    if (!st) continue;
-
-    // ---------------------------------------------------------------------
-    // Directory references (e.g. express.static(publicDir))
-    // ---------------------------------------------------------------------
-    if (st.isDirectory()) {
-      const dirId = toRelId(refAbs);
-
-      ensureNode({
-        id: dirId,
-        file: dirId,
-        kind: "dir",
-        type: "dir",
-        lines: 0,
-        complexity: 0,
-        headerComment: ""
-      });
-
-      ensureLink(fromFileId, dirId, "include");
-
-      // Expand referenced directory in a bounded way.
-      expandDirectoryBounded({
-        projectRootAbs: rootAbs,
-        refDirAbs: refAbs,
-        refDirId: dirId,
-        toRelId,
-        ensureNode,
-        ensureLink,
-        enqueue,
-        hasVisited,
-        depth: 0
-      });
-
-      continue;
-    }
-
-    // ---------------------------------------------------------------------
-    // File references (config.json, CSVs, assets, etc.)
-    // ---------------------------------------------------------------------
-    if (!st.isFile()) continue;
-
-    const refId = toRelId(refAbs);
-    const cls = classifyFileByExt(refAbs);
-
-    ensureNode({
-      id: refId,
-      file: refId,
-      kind: cls.kind,
-      type: cls.type,
-      ext: cls.ext,
-      lines: 0,
-      complexity: 0,
-      headerComment: ""
-    });
-
-    ensureLink(fromFileId, refId, "include");
-
-    // Optional deeper traversal for code files.
-    if (cls.kind === "code" && typeof enqueue === "function") {
-      if (typeof hasVisited === "function" && hasVisited(refAbs)) continue;
-      enqueue(refAbs);
-    }
-
-    // Optional: parse lightweight text files to discover more refs.
-    const ext = String(path.extname(refAbs)).toLowerCase();
-    if (AUTO_PARSEABLE_TEXT_EXT.has(ext)) {
-      tryParseReferencedTextFile({
-        projectRootAbs: rootAbs,
-        fileAbs: refAbs,
-        parentId: refId,
-        toRelId,
-        ensureNode,
-        ensureLink,
-        enqueue,
-        hasVisited
-      });
-    }
+    processAutoRef(ctx, ref);
   }
 }
+
+/**
+ * Normalize and validate inputs once.
+ * Returns a compact context object used by helpers.
+ */
+function normalizeAutoRefsArgs(args) {
+  const a = args && typeof args === "object" ? args : null;
+  if (!a) return null;
+
+  const rootAbs = path.resolve(String(a.projectRootAbs || ""));
+  const fromFileId = String(a.fromFileId || "");
+
+  if (!rootAbs || !fromFileId) return null;
+
+  return {
+    rootAbs,
+    fromFileId,
+    parsed: a.parsed,
+    toRelId: a.toRelId,
+    ensureNode: a.ensureNode,
+    ensureLink: a.ensureLink,
+    enqueue: a.enqueue,
+    hasVisited: a.hasVisited
+  };
+}
+
+function pushArrayProp(into, obj, prop) {
+  const arr = obj && Array.isArray(obj[prop]) ? obj[prop] : null;
+  if (!arr || !arr.length) return;
+  into.push(...arr);
+}
+
+/**
+ * Merge ref buckets; parser may expose different properties across versions.
+ * We keep them as-is and resolve to absolute paths later.
+ * @param {any} parsed
+ * @returns {string[]}
+ */
+function collectAutoRefs(parsed) {
+  const refs = [];
+  const p = parsed && typeof parsed === "object" ? parsed : null;
+  if (!p) return refs;
+
+  // Merge ref buckets; parser may expose different properties across versions.
+  // We keep them as-is and resolve to absolute paths later.
+  const props = ["fileRefsAbs", "fileRefsRel", "assetRefsAbs", "assetRefsRel"];
+  for (const key of props) pushArrayProp(refs, p, key);
+
+  return refs;
+}
+
+function processAutoRef(ctx, ref) {
+  const refAbs = toAbsFromRelMaybe(ctx.rootAbs, ref);
+  if (!refAbs) return;
+  if (!isInsideRoot(ctx.rootAbs, refAbs)) return;
+
+  const st = safeStat(refAbs);
+  if (!st) return;
+
+  if (st.isDirectory()) {
+    handleReferencedDirectory(ctx, refAbs);
+    return;
+  }
+
+  if (!st.isFile()) return;
+  handleReferencedFile(ctx, refAbs);
+}
+
+function handleReferencedDirectory(ctx, dirAbs) {
+  linkReferencedDirectoryFromCtx(ctx, {
+    parentId: ctx.fromFileId,
+    projectRootAbs: ctx.rootAbs,
+    dirAbs
+  });
+}
+
+function buildLinkReferencedFileArgs(ctx, { parentId, projectRootAbs, fileAbs, parseTextRefs }) {
+  const fileId = ctx.toRelId(fileAbs);
+  return {
+    parentId,
+    projectRootAbs,
+    fileAbs,
+    fileId,
+    toRelId: ctx.toRelId,
+    ensureNode: ctx.ensureNode,
+    ensureLink: ctx.ensureLink,
+    enqueue: ctx.enqueue,
+    hasVisited: ctx.hasVisited,
+    parseTextRefs
+  };
+}
+
+function linkReferencedFileFromCtx(ctx, { parentId, projectRootAbs, fileAbs, parseTextRefs }) {
+  linkReferencedFile(
+    buildLinkReferencedFileArgs(ctx, { parentId, projectRootAbs, fileAbs, parseTextRefs })
+  );
+}
+
+function handleReferencedFile(ctx, fileAbs) {
+  linkReferencedFileFromCtx(ctx, {
+    parentId: ctx.fromFileId,
+    projectRootAbs: ctx.rootAbs,
+    fileAbs,
+    parseTextRefs: true
+  });
+}
+
+
 
 function shouldApplySkeletonFallback(nodeCount, linkCount) {
   // Conservative trigger: only if we basically found nothing.
@@ -314,6 +311,43 @@ function ensureDirNode(ensureNode, dirId) {
     lines: 0,
     complexity: 0,
     headerComment: ""
+  });
+}
+
+/**
+ * Ensure a directory node exists, link it from a parent, and expand it once (bounded).
+ *
+ * Removes duplication between:
+ * - applyAutoRefs() directory handling
+ * - tryParseReferencedTextFile() directory handling
+ */
+function linkAndExpandDirectory({
+  parentId,
+  projectRootAbs,
+  dirAbs,
+  dirId,
+  toRelId,
+  ensureNode,
+  ensureLink,
+  enqueue,
+  hasVisited
+}) {
+  if (!parentId || !dirId) return;
+
+  ensureDirNode(ensureNode, dirId);
+  ensureLink(parentId, dirId, "include");
+
+  // Expand referenced directory in a bounded way (depth-limited, entry-capped).
+  expandDirectoryBounded({
+    projectRootAbs,
+    refDirAbs: dirAbs,
+    refDirId: dirId,
+    toRelId,
+    ensureNode,
+    ensureLink,
+    enqueue,
+    hasVisited,
+    depth: 0
   });
 }
 
@@ -347,8 +381,15 @@ function isAllowedSkeletonFile(name) {
   const ext = String(path.extname(name)).toLowerCase();
   const isSpecial = isSpecialTopFileName(name);
 
-  // If it has an extension, it must be in the allowlist. Special files are allowed without an ext.
-  if (!isSpecial && ext && !AUTO_ASSET_EXT_ALLOW.has(ext)) return false;
+  // If it has an extension, it must be in the allowlist.
+  // Special files are allowed even without an extension.
+  if (isSpecial) return true;
+
+  // Files without an extension are allowed (e.g. some config stubs).
+  if (!ext) return true;
+
+  // Non-special files with an extension must be explicitly allowed.
+  if (!AUTO_ASSET_EXT_ALLOW.has(ext)) return false;
 
   return true;
 }
@@ -452,210 +493,232 @@ export function applySkeletonFallback({
  *
  * @param {object} args
  */
-export function expandDirectoryBounded({
-  projectRootAbs,
-  refDirAbs,
-  refDirId,
-  toRelId,
-  ensureNode,
-  ensureLink,
-  enqueue,
-  hasVisited,
-  depth
-}) {
-  if (depth >= AUTO_MAX_DIR_DEPTH) return;
+export function expandDirectoryBounded(args) {
+  const ctx = normalizeExpandDirArgs(args);
+  if (!ctx) return;
 
-  const entries = safeReadDir(refDirAbs);
+  const entries = safeReadDir(ctx.refDirAbs);
+  forEachDirEntry(entries, ctx, (name) => expandOneChildEntry(name, ctx));
+}
+
+function normalizeExpandDirArgs(args) {
+  const a = args && typeof args === "object" ? args : null;
+  if (!a) return null;
+
+  const depth = Number(a.depth || 0) || 0;
+  if (depth >= AUTO_MAX_DIR_DEPTH) return null;
+
+  return {
+    projectRootAbs: a.projectRootAbs,
+    refDirAbs: a.refDirAbs,
+    refDirId: a.refDirId,
+    toRelId: a.toRelId,
+    ensureNode: a.ensureNode,
+    ensureLink: a.ensureLink,
+    enqueue: a.enqueue,
+    hasVisited: a.hasVisited,
+    depth
+  };
+}
+
+function forEachDirEntry(entries, ctx, fn) {
+  if (!Array.isArray(entries) || !entries.length) return;
 
   let count = 0;
   for (const name of entries) {
     if (count >= AUTO_MAX_DIR_ENTRIES) break;
-    if (!name) continue;
-    if (AUTO_SKIP_NAMES.has(name)) continue;
-    if (name.startsWith(".")) continue;
+    if (!shouldConsiderDirEntry(name)) continue;
 
-    const childAbs = path.join(refDirAbs, name);
-    const st = safeStat(childAbs);
-    if (!st) continue;
-
-    // ---------------------------------------------------------------------
-    // Directories
-    // ---------------------------------------------------------------------
-    if (st.isDirectory()) {
-      const childId = toRelId(childAbs);
-
-      ensureNode({
-        id: childId,
-        file: childId,
-        kind: "dir",
-        type: "dir",
-        lines: 0,
-        complexity: 0,
-        headerComment: ""
-      });
-
-      ensureLink(refDirId, childId, "include");
-
-      expandDirectoryBounded({
-        projectRootAbs,
-        refDirAbs: childAbs,
-        refDirId: childId,
-        toRelId,
-        ensureNode,
-        ensureLink,
-        enqueue,
-        hasVisited,
-        depth: depth + 1
-      });
-
-      count++;
-      continue;
-    }
-
-    // ---------------------------------------------------------------------
-    // Files
-    // ---------------------------------------------------------------------
-    if (!st.isFile()) continue;
-
-    const ext = String(path.extname(name)).toLowerCase();
-    const isSpecialNoExt = name === "Dockerfile" || name === "Makefile" || name === "LICENSE";
-
-    if (!isSpecialNoExt && ext && !AUTO_ASSET_EXT_ALLOW.has(ext)) continue;
-
-    const childId = toRelId(childAbs);
-
-    ensureNode({
-      id: childId,
-      file: childId,
-      kind: classifyFileByExt(childAbs).kind,
-      type: classifyFileByExt(childAbs).type,
-      ext: classifyFileByExt(childAbs).ext,
-      lines: 0,
-      complexity: 0,
-      headerComment: ""
-    });
-
-    ensureLink(refDirId, childId, "include");
+    fn(name);
     count++;
-
-    // Optional deeper traversal for code files.
-    if (classifyFileByExt(childAbs).kind === "code" && typeof enqueue === "function") {
-      if (typeof hasVisited === "function" && hasVisited(childAbs)) continue;
-      enqueue(childAbs);
-      continue;
-    }
-
-    // Parse lightweight text files to discover more references.
-    if (AUTO_PARSEABLE_TEXT_EXT.has(ext)) {
-      tryParseReferencedTextFile({
-        projectRootAbs,
-        fileAbs: childAbs,
-        parentId: childId,
-        toRelId,
-        ensureNode,
-        ensureLink,
-        enqueue,
-        hasVisited
-      });
-    }
   }
+
+  void ctx;
 }
 
-/**
- * Parse a referenced *non-JS* text file (html/css/md/json) to discover
- * additional referenced files/directories and add them as include edges.
- *
- * This stays cheap + deterministic:
- * - parse once
- * - does NOT attempt deep recursion by itself
- */
-export function tryParseReferencedTextFile({
-  projectRootAbs,
-  fileAbs,
-  parentId,
-  toRelId,
-  ensureNode,
-  ensureLink,
-  enqueue,
-  hasVisited
-}) {
-  let text = "";
-  try {
-    text = fs.readFileSync(fileAbs, "utf8");
-  } catch {
+function shouldConsiderDirEntry(name) {
+  if (!name) return false;
+  if (AUTO_SKIP_NAMES.has(name)) return false;
+  if (name.startsWith(".")) return false;
+  return true;
+}
+
+function expandOneChildEntry(name, ctx) {
+  const childAbs = path.join(ctx.refDirAbs, name);
+  const st = safeStat(childAbs);
+  if (!st) return;
+
+  if (st.isDirectory()) {
+    expandChildDirectory(childAbs, ctx);
     return;
   }
 
-  const parsed = parseFile(text, fileAbs);
+  if (!st.isFile()) return;
+  expandChildFile(childAbs, name, ctx);
+}
 
-  /** @type {string[]} */
-  const refs = [];
-  if (Array.isArray(parsed?.fileRefsAbs)) refs.push(...parsed.fileRefsAbs);
-  if (Array.isArray(parsed?.fileRefsRel)) refs.push(...parsed.fileRefsRel);
-  if (Array.isArray(parsed?.assetRefsAbs)) refs.push(...parsed.assetRefsAbs);
-  if (Array.isArray(parsed?.assetRefsRel)) refs.push(...parsed.assetRefsRel);
+function expandChildDirectory(dirAbs, ctx) {
+  const dirId = ctx.toRelId(dirAbs);
+
+  ensureDirNode(ctx.ensureNode, dirId);
+  ctx.ensureLink(ctx.refDirId, dirId, "include");
+
+  expandDirectoryBounded({
+    projectRootAbs: ctx.projectRootAbs,
+    refDirAbs: dirAbs,
+    refDirId: dirId,
+    toRelId: ctx.toRelId,
+    ensureNode: ctx.ensureNode,
+    ensureLink: ctx.ensureLink,
+    enqueue: ctx.enqueue,
+    hasVisited: ctx.hasVisited,
+    depth: ctx.depth + 1
+  });
+}
+
+function expandChildFile(fileAbs, entryName, ctx) {
+  if (!isAllowedSkeletonFile(entryName)) return;
+
+  const fileId = ctx.toRelId(fileAbs);
+  ensureFileNode(ctx.ensureNode, fileId, fileAbs);
+  ctx.ensureLink(ctx.refDirId, fileId, "include");
+
+  // Optional deeper traversal for code files.
+  maybeEnqueueReferencedCode({
+    cls: classifyOnce(fileAbs),
+    fileAbs,
+    enqueue: ctx.enqueue,
+    hasVisited: ctx.hasVisited
+  });
+
+  // Parse lightweight text files to discover more references.
+  maybeParseReferencedText({
+    cls: classifyOnce(fileAbs),
+    fileAbs,
+    projectRootAbs: ctx.projectRootAbs,
+    parentId: fileId,
+    toRelId: ctx.toRelId,
+    ensureNode: ctx.ensureNode,
+    ensureLink: ctx.ensureLink,
+    enqueue: ctx.enqueue,
+    hasVisited: ctx.hasVisited
+  });
+}
+
+export function tryParseReferencedTextFile(args) {
+  const ctx = normalizeTryParseTextArgs(args);
+  if (!ctx) return;
+
+  const text = readUtf8OrNull(ctx.fileAbs);
+  if (text == null) return;
+
+  const parsed = parseFile(text, ctx.fileAbs);
+  const refs = collectAutoRefs(parsed);
+  if (!refs.length) return;
 
   for (const ref of refs) {
-    const refAbs = toAbsFromRelMaybe(projectRootAbs, ref);
-    if (!refAbs) continue;
-    if (!isInsideRoot(projectRootAbs, refAbs)) continue;
-
-    const st = safeStat(refAbs);
-    if (!st) continue;
-
-    if (st.isDirectory()) {
-      const dirId = toRelId(refAbs);
-
-      ensureNode({
-        id: dirId,
-        file: dirId,
-        kind: "dir",
-        type: "dir",
-        lines: 0,
-        complexity: 0,
-        headerComment: ""
-      });
-
-      ensureLink(parentId, dirId, "include");
-
-      // One bounded expansion to make the directory visible.
-      expandDirectoryBounded({
-        projectRootAbs,
-        refDirAbs: refAbs,
-        refDirId: dirId,
-        toRelId,
-        ensureNode,
-        ensureLink,
-        enqueue,
-        hasVisited,
-        depth: 0
-      });
-
-      continue;
-    }
-
-    if (!st.isFile()) continue;
-
-    const refId = toRelId(refAbs);
-
-    ensureNode({
-      id: refId,
-      file: refId,
-      kind: classifyFileByExt(refAbs).kind,
-      type: classifyFileByExt(refAbs).type,
-      ext: classifyFileByExt(refAbs).ext,
-      lines: 0,
-      complexity: 0,
-      headerComment: ""
-    });
-
-    ensureLink(parentId, refId, "include");
-
-    if (classifyFileByExt(refAbs).kind === "code" && typeof enqueue === "function") {
-      if (typeof hasVisited === "function" && hasVisited(refAbs)) continue;
-      enqueue(refAbs);
-    }
+    applyTextRef(ctx, ref);
   }
+}
+
+function asPlainObject(x) {
+  return x && typeof x === "object" ? x : null;
+}
+
+function nonEmptyString(x) {
+  const s = String(x || "").trim();
+  return s ? s : "";
+}
+
+function normalizeTryParseTextArgs(args) {
+  const a = asPlainObject(args);
+  if (!a) return null;
+
+  const projectRootAbs = path.resolve(nonEmptyString(a.projectRootAbs));
+  const fileAbs = nonEmptyString(a.fileAbs);
+  const parentId = nonEmptyString(a.parentId);
+
+  if (!projectRootAbs) return null;
+  if (!fileAbs) return null;
+  if (!parentId) return null;
+
+  return {
+    projectRootAbs,
+    fileAbs,
+    parentId,
+    toRelId: a.toRelId,
+    ensureNode: a.ensureNode,
+    ensureLink: a.ensureLink,
+    enqueue: a.enqueue,
+    hasVisited: a.hasVisited
+  };
+}
+
+function readUtf8OrNull(absPath) {
+  try {
+    return fs.readFileSync(absPath, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+function applyTextRef(ctx, ref) {
+  const refAbs = toAbsFromRelMaybe(ctx.projectRootAbs, ref);
+  if (!refAbs) return;
+  if (!isInsideRoot(ctx.projectRootAbs, refAbs)) return;
+
+  const st = safeStat(refAbs);
+  if (!st) return;
+
+  if (st.isDirectory()) {
+    linkReferencedDirectoryFromText(ctx, refAbs);
+    return;
+  }
+
+  if (!st.isFile()) return;
+  linkReferencedFileFromText(ctx, refAbs);
+}
+
+
+function linkReferencedDirectoryFromCtx(ctx, { parentId, projectRootAbs, dirAbs }) {
+  const dirId = ctx.toRelId(dirAbs);
+
+  linkAndExpandDirectory({
+    parentId,
+    projectRootAbs,
+    dirAbs,
+    dirId,
+    toRelId: ctx.toRelId,
+    ensureNode: ctx.ensureNode,
+    ensureLink: ctx.ensureLink,
+    enqueue: ctx.enqueue,
+    hasVisited: ctx.hasVisited
+  });
+}
+
+function linkReferencedDirectoryFromText(ctx, dirAbs) {
+  linkReferencedDirectoryFromCtx(ctx, {
+    parentId: ctx.parentId,
+    projectRootAbs: ctx.projectRootAbs,
+    dirAbs
+  });
+}
+
+function linkReferencedFileFromText(ctx, fileAbs) {
+  linkReferencedFileFromCtx(ctx, {
+    parentId: ctx.parentId,
+    projectRootAbs: ctx.projectRootAbs,
+    fileAbs,
+    parseTextRefs: false
+  });
+}
+
+function maybeEnqueueTextReferencedCode(ctx, cls, fileAbs) {
+  if (cls.kind !== "code") return;
+  if (typeof ctx.enqueue !== "function") return;
+
+  if (typeof ctx.hasVisited === "function" && ctx.hasVisited(fileAbs)) return;
+  ctx.enqueue(fileAbs);
 }
 
 /* ========================================================================== */
@@ -730,4 +793,79 @@ function classifyFileByExt(fileAbs) {
 
   // data (default bucket for allowed non-binary artifacts)
   return classifyDataFallback(ext);
+}
+/**
+ * Ensure a file node exists and link it from a parent.
+ * Optionally enqueue code files and optionally parse lightweight text files
+ * for additional references.
+ */
+function linkReferencedFile({
+  parentId,
+  projectRootAbs,
+  fileAbs,
+  fileId,
+  toRelId,
+  ensureNode,
+  ensureLink,
+  enqueue,
+  hasVisited,
+  parseTextRefs
+}) {
+  if (!parentId) return;
+  if (!fileId) return;
+  if (!fileAbs) return;
+
+  ensureFileNode(ensureNode, fileId, fileAbs);
+  ensureLink(parentId, fileId, "include");
+
+  const cls = classifyOnce(fileAbs);
+  maybeEnqueueReferencedCode({ cls, fileAbs, enqueue, hasVisited });
+
+  if (parseTextRefs) {
+    maybeParseReferencedText({
+      cls,
+      fileAbs,
+      projectRootAbs,
+      parentId: fileId,
+      toRelId,
+      ensureNode,
+      ensureLink,
+      enqueue,
+      hasVisited
+    });
+  }
+}
+
+function maybeEnqueueReferencedCode({ cls, fileAbs, enqueue, hasVisited }) {
+  if (cls?.kind !== "code") return;
+  if (typeof enqueue !== "function") return;
+  if (typeof hasVisited === "function" && hasVisited(fileAbs)) return;
+  enqueue(fileAbs);
+}
+
+function maybeParseReferencedText({
+  cls,
+  fileAbs,
+  projectRootAbs,
+  parentId,
+  toRelId,
+  ensureNode,
+  ensureLink,
+  enqueue,
+  hasVisited
+}) {
+  // Only parse cheap, non-JS text-ish files (html/css/md/json/etc.)
+  const ext = cls?.ext || normalizeExt(fileAbs);
+  if (!AUTO_PARSEABLE_TEXT_EXT.has(String(ext || "").toLowerCase())) return;
+
+  tryParseReferencedTextFile({
+    projectRootAbs,
+    fileAbs,
+    parentId,
+    toRelId,
+    ensureNode,
+    ensureLink,
+    enqueue,
+    hasVisited
+  });
 }
