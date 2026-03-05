@@ -190,34 +190,74 @@ import { ensureTooltip, showTooltip, moveTooltip, hideTooltip } from "./codeGrap
     return k === "function";
   }
 
-  /**
-   * Pick the semantic base color for a node.
-   *
-   * Contract (preferred): backend provides `group` (root/dir/code/doc/data/image).
-   * Fallbacks (legacy): `kind` or `type` for older payloads.
-   *
-   * @param {object} d Node datum.
-   * @returns {string} Hex color string.
-   */
-  function getBaseNodeColor(d) {
-    const g = (d && typeof d.group === "string") ? d.group.trim() : "";
-    if (g && Object.prototype.hasOwnProperty.call(NODE_GROUP_COLORS, g)) {
-      return NODE_GROUP_COLORS[g];
-    }
+/**
+ * Read a string field from an object and return a trimmed value.
+ * Returns an empty string if the field is missing or not a string.
+ *
+ * Keeping this in one helper avoids repeating the same defensive checks.
+ *
+ * @param {any} obj
+ * @param {string} key
+ * @returns {string}
+ */
+function readTrimmedString(obj, key) {
+  const v = obj && typeof obj === "object" ? obj[key] : "";
+  return (typeof v === "string") ? v.trim() : "";
+}
 
-    const k = (d && typeof d.kind === "string") ? d.kind.trim() : "";
-    if (k && Object.prototype.hasOwnProperty.call(NODE_KIND_COLORS, k)) {
-      return NODE_KIND_COLORS[k];
-    }
+/**
+ * Map lookup helper.
+ * Returns the mapped value (e.g. color) or null if the key is not present.
+ *
+ * @param {string} key
+ * @param {Record<string,string>} map
+ * @returns {string|null}
+ */
+function lookupOrNull(key, map) {
+  if (!key) return null;
+  if (!map || typeof map !== "object") return null;
+  return Object.prototype.hasOwnProperty.call(map, key) ? map[key] : null;
+}
 
-    const t = (d && typeof d.type === "string") ? d.type.trim() : "";
-    if (t && Object.prototype.hasOwnProperty.call(NODE_KIND_COLORS, t)) {
-      return NODE_KIND_COLORS[t];
-    }
-
-    // Final fallback
-    return NODE_GROUP_COLORS.code;
+/**
+ * Return the first truthy value from a list of candidates.
+ * @param  {...any} vals
+ * @returns {any}
+ */
+function firstTruthy(...vals) {
+  for (const v of vals) {
+    if (v) return v;
   }
+  return null;
+}
+
+/**
+ * Pick the semantic base color for a node.
+ *
+ * Priority order:
+ * 1) `node.group` (new, canonical contract)
+ * 2) `node.kind`  (legacy payloads)
+ * 3) `node.type`  (older legacy payloads)
+ * 4) fallback to the generic "code" group color
+ *
+ * @param {object} d Node datum.
+ * @returns {string} Hex color string.
+ */
+function getBaseNodeColor(d) {
+  const group = readTrimmedString(d, "group");
+  const kind = readTrimmedString(d, "kind");
+  const type = readTrimmedString(d, "type");
+
+  // Prefer canonical group colors. If missing, fall back to legacy mappings.
+  return (
+    firstTruthy(
+      lookupOrNull(group, NODE_GROUP_COLORS),
+      lookupOrNull(kind, NODE_KIND_COLORS),
+      lookupOrNull(type, NODE_KIND_COLORS),
+      NODE_GROUP_COLORS.code
+    )
+  );
+}
 
   /**
    * Convert a numeric-ish value to a safe integer (>= 0).
@@ -255,6 +295,155 @@ import { ensureTooltip, showTooltip, moveTooltip, hideTooltip } from "./codeGrap
     return isFunctionNode(d) && d?._unused === true;
   }
 
+  // -----------------------------------------------------------------
+  // Layout defaults (derived)
+  // -----------------------------------------------------------------
+
+  /** @param {any[]} nodes */
+  function countNodes(nodes) {
+    return Array.isArray(nodes) ? nodes.length : 0;
+  }
+
+  /**
+   * Compute average node radius (best-effort).
+   * If getRadius throws, treat that node as radius 0.
+   * @param {any[]} nodes
+   * @param {(d:any)=>number} getRadius
+   */
+  function computeAverageRadius(nodes, getRadius) {
+    const arr = Array.isArray(nodes) ? nodes : [];
+
+    const radii = arr.map((d) => {
+      try {
+        return Number(getRadius(d) || 0) || 0;
+      } catch {
+        return 0;
+      }
+    });
+
+    return Math.max(1, mean(radii));
+  }
+
+  /** @param {any[]} links */
+  function countLinkTypes(links) {
+    const out = { include: 0, use: 0, call: 0, extends: 0, default: 0 };
+    const arr = Array.isArray(links) ? links : [];
+
+    for (const l of arr) {
+      const t = String(l?.type || "default");
+      if (Object.prototype.hasOwnProperty.call(out, t)) out[t]++;
+      else out.default++;
+    }
+
+    return out;
+  }
+
+  /**
+   * Structural ratio = how many edges are "include" compared to total edges.
+   * This nudges the layout slightly denser for directory/include-heavy graphs.
+   */
+  function computeStructuralRatio(nodeCount, links, typeCounts) {
+    const L = Array.isArray(links) ? links.length : 0;
+    if (nodeCount <= 0) return 0;
+    return typeCounts.include / Math.max(1, L);
+  }
+
+  /**
+   * Compress spacing as graphs grow.
+   * - small graphs: larger spacing
+   * - large graphs: tighter spacing
+   */
+  function computeNodeFactor(nodeCount) {
+    if (nodeCount <= 0) return 1;
+    return 1 / Math.max(0.7, Math.log10(nodeCount + 10));
+  }
+
+  function computeBaseLinkDistance({ rAvg, nFactor, structuralRatio, scale }) {
+    const raw = (10 + rAvg * 2.2) * nFactor * (1.15 - 0.35 * structuralRatio) * scale;
+
+    return clamp(
+      raw,
+      CODE_STRUCTURE_CONFIG.clamps.linkDistanceMin,
+      CODE_STRUCTURE_CONFIG.clamps.linkDistanceMax
+    );
+  }
+
+  function computeChargeBase({ rAvg, nodeCount, scale }) {
+    // Repulsion magnitude: bigger nodes & more nodes => more repulsion, but log-limited.
+    const raw = (rAvg * 7.5 + 22 * Math.log(nodeCount + 1)) * scale;
+
+    // chargeBase is negative (repulsion). We clamp by absolute magnitude.
+    const abs = clamp(
+      raw,
+      Math.abs(CODE_STRUCTURE_CONFIG.clamps.chargeMax),
+      Math.abs(CODE_STRUCTURE_CONFIG.clamps.chargeMin)
+    );
+
+    return -abs;
+  }
+
+  function computeChargeDistanceMin({ rAvg }) {
+    return clamp(
+      rAvg * 0.8,
+      CODE_STRUCTURE_CONFIG.clamps.chargeDistanceMinMin,
+      CODE_STRUCTURE_CONFIG.clamps.chargeDistanceMinMax
+    );
+  }
+
+  function computeChargeDistanceMax({ rAvg, scale }) {
+    return clamp(
+      (rAvg * 14 + 220) * scale,
+      CODE_STRUCTURE_CONFIG.clamps.chargeDistanceMaxMin,
+      CODE_STRUCTURE_CONFIG.clamps.chargeDistanceMaxMax
+    );
+  }
+
+  function makeLinkDistanceFn(baseLinkDistance) {
+    return (l) => {
+      const t = String(l?.type || "default");
+      const mul =
+        CODE_STRUCTURE_CONFIG.typeWeights.linkDistanceMul[t] ??
+        CODE_STRUCTURE_CONFIG.typeWeights.linkDistanceMul.default;
+
+      return clamp(
+        baseLinkDistance * mul,
+        CODE_STRUCTURE_CONFIG.clamps.linkDistanceMin,
+        CODE_STRUCTURE_CONFIG.clamps.linkDistanceMax * 3
+      );
+    };
+  }
+
+  function makeLinkStrengthFn() {
+    return (l) => {
+      const t = String(l?.type || "default");
+      return (
+        CODE_STRUCTURE_CONFIG.typeWeights.linkStrength[t] ??
+        CODE_STRUCTURE_CONFIG.typeWeights.linkStrength.default
+      );
+    };
+  }
+
+  function makeChargeStrengthFn(chargeBase) {
+    return (d) => {
+      const kind = String(d?.kind || "default");
+      const w =
+        CODE_STRUCTURE_CONFIG.typeWeights.chargeByKind[kind] ??
+        CODE_STRUCTURE_CONFIG.typeWeights.chargeByKind.default;
+
+      return clamp(
+        chargeBase * w,
+        CODE_STRUCTURE_CONFIG.clamps.chargeMin,
+        CODE_STRUCTURE_CONFIG.clamps.chargeMax
+      );
+    };
+  }
+
+  function computeCenterStrength(nodeCount) {
+    // Slightly stronger centering for large graphs so they don't drift forever.
+    const raw = 0.02 + (nodeCount > 200 ? 0.02 : 0);
+    return clamp(raw, 0.02, 0.06);
+  }
+
   /**
    * Derive force-layout defaults from the current graph.
    *
@@ -269,92 +458,35 @@ import { ensureTooltip, showTooltip, moveTooltip, hideTooltip } from "./codeGrap
    * @param {Array<object>} nodes Normalized node objects.
    * @param {Array<object>} links Normalized link objects.
    * @param {(d: object) => number} getRadius Function that returns a node radius.
-   * @returns {{
-   *  baseLinkDistance: number,
-   *  chargeDistanceMin: number,
-   *  chargeDistanceMax: number,
-   *  linkDistanceFn: (l: object) => number,
-   *  linkStrengthFn: (l: object) => number,
-   *  chargeStrengthFn: (d: object) => number,
-   *  centerStrength: number,
-   * }} Derived defaults.
    */
   function deriveLayoutDefaults(nodes, links, getRadius) {
-    const N = Array.isArray(nodes) ? nodes.length : 0;
+    const nodeCount = countNodes(nodes);
 
     // Radius stats (drives spacing & collision feel)
-    const radii = (nodes || []).map((d) => {
-      try { return getRadius(d) || 0; } catch { return 0; }
-    });
-    const rAvg = Math.max(1, mean(radii));
+    const rAvg = computeAverageRadius(nodes, getRadius);
 
     // Edge type distribution (helps pick slightly denser defaults for structural-heavy graphs)
-    const counts = { include: 0, use: 0, call: 0, extends: 0, default: 0 };
-    for (const l of (links || [])) {
-      const t = String(l?.type || "default");
-      if (t in counts) counts[t]++; else counts.default++;
-    }
-    const structuralRatio = N > 0 ? (counts.include / Math.max(1, (links || []).length)) : 0;
+    const typeCounts = countLinkTypes(links);
+    const structuralRatio = computeStructuralRatio(nodeCount, links, typeCounts);
 
-    // Base distance grows with node size, but compresses as N grows.
-    // This keeps small graphs readable and large graphs compact.
-    const nFactor = N > 0 ? (1 / Math.max(0.7, Math.log10(N + 10))) : 1;
+    // Base distance grows with node size, but compresses as graphs grow.
+    const nFactor = computeNodeFactor(nodeCount);
     const scale = CODE_STRUCTURE_CONFIG.layoutScale;
 
-    const baseLinkDistance = clamp(
-      (10 + rAvg * 2.2) * nFactor * (1.15 - 0.35 * structuralRatio) * scale,
-      CODE_STRUCTURE_CONFIG.clamps.linkDistanceMin,
-      CODE_STRUCTURE_CONFIG.clamps.linkDistanceMax
-    );
+    const baseLinkDistance = computeBaseLinkDistance({ rAvg, nFactor, structuralRatio, scale });
+    const chargeBase = computeChargeBase({ rAvg, nodeCount, scale });
 
-    // Repulsion magnitude: bigger nodes & more nodes => more repulsion, but log-limited.
-    const chargeBase = -clamp(
-      (rAvg * 7.5 + 22 * Math.log(N + 1)) * scale,
-      Math.abs(CODE_STRUCTURE_CONFIG.clamps.chargeMax),
-      Math.abs(CODE_STRUCTURE_CONFIG.clamps.chargeMin)
-    );
-
-    // Distance bounds for charge: keep local separation strong, long-range weak.
-    const chargeDistanceMin = clamp(
-      rAvg * 0.8,
-      CODE_STRUCTURE_CONFIG.clamps.chargeDistanceMinMin,
-      CODE_STRUCTURE_CONFIG.clamps.chargeDistanceMinMax
-    );
-
-    const chargeDistanceMax = clamp(
-      (rAvg * 14 + 220) * scale,
-      CODE_STRUCTURE_CONFIG.clamps.chargeDistanceMaxMin,
-      CODE_STRUCTURE_CONFIG.clamps.chargeDistanceMaxMax
-    );
-
-    const linkDistanceFn = (l) => {
-      const t = String(l?.type || "default");
-      const mul = CODE_STRUCTURE_CONFIG.typeWeights.linkDistanceMul[t] ?? CODE_STRUCTURE_CONFIG.typeWeights.linkDistanceMul.default;
-      return clamp(baseLinkDistance * mul, CODE_STRUCTURE_CONFIG.clamps.linkDistanceMin, CODE_STRUCTURE_CONFIG.clamps.linkDistanceMax * 3);
-    };
-
-    const linkStrengthFn = (l) => {
-      const t = String(l?.type || "default");
-      return CODE_STRUCTURE_CONFIG.typeWeights.linkStrength[t] ?? CODE_STRUCTURE_CONFIG.typeWeights.linkStrength.default;
-    };
-
-    const chargeStrengthFn = (d) => {
-      const kind = String(d?.kind || "default");
-      const w = CODE_STRUCTURE_CONFIG.typeWeights.chargeByKind[kind] ?? CODE_STRUCTURE_CONFIG.typeWeights.chargeByKind.default;
-      return clamp(chargeBase * w, CODE_STRUCTURE_CONFIG.clamps.chargeMin, CODE_STRUCTURE_CONFIG.clamps.chargeMax);
-    };
-
-    // Slightly stronger centering for large graphs so they don't drift forever.
-    const centerStrength = clamp(0.02 + (N > 200 ? 0.02 : 0), 0.02, 0.06);
+    const chargeDistanceMin = computeChargeDistanceMin({ rAvg });
+    const chargeDistanceMax = computeChargeDistanceMax({ rAvg, scale });
 
     return {
       baseLinkDistance,
       chargeDistanceMin,
       chargeDistanceMax,
-      linkDistanceFn,
-      linkStrengthFn,
-      chargeStrengthFn,
-      centerStrength,
+      linkDistanceFn: makeLinkDistanceFn(baseLinkDistance),
+      linkStrengthFn: makeLinkStrengthFn(),
+      chargeStrengthFn: makeChargeStrengthFn(chargeBase),
+      centerStrength: computeCenterStrength(nodeCount),
     };
   }
 
@@ -453,62 +585,151 @@ export function initcodeStructureChart(svgId, metrics, opts = {}) {
      * @returns {string} Safe HTML string
      */
     function buildTooltipHtml(d) {
-      const esc = CodeGraphUI?.escapeHtml ? CodeGraphUI.escapeHtml : (s) => String(s ?? "");
+      // Escaper is optional (dev/early-load scenarios). Fallback keeps the tooltip usable.
+      const esc = getTooltipEscaper();
 
-      const lines =
-        d?.__displayLines ??
-        d?.lines ??
-        d?.loc ??
-        d?.size ??
-        "?";
+      // The renderer prefers normalized display fields when available.
+      const lines = getTooltipLines(d);
+      const cx = getTooltipComplexity(d);
 
-      const cx =
-        d?.__displayComplexity ??
-        d?.complexity ??
-        d?.cc ??
-        ((d?._inbound || 0) + (d?._outbound || 0)) ??
-        "?";
+      const display = getTooltipDisplayLabel(d, esc);
+      const typeLabel = getTooltipTypeLabel(d, esc);
 
-      const display = d?.__displayLabel ? esc(d.__displayLabel) : esc(d?.id);
-      const t = esc(d?.type || d?.kind || "file");
-
-      const fnDiag = (() => {
-        if (!isFunctionNode(d)) return "";
-
-        const inCalls = toSafeInt(d?._inCalls);
-        const outCalls = toSafeInt(d?._outCalls);
-        const exported = d?.exported === true ? "yes" : "no";
-        const unused = d?._unused === true ? "yes" : "no";
-
-        const callers = Array.isArray(d?._callers) ? d._callers : [];
-        const callees = Array.isArray(d?._callees) ? d._callees : [];
-
-        const topCallers = callers.slice(0, 5).map((x) => esc(String(x))).join(", ");
-        const topCallees = callees.slice(0, 5).map((x) => esc(String(x))).join(", ");
-
-        const callersHtml = callers.length
-          ? `<br><small>Top callers: ${topCallers}</small>`
-          : `<br><small>Top callers: (none)</small>`;
-
-        const calleesHtml = callees.length
-          ? `<br><small>Top callees: ${topCallees}</small>`
-          : `<br><small>Top callees: (none)</small>`;
-
-        return (
-          `<br><small>Calls: in ${esc(String(inCalls))} / out ${esc(String(outCalls))}</small>` +
-          `<br><small>Exported: ${esc(exported)} | Unused: ${esc(unused)}</small>` +
-          callersHtml +
-          calleesHtml
-        );
-      })();
+      // Function diagnostics are only shown for function nodes.
+      const fnDiagHtml = isFunctionNode(d) ? buildFunctionDiagHtml(d, esc) : "";
 
       return (
         `<strong>${display}</strong>` +
-        `<br><small>Type: ${t}</small>` +
+        `<br><small>Type: ${typeLabel}</small>` +
         `<br><small>Lines: ${esc(lines)}</small>` +
         `<br><small>Complexity: ${esc(cx)}</small>` +
-        fnDiag
+        fnDiagHtml
       );
+    }
+
+    /**
+     * Resolve the tooltip HTML escaper.
+     * - Prefer CodeGraphUI.escapeHtml (sanitizes HTML-sensitive characters)
+     * - Fallback: stringify only (still safe-ish because we never inject raw HTML from user input here)
+     */
+    function getTooltipEscaper() {
+      return CodeGraphUI?.escapeHtml
+        ? CodeGraphUI.escapeHtml
+        : (s) => String(s ?? "");
+    }
+
+    /** Pick the first non-null/undefined value. */
+    function pickFirst(...vals) {
+      for (const v of vals) {
+        if (v !== null && v !== undefined) return v;
+      }
+      return undefined;
+    }
+
+    /** Prefer normalized display lines, then common legacy fields, then '?'. */
+    function getTooltipLines(d) {
+      return pickFirst(d?.__displayLines, d?.lines, d?.loc, d?.size, "?");
+    }
+
+    /**
+     * Prefer normalized display complexity, then node fields.
+     * Final fallback: degree proxy (inbound+outbound) so we show *something*.
+     */
+    function getTooltipComplexity(d) {
+      const degreeProxy = (d?._inbound || 0) + (d?._outbound || 0);
+      return pickFirst(d?.__displayComplexity, d?.complexity, d?.cc, degreeProxy, "?");
+    }
+
+    /** Prefer a human label when present; else use the id. */
+    function getTooltipDisplayLabel(d, esc) {
+      const label = d?.__displayLabel ? d.__displayLabel : d?.id;
+      return esc(label);
+    }
+
+    /** Type label: prefer `type`, fallback to `kind`, then 'file'. */
+    function getTooltipTypeLabel(d, esc) {
+      return esc(d?.type || d?.kind || "file");
+    }
+
+    /**
+     * Build the extra tooltip lines for function nodes.
+     *
+     * Keep this presentation-only and low-complexity:
+     * - extract values in tiny helpers
+     * - build the HTML in a predictable order
+     */
+    function buildFunctionDiagHtml(d, esc) {
+      const calls = readFunctionCallStats(d);
+      const flags = readFunctionFlags(d);
+
+      return (
+        buildCallsLine(calls, esc) +
+        buildFlagsLine(flags, esc) +
+        buildTopListLine("Top callers", calls.callers, esc) +
+        buildTopListLine("Top callees", calls.callees, esc)
+      );
+    }
+
+    /**
+     * Extract in/out call counts and caller/callee lists.
+     * @param {any} d
+     */
+    function readFunctionCallStats(d) {
+      return {
+        inCalls: toSafeInt(d?._inCalls),
+        outCalls: toSafeInt(d?._outCalls),
+        callers: Array.isArray(d?._callers) ? d._callers : [],
+        callees: Array.isArray(d?._callees) ? d._callees : [],
+      };
+    }
+
+    /**
+     * Extract function flags that the backend may provide.
+     * @param {any} d
+     */
+    function readFunctionFlags(d) {
+      return {
+        exported: d?.exported === true,
+        unused: d?._unused === true,
+      };
+    }
+
+    /**
+     * Render call count line.
+     * @param {{inCalls:number,outCalls:number}} calls
+     * @param {(s:any)=>string} esc
+     */
+    function buildCallsLine(calls, esc) {
+      return `<br><small>Calls: in ${esc(String(calls.inCalls))} / out ${esc(String(calls.outCalls))}</small>`;
+    }
+
+    /**
+     * Render exported/unused flags line.
+     * @param {{exported:boolean,unused:boolean}} flags
+     * @param {(s:any)=>string} esc
+     */
+    function buildFlagsLine(flags, esc) {
+      const exported = flags.exported ? "yes" : "no";
+      const unused = flags.unused ? "yes" : "no";
+      return `<br><small>Exported: ${esc(exported)} | Unused: ${esc(unused)}</small>`;
+    }
+
+    /**
+     * Render a short list line (max 5 ids). Falls back to '(none)'.
+     * @param {string} label
+     * @param {any[]} arr
+     * @param {(s:any)=>string} esc
+     */
+    function buildTopListLine(label, arr, esc) {
+      const items = Array.isArray(arr) ? arr : [];
+      if (!items.length) return `<br><small>${esc(label)}: (none)</small>`;
+
+      const top = items
+        .slice(0, 5)
+        .map((x) => esc(String(x)))
+        .join(", ");
+
+      return `<br><small>${esc(label)}: ${top}</small>`;
     }
 
     function selectAndResetSvg(svgId) {
@@ -564,36 +785,121 @@ export function initcodeStructureChart(svgId, metrics, opts = {}) {
       return CodeGraphData.normalize(metrics);
     }
 
-    function validateGroupsOnce(nodes) {
-      try {
-        const diag = CodeGraphData?.validateNodeGroups?.(nodes, NODE_GROUP_COLORS) || { missing: [], unknown: [] };
-        const missing = diag.missing || [];
-        const unknown = diag.unknown || [];
+  /**
+   * Validate that nodes provide the canonical `group` field the renderer expects.
+   *
+   * Why this exists:
+   * - The renderer uses `node.group` to pick stable colors/clusters.
+   * - During refactors it’s easy to forget to emit `group` in the backend.
+   *
+   * Behavior:
+   * - Runs best-effort diagnostics via CodeGraphData.validateNodeGroups.
+   * - Shows a single alert (deduped by alertOnce) with a few examples.
+   * - Fail-soft: never throws.
+   *
+   * @param {any[]} nodes
+   */
+  function validateGroupsOnce(nodes) {
+    try {
+      const diag = getGroupDiagnostics(nodes);
+      if (!diag) return;
 
-        if (!missing.length && !unknown.length) return;
+      // Nothing to report -> keep quiet.
+      if (diag.missing.length === 0 && diag.unknown.length === 0) return;
 
-        const exMissing = missing.slice(0, 3)
-          .map((n) => `- ${String(n?.id || n?.file || "(unknown)")}`)
-          .join("\n");
-
-        const exUnknown = unknown.slice(0, 3)
-          .map((n) => `- ${String(n?.group || "?")}  @  ${String(n?.id || n?.file || "(unknown)")}`)
-          .join("\n");
-
-        const parts = [];
-        if (missing.length) parts.push("Fehlende node.group (max 3 Beispiele):\n" + (exMissing || "- (keine Beispiele)"));
-        if (unknown.length) parts.push("Unbekannte node.group (max 3 Beispiele):\n" + (exUnknown || "- (keine Beispiele)"));
-
-        alertOnce(
-          "missing-or-unknown-node-group",
-          "NodeAnalyzer: Node-Farben/Cluster benötigen node.group im JSON.\n" +
-          "Fix: Stelle sicher, dass das Backend `group` setzt (root/dir/code/doc/data/image).\n\n" +
-          parts.join("\n\n")
-        );
-      } catch {
-        // ignore
-      }
+      alertOnce("missing-or-unknown-node-group", buildGroupAlertMessage(diag));
+    } catch {
+      // ignore
     }
+  }
+
+  /**
+   * Run group diagnostics (best-effort) and normalize the result shape.
+   * @param {any[]} nodes
+   * @returns {{missing:any[], unknown:any[]}|null}
+   */
+  function getGroupDiagnostics(nodes) {
+    const validate = CodeGraphData?.validateNodeGroups;
+    if (typeof validate !== "function") return null;
+
+    const raw = validate(nodes, NODE_GROUP_COLORS) || Object.create(null);
+    return {
+      missing: Array.isArray(raw.missing) ? raw.missing : [],
+      unknown: Array.isArray(raw.unknown) ? raw.unknown : [],
+    };
+  }
+
+  /**
+   * Build a user-facing alert message from diagnostics.
+   * @param {{missing:any[], unknown:any[]}} diag
+   */
+  function buildGroupAlertMessage(diag) {
+    const parts = [];
+
+    const missingExamples = formatMissingExamples(diag.missing);
+    const unknownExamples = formatUnknownExamples(diag.unknown);
+
+    if (diag.missing.length) {
+      parts.push("Fehlende node.group (max 3 Beispiele):\n" + missingExamples);
+    }
+
+    if (diag.unknown.length) {
+      parts.push("Unbekannte node.group (max 3 Beispiele):\n" + unknownExamples);
+    }
+
+    return (
+      "NodeAnalyzer: Node-Farben/Cluster benötigen node.group im JSON.\n" +
+      "Fix: Stelle sicher, dass das Backend `group` setzt (root/dir/code/doc/data/image).\n\n" +
+      parts.join("\n\n")
+    );
+  }
+
+  /**
+   * @param {any[]} missing
+   * @returns {string}
+   */
+  function formatMissingExamples(missing) {
+    const ids = (Array.isArray(missing) ? missing : [])
+      .slice(0, 3)
+      .map((n) => String(n?.id || n?.file || "(unknown)"));
+
+    return ids.length ? ids.map((x) => `- ${x}`).join("\n") : "- (keine Beispiele)";
+  }
+
+/**
+ * @param {any[]} unknown
+ * @returns {string}
+ */
+function formatUnknownExamples(unknown) {
+  const list = takeFirstUnknown(unknown, 3);
+  if (list.length === 0) return "- (keine Beispiele)";
+
+  const lines = list.map(formatUnknownExampleLine);
+  return lines.join("\n");
+}
+
+  /** Ensure we operate on a small normalized array. */
+  function takeFirstUnknown(arr, max) {
+    if (!Array.isArray(arr)) return [];
+    return arr.slice(0, max);
+  }
+
+  /** Format a single unknown-group example line. */
+  function formatUnknownExampleLine(n) {
+    const group = readUnknownGroup(n);
+    const id = readUnknownId(n);
+    return `- ${group}  @  ${id}`;
+  }
+
+  /** @param {any} n */
+  function readUnknownGroup(n) {
+    return String(n?.group || "?");
+  }
+
+  /** @param {any} n */
+  function readUnknownId(n) {
+    return String(n?.id || n?.file || "(unknown)");
+  }
 
     function initLiveChangeState(nodes) {
       for (const n of nodes) {
@@ -603,50 +909,96 @@ export function initcodeStructureChart(svgId, metrics, opts = {}) {
       }
     }
 
+    // -----------------------------------------------------------------
+    // Encoders: pure helpers (kept outside makeEncoders to keep cc low)
+    // -----------------------------------------------------------------
+
+    /** @param {any} d @returns {number|null} */
+    function readComplexityScore01(d) {
+      const v = d?._complexityScore;
+      if (typeof v !== "number" || !Number.isFinite(v)) return null;
+      return clamp(v, 0, 1);
+    }
+
+    /** @param {any} d @returns {number} */
+    function readRawComplexity(d) {
+      return Number(d?.complexity ?? d?.cc ?? 0) || 0;
+    }
+
+    /** @param {number} rawCx @returns {number} */
+    function normalizeRawComplexity01(rawCx) {
+      // Log-normalize so values remain stable across project sizes.
+      return clamp(Math.log1p(Math.max(0, rawCx)) / Math.log1p(25), 0, 1);
+    }
+
+    /** @param {any} d @param {number|null} score01 @returns {number} */
+    function toneFactorForFunctionNode(d, score01) {
+      const cx01 = (score01 != null) ? score01 : normalizeRawComplexity01(readRawComplexity(d));
+      // Higher factor => darker.
+      return 0.85 + 0.40 * cx01;
+    }
+
+    /** @param {number} score01 @returns {number} */
+    function toneFactorForNonFunctionNode(score01) {
+      return 0.90 + 0.30 * score01;
+    }
+
+    /**
+     * Compute the final fill color for a node.
+     * - Base hue comes from semantic group/kind.
+     * - Tone encodes complexity (functions) or score (others).
+     * @param {any} d
+     * @returns {string}
+     */
+    function computeNodeColor(d) {
+      const base = getBaseNodeColor(d);
+      const score01 = readComplexityScore01(d);
+
+      if (isFunctionNode(d)) {
+        return adjustColorIntensity(base, toneFactorForFunctionNode(d, score01));
+      }
+
+      if (score01 == null) return base;
+      return adjustColorIntensity(base, toneFactorForNonFunctionNode(score01));
+    }
+
+    /** @param {any} d @returns {number} */
+    function computeNodeRadius(d) {
+      const s = Number(d?._lineScore) || 0;
+      const minR = 6;
+      const maxR = 26;
+      return minR + (maxR - minR) * s;
+    }
+
+    /** @param {any} d @returns {string} */
+    function computeNodeStroke(d) {
+      if (d?._changed) return "#ff3b30";
+      if (isFunctionNode(d) && d?.exported === true) return EXPORTED_FUNCTION_COLOR;
+      return "rgba(0,0,0,0.08)";
+    }
+
+    /** @param {any} d @returns {number} */
+    function computeNodeStrokeWidth(d) {
+      if (d?._changed) return 3;
+      if (isFunctionNode(d) && d?.exported === true) return 3;
+      return 1;
+    }
+
     function makeEncoders(nodes) {
-      const getNodeColor = (d) => {
-        const base = getBaseNodeColor(d);
+      // Encoders = kleine, reine Funktionen, die aus Node-Daten Visual-Parameter ableiten.
+      // Die eigentliche Logik liegt absichtlich in Helpern (oben), damit diese Funktion
+      // nur noch die „API“ zusammensetzt und keine hohe CC erzeugt.
 
-        // Prefer normalized score if present (0..1). Fallback to raw complexity.
-        const score = (typeof d?._complexityScore === "number" && Number.isFinite(d._complexityScore))
-          ? clamp(d._complexityScore, 0, 1)
-          : null;
+      // `nodes` ist aktuell nur für zukünftige Encoder/Skalen vorgesehen.
+      // Wir behalten den Parameter, damit Call-Sites stabil bleiben.
+      void nodes;
 
-        // Function nodes: encode complexity as tone (lighter -> simple, darker -> complex)
-        if (isFunctionNode(d)) {
-          const rawCx = Number(d?.complexity ?? d?.cc ?? 0) || 0;
-          const cxNorm = (score != null)
-            ? score
-            : clamp(Math.log1p(rawCx) / Math.log1p(25), 0, 1);
-          const factor = 0.85 + 0.40 * cxNorm;
-          return adjustColorIntensity(base, factor);
-        }
-
-        if (score == null) return base;
-        const factor = 0.90 + 0.30 * score;
-        return adjustColorIntensity(base, factor);
+      return {
+        getNodeColor: computeNodeColor,
+        getRadius: computeNodeRadius,
+        getNodeStroke: computeNodeStroke,
+        getNodeStrokeWidth: computeNodeStrokeWidth
       };
-
-      const getRadius = (d) => {
-        const s = d._lineScore ?? 0;
-        const minR = 6;
-        const maxR = 26;
-        return minR + (maxR - minR) * s;
-      };
-
-      const getNodeStroke = (d) => {
-        if (d?._changed) return "#ff3b30";
-        if (isFunctionNode(d) && d?.exported === true) return EXPORTED_FUNCTION_COLOR;
-        return "rgba(0,0,0,0.08)";
-      };
-
-      const getNodeStrokeWidth = (d) => {
-        if (d?._changed) return 3;
-        if (isFunctionNode(d) && d?.exported === true) return 3;
-        return 1;
-      };
-
-      return { getNodeColor, getRadius, getNodeStroke, getNodeStrokeWidth };
     }
 
     function createSimulation(nodes, links, width, height, getRadius) {
@@ -762,36 +1114,144 @@ export function initcodeStructureChart(svgId, metrics, opts = {}) {
         .text((d) => d.__displayLabel || (d.id || "").split("/").pop());
     }
 
+    // -------------------------------------------------------------------
+    // Repaint helpers (keep render pipeline readable + low cyclomatic complexity)
+    // -------------------------------------------------------------------
+
+    /** @param {any} d */
+    function nodeFill(d, enc) {
+      return enc.getNodeColor(d);
+    }
+
+    /** @param {any} d */
+    function nodeStroke(d, enc) {
+      return enc.getNodeStroke(d);
+    }
+
+    /** @param {any} d */
+    function nodeStrokeWidth(d, enc) {
+      return enc.getNodeStrokeWidth(d);
+    }
+
+    /** @param {any} d */
+    function nodeOpacity(d) {
+      return isUnusedFunctionNode(d) ? 0.25 : 1;
+    }
+
+    /** @param {any} d */
+    function nodeDashArray(d) {
+      return isUnusedFunctionNode(d) ? "4,3" : null;
+    }
+
+    /** @param {any} d */
+    function ringRadius(d, enc) {
+      return enc.getRadius(d) + 4;
+    }
+
+    /** @param {any} d */
+    function ringStroke(d) {
+      if (!isFunctionNode(d)) return "transparent";
+      return (d?.exported === true) ? EXPORTED_FUNCTION_COLOR : "rgba(0,0,0,0.25)";
+    }
+
+    /** @param {any} d */
+    function ringOpacity(d) {
+      return isFunctionNode(d) ? 0.95 : 0;
+    }
+
+    /** @param {any} d */
+    function ringWidth(d) {
+      return isFunctionNode(d) ? getFunctionRingWidth(d) : 0;
+    }
+
+    /** @param {any} d */
+    function badgeDisplay(d) {
+      return isUnusedFunctionNode(d) ? "block" : "none";
+    }
+
+    /**
+     * Badge offset from node center.
+     * We keep a minimum so the badge doesn't overlap the node center on small radii.
+     * @param {any} d
+     * @param {any} enc
+     */
+    function badgeOffset(d, enc) {
+      return Math.max(8, enc.getRadius(d) * 0.7);
+    }
+
+    /** @param {any} d */
+    function badgeOpacity(d) {
+      return isUnusedFunctionNode(d) ? 0.95 : 0;
+    }
+
+    /** @param {any} d */
+    function labelWeight(d) {
+      return d?._changed ? "700" : "400";
+    }
+
+    /** @param {any} d */
+    function labelFill(d) {
+      return d?._changed ? "#111" : "#444";
+    }
+
+    /** @param {any} d */
+    function labelOpacity(d) {
+      return isUnusedFunctionNode(d) ? 0.35 : 1;
+    }
+
+    function repaintNodeBodies(nodeBodySel, enc) {
+      nodeBodySel
+        .attr("fill", (d) => nodeFill(d, enc))
+        .attr("stroke", (d) => nodeStroke(d, enc))
+        .attr("stroke-width", (d) => nodeStrokeWidth(d, enc))
+        .style("opacity", (d) => nodeOpacity(d))
+        .style("stroke-dasharray", (d) => nodeDashArray(d));
+    }
+
+    function repaintFunctionRings(fnRingSel, enc) {
+      fnRingSel
+        .attr("r", (d) => ringRadius(d, enc))
+        .attr("stroke", (d) => ringStroke(d))
+        .attr("stroke-opacity", (d) => ringOpacity(d))
+        .attr("stroke-width", (d) => ringWidth(d));
+    }
+
+    function repaintUnusedBadges(unusedBadgeSel, enc) {
+      unusedBadgeSel
+        .style("display", (d) => badgeDisplay(d))
+        .attr("x", (d) => badgeOffset(d, enc))
+        .attr("y", (d) => -badgeOffset(d, enc))
+        .style("stroke", "#fff")
+        .style("fill", "#111")
+        .style("opacity", (d) => badgeOpacity(d));
+    }
+
+    function repaintLabels(labelSel) {
+      labelSel
+        .style("font-weight", (d) => labelWeight(d))
+        .style("fill", (d) => labelFill(d))
+        .style("opacity", (d) => labelOpacity(d));
+    }
+
+    /**
+     * Build a repaint function that re-applies dynamic styles.
+     *
+     * Why this exists:
+     * - Some node styles depend on state that can change over time
+     *   (e.g. `_changed`, `_unused`, exported flag updates).
+     * - Keeping repaint logic in one place avoids scattering style updates
+     *   across many event handlers.
+     */
     function makeRepaint({ nodes, enc, nodeBodySel, fnRingSel, unusedBadgeSel, labelSel }) {
+      // `nodes` is currently not needed for repaint, but we keep the signature
+      // stable because callers already pass it.
+      void nodes;
+
       return function repaintNodes() {
-        nodeBodySel
-          .attr("fill", (d) => enc.getNodeColor(d))
-          .attr("stroke", (d) => enc.getNodeStroke(d))
-          .attr("stroke-width", (d) => enc.getNodeStrokeWidth(d))
-          .style("opacity", (d) => (isUnusedFunctionNode(d) ? 0.25 : 1))
-          .style("stroke-dasharray", (d) => (isUnusedFunctionNode(d) ? "4,3" : null));
-
-        fnRingSel
-          .attr("r", (d) => enc.getRadius(d) + 4)
-          .attr("stroke", (d) => {
-            if (!isFunctionNode(d)) return "transparent";
-            return (d?.exported === true) ? EXPORTED_FUNCTION_COLOR : "rgba(0,0,0,0.25)";
-          })
-          .attr("stroke-opacity", (d) => (isFunctionNode(d) ? 0.95 : 0))
-          .attr("stroke-width", (d) => (isFunctionNode(d) ? getFunctionRingWidth(d) : 0));
-
-        unusedBadgeSel
-          .style("display", (d) => (isUnusedFunctionNode(d) ? "block" : "none"))
-          .attr("x", (d) => Math.max(8, enc.getRadius(d) * 0.7))
-          .attr("y", (d) => -Math.max(8, enc.getRadius(d) * 0.7))
-          .style("stroke", "#fff")
-          .style("fill", "#111")
-          .style("opacity", (d) => (isUnusedFunctionNode(d) ? 0.95 : 0));
-
-        labelSel
-          .style("font-weight", (d) => (d._changed ? "700" : "400"))
-          .style("fill", (d) => (d._changed ? "#111" : "#444"))
-          .style("opacity", (d) => (isUnusedFunctionNode(d) ? 0.35 : 1));
+        repaintNodeBodies(nodeBodySel, enc);
+        repaintFunctionRings(fnRingSel, enc);
+        repaintUnusedBadges(unusedBadgeSel, enc);
+        repaintLabels(labelSel);
       };
     }
 
@@ -851,80 +1311,289 @@ export function initcodeStructureChart(svgId, metrics, opts = {}) {
       }
     }
 
+    // -------------------------------------------------------------------
+    // Change-mark controller (host hook)
+    // -------------------------------------------------------------------
+
+/**
+ * Normalize a “changed node” event.
+ * Accepts either a string id or an event-ish object.
+ *
+ * @param {string|{id?:string, ev?:string, at?:string}|null|undefined} evtOrId
+ * @returns {{id:string, ev:string, at:string}|null}
+ */
+function normalizeChangeEvent(evtOrId) {
+  const evt = toChangeEventObject(evtOrId);
+  const id = readChangeId(evt);
+  if (!id) return null;
+
+  return {
+    id,
+    ev: readChangeEv(evt),
+    at: readChangeAt(evt)
+  };
+}
+
+/**
+ * Coerce input into an event-ish object.
+ * @param {any} evtOrId
+ * @returns {{id?:any, ev?:any, at?:any}|null}
+ */
+function toChangeEventObject(evtOrId) {
+  if (evtOrId == null) return null;
+  return (typeof evtOrId === "string") ? { id: evtOrId } : evtOrId;
+}
+
+/**
+ * Read + normalize the node id.
+ * @param {{id?:any}|null} evt
+ * @returns {string}
+ */
+function readChangeId(evt) {
+  return String(evt?.id || "").trim();
+}
+
+/**
+ * Read + normalize the change event name.
+ * @param {{ev?:any}|null} evt
+ * @returns {string}
+ */
+function readChangeEv(evt) {
+  return String(evt?.ev || "change");
+}
+
+/**
+ * Read + normalize the timestamp string.
+ * @param {{at?:any}|null} evt
+ * @returns {string}
+ */
+function readChangeAt(evt) {
+  return String(evt?.at || "");
+}
+
+    /**
+     * Single-selection model: clear `_changed` on all nodes.
+     * @param {any[]} list
+     */
+    function clearChangedFlags(list) {
+      for (const n of list) {
+        if (n && typeof n === "object") n._changed = false;
+      }
+    }
+
+    /**
+     * Best-effort lookup by exact node id.
+     * @param {any[]} list
+     * @param {string} id
+     * @returns {any|null}
+     */
+    function findNodeById(list, id) {
+      const wanted = String(id || "");
+      if (!wanted) return null;
+      return list.find((n) => n && n.id === wanted) || null;
+    }
+
+    /**
+     * Apply the change metadata to a node.
+     * @param {any} node
+     * @param {{ev:string, at:string}} evt
+     */
+    function applyChange(node, evt) {
+      node._changed = true;
+      node._lastChangeEv = evt.ev;
+      node._lastChangedAt = evt.at;
+    }
+
+    /**
+     * Controller factory: returns a small API that the host app can call.
+     *
+     * Goals:
+     * - Keep `markChanged()` tiny (low CC)
+     * - Keep helpers pure/isolated for easy testing
+     */
     function createMarkChangedController(nodes, repaintNodes) {
+      const list = Array.isArray(nodes) ? nodes : [];
+      const repaint = (typeof repaintNodes === "function") ? repaintNodes : () => {};
+
       /**
        * Mark exactly one node as "changed".
        *
        * Used by the host app when it receives file change events (watch/SSE).
-       * This replaces the old global `window.graphMarkChanged(...)` hook.
+       * Replaces the old global `window.graphMarkChanged(...)` hook.
        *
-       * @param {string|{id:string, ev?:string, at?:string}} evtOrId
+       * @param {string|{id?:string, ev?:string, at?:string}} evtOrId
        */
       function markChanged(evtOrId) {
-        try {
-          const evt = (typeof evtOrId === "string") ? { id: evtOrId } : (evtOrId || {});
-          const id = String(evt?.id || "").trim();
-          if (!id) return;
+        const evt = normalizeChangeEvent(evtOrId);
+        if (!evt) return;
 
-          for (const n of nodes) n._changed = false;
+        clearChangedFlags(list);
 
-          const hit = nodes.find((n) => n.id === id);
-          if (!hit) return;
+        const hit = findNodeById(list, evt.id);
+        if (!hit) return;
 
-          hit._changed = true;
-          hit._lastChangeEv = String(evt?.ev || "change");
-          hit._lastChangedAt = String(evt?.at || "");
-
-          repaintNodes();
-        } catch (e) {
-          console.warn("markChanged failed:", e);
-        }
+        applyChange(hit, evt);
+        repaint();
       }
 
       return { markChanged };
     }
 
-    function wireLegendAndFilters({ svgId, metrics, nodes, links, nodeShapeSel, labelSel, linkSel, unusedBadgeSel }) {
-      // -----------------------------------------------------------------
-      // Legacy UI (kept for backward compatibility)
-      // -----------------------------------------------------------------
-      // These two functions existed before the unified Legend&Filter panel.
-      // Keeping them allows older pages / CSS to continue working while we
-      // migrate logic into `codeGraph/ui.js`.
-      CodeGraphUI.setupGraphFilters(svgId, metrics, nodeShapeSel, linkSel);
-      CodeGraphUI.buildGraphLegend(svgId, nodes, links, NODE_GROUP_COLORS, LINK_TYPE_COLORS, clusterColor);
+  // -------------------------------------------------------------------
+  // Legend + Filter wiring
+  // -------------------------------------------------------------------
 
-      // -----------------------------------------------------------------
-      // Unified Legend & Filter Panel (event-driven)
-      // -----------------------------------------------------------------
-      // Contract:
-      // - The panel owns filter state and emits `codegraph:filters-changed`.
-      // - The wiring that applies state to selections lives in CodeGraphUI
-      //   (NOT in the renderer) so re-renders don’t leak listeners.
-      //
-      // Renderer responsibility: provide the D3 selections that should be
-      // shown/hidden.
+  /** @param {any} fn */
+  function isFn(fn) {
+    return typeof fn === "function";
+  }
 
-    if (CodeGraphUI?.buildLegendFilterPanel) {
+  /**
+   * Narrow value to a plain object.
+   * Keeps downstream code branch-free (small CC).
+   * @param {any} v
+   * @returns {Record<string, any>|null}
+   */
+  function asPlainObject(v) {
+    return (v && typeof v === "object") ? /** @type {any} */ (v) : null;
+  }
+
+  /**
+   * Read and normalize `svgId` from a context object.
+   * @param {Record<string, any>|null} obj
+   * @returns {string}
+   */
+  function readSvgId(obj) {
+    return String(obj?.svgId || "").trim();
+  }
+
+  /**
+   * Read an array field or return an empty array.
+   * @param {any} v
+   * @returns {any[]}
+   */
+  function asArray(v) {
+    return Array.isArray(v) ? v : [];
+  }
+
+  /**
+   * Read the `sels` container or return an empty object.
+   * @param {any} v
+   * @returns {Record<string, any>}
+   */
+  function asObjectOrEmpty(v) {
+    return (v && typeof v === "object") ? /** @type {any} */ (v) : Object.create(null);
+  }
+
+  /**
+   * Normalize the incoming legend/filter wiring context.
+   *
+   * Why it exists:
+   * - The renderer can be called from different pages.
+   * - We want one safe shape for wiring without spreading null-checks.
+   *
+   * The function is intentionally tiny:
+   * - coerce to object
+   * - read svgId (required)
+   * - normalize nodes/links arrays
+   * - normalize selections container
+   *
+   * @param {any} ctx
+   * @returns {{svgId:string, metrics:any, nodes:any[], links:any[], sels:any}|null}
+   */
+  function normalizeLegendFilterCtx(ctx) {
+    const obj = asPlainObject(ctx);
+    if (!obj) return null;
+
+    const svgId = readSvgId(obj);
+    if (!svgId) return null;
+
+    return {
+      svgId,
+      metrics: obj.metrics,
+      nodes: asArray(obj.nodes),
+      links: asArray(obj.links),
+      sels: asObjectOrEmpty(obj.sels),
+    };
+  }
+
+  /**
+   * Extract only the D3 selections we care about.
+   * @param {any} sels
+   */
+  function pickLegendSelections(sels) {
+    return {
+      nodeShapeSel: sels?.nodeShapeSel,
+      labelSel: sels?.labelSel,
+      linkSel: sels?.linkSel,
+      unusedBadgeSel: sels?.unusedBadgeSel
+    };
+  }
+
+  /**
+   * Legacy (pre-panel) UI. Still called for backward compatibility.
+   */
+  function renderLegacyLegendAndFilters(svgId, metrics, nodes, links, sels) {
+    if (isFn(CodeGraphUI?.setupGraphFilters)) {
+      CodeGraphUI.setupGraphFilters(svgId, metrics, sels.nodeShapeSel, sels.linkSel);
+    }
+
+    if (isFn(CodeGraphUI?.buildGraphLegend)) {
+      CodeGraphUI.buildGraphLegend(
+        svgId,
+        nodes,
+        links,
+        NODE_GROUP_COLORS,
+        LINK_TYPE_COLORS,
+        clusterColor
+      );
+    }
+  }
+
+  /**
+   * Unified legend/filter panel.
+   */
+  function renderLegendFilterPanel(svgId, nodes, links) {
+    if (isFn(CodeGraphUI?.buildLegendFilterPanel)) {
       CodeGraphUI.buildLegendFilterPanel(svgId, nodes, links);
     }
+  }
 
-      // NEW: central wiring that listens once per svgId and applies filters.
-      // This is the missing piece when changing the panel did not update the graph.
-    if (CodeGraphUI?.attachLegendFilterWiring) {
-      CodeGraphUI.attachLegendFilterWiring(svgId, nodes, links, {
-          nodeShapeSel,
-          labelSel,
-          linkSel,
-          unusedBadgeSel
-        });
-      } else {
-        // Fail-soft in case ui.js hasn’t been updated yet.
-        console.warn(
-          "CodeGraphUI.attachLegendFilterWiring missing. Update public/assets/js/codeGraph/ui.js to enable live filter repaint."
-        );
-      }
+  /**
+   * Attach the filter -> D3 selection wiring (live show/hide).
+   */
+  function attachLegendFilterWiringOrWarn(svgId, nodes, links, sels) {
+    if (!isFn(CodeGraphUI?.attachLegendFilterWiring)) {
+      console.warn(
+        "CodeGraphUI.attachLegendFilterWiring missing. Update public/assets/js/codeGraph/ui.js to enable live filter repaint."
+      );
+      return;
     }
+
+    CodeGraphUI.attachLegendFilterWiring(svgId, nodes, links, sels);
+  }
+
+  /**
+   * Wire legend + filters for this graph instance.
+   *
+   * This function stays intentionally small:
+   * - normalize input
+   * - render legacy UI bits
+   * - render the panel
+   * - attach the live wiring
+   *
+   * @param {any} ctx
+   */
+  function wireLegendAndFilters(ctx) {
+    const c = normalizeLegendFilterCtx(ctx);
+    if (!c) return;
+
+    const sels = pickLegendSelections(c.sels);
+
+    renderLegacyLegendAndFilters(c.svgId, c.metrics, c.nodes, c.links, sels);
+    renderLegendFilterPanel(c.svgId, c.nodes, c.links);
+    attachLegendFilterWiringOrWarn(c.svgId, c.nodes, c.links, sels);
+  }
 
     // -------------------------------------------------------------------
     // 1) Setup SVG
@@ -1001,16 +1670,21 @@ export function initcodeStructureChart(svgId, metrics, opts = {}) {
     // -------------------------------------------------------------------
     // 7) UI integrations (legend/filter + event wiring)
     // -------------------------------------------------------------------
-    wireLegendAndFilters({
+    // Bundle UI wiring inputs once (keeps the call-site compact).
+    const legendFilterCtx = {
       svgId,
       metrics,
       nodes,
       links,
-      nodeShapeSel,
-      labelSel,
-      linkSel,
-      unusedBadgeSel
-    });
+      sels: {
+        nodeShapeSel,
+        labelSel,
+        linkSel,
+        unusedBadgeSel
+      }
+    };
+
+    wireLegendAndFilters(legendFilterCtx);
 
     // -------------------------------------------------------------------
     // 8) Controller helpers (no window bridge)
@@ -1086,31 +1760,77 @@ export function initcodeStructureChart(svgId, metrics, opts = {}) {
      Dev-time assertions
   ====================================================================== */
 
-  /**
-   * Dev-time assertion helper.
-   * Verifies required global modules are loaded in the correct order.
-   */
-  function assertDeps() {
-    const missing = [];
+/**
+ * Dev-time assertion helper.
+ *
+ * Ziel:
+ * - In Dev/Refactor-Phasen früh sichtbar machen, wenn Module fehlen.
+ * - Keine harten Errors werfen (fail-soft), nur warnen.
+ *
+ * Implementation:
+ * - Datengetrieben: Liste von Checks (Label + Predicate)
+ * - Minimale Kontrolllogik (keine lange if-Kette)
+ */
+function assertDeps() {
+  const missing = collectMissingDeps();
+  warnMissingDeps(missing);
+}
 
-    // D3 is still loaded as a global script.
-    if (!window.d3) missing.push("d3 (global)");
+/**
+ * Sammle fehlende Dependencies (Best-Effort).
+ * @returns {string[]}
+ */
+function collectMissingDeps() {
+  /** @type {string[]} */
+  const missing = [];
 
-    if (!CodeGraphData?.normalize) missing.push("CodeGraphData.normalize");
-    if (!CodeGraphInteractions?.attachNodeInteractions) missing.push("CodeGraphInteractions.attachNodeInteractions");
-    if (!CodeGraphInteractions?.drawHighlight) missing.push("CodeGraphInteractions.drawHighlight");
-    if (!CodeGraphInteractions?.anchorHighlight) missing.push("CodeGraphInteractions.anchorHighlight");
-
-    if (!CodeGraphHulls?.renderTypeHulls) missing.push("CodeGraphHulls.renderTypeHulls");
-
-    if (!CodeGraphUI?.escapeHtml) missing.push("CodeGraphUI.escapeHtml");
-    if (!CodeGraphUI?.attachLegendFilterWiring) missing.push("CodeGraphUI.attachLegendFilterWiring");
-
-
-    if (missing.length) {
-      console.warn("d3_codeStructure.js missing required deps:\n- " + missing.join("\n- "));
-    }
+  for (const check of getDepChecks()) {
+    if (!check || typeof check.isPresent !== "function") continue;
+    if (check.isPresent()) continue;
+    missing.push(String(check.label || "(unknown dep)"));
   }
+
+  return missing;
+}
+
+/**
+ * Definiert, was diese Datei zum Laufen braucht.
+ * Jede Zeile ist: { label, isPresent() }
+ */
+function getDepChecks() {
+  return [
+    // D3 ist weiterhin als globales Script geladen.
+    { label: "d3 (global)", isPresent: () => Boolean(window.d3) },
+
+    // Normalizer/Data
+    { label: "CodeGraphData.normalize", isPresent: () => Boolean(CodeGraphData?.normalize) },
+
+    // Interactions
+    { label: "CodeGraphInteractions.attachNodeInteractions", isPresent: () => Boolean(CodeGraphInteractions?.attachNodeInteractions) },
+    { label: "CodeGraphInteractions.drawHighlight", isPresent: () => Boolean(CodeGraphInteractions?.drawHighlight) },
+    { label: "CodeGraphInteractions.anchorHighlight", isPresent: () => Boolean(CodeGraphInteractions?.anchorHighlight) },
+
+    // Hulls
+    { label: "CodeGraphHulls.renderTypeHulls", isPresent: () => Boolean(CodeGraphHulls?.renderTypeHulls) },
+
+    // UI
+    { label: "CodeGraphUI.escapeHtml", isPresent: () => Boolean(CodeGraphUI?.escapeHtml) },
+    { label: "CodeGraphUI.attachLegendFilterWiring", isPresent: () => Boolean(CodeGraphUI?.attachLegendFilterWiring) },
+  ];
+}
+
+/**
+ * Warn-Logger (nur wenn wirklich etwas fehlt).
+ * @param {string[]} missing
+ */
+function warnMissingDeps(missing) {
+  if (!Array.isArray(missing) || missing.length === 0) return;
+
+  console.warn(
+    "d3_codeStructure.js missing required deps:\n- " +
+    missing.map(String).join("\n- ")
+  );
+}
 
   // Run once at module init (dev help).
   assertDeps();

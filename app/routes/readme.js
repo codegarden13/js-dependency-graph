@@ -21,46 +21,101 @@ import fs from "node:fs";
 
 const router = express.Router();
 
-router.get("/readme", (req, res) => {
+router.get("/readme", handleReadmeRequest);
+
+function sendText(res, status, message) {
+  return res.status(status).send(String(message || ""));
+}
+
+function sendJson(res, status, body) {
+  return res.status(status).json(body);
+}
+
+function requireQueryParam(req, res, key, errorMessage) {
+  const value = getQueryString(req, key);
+  if (value) return value;
+  sendText(res, 400, errorMessage);
+  return "";
+}
+
+function withRouteErrors(res, fn) {
   try {
-    const fileRelRaw = getQueryString(req, "file");
-    if (!fileRelRaw) return res.status(400).send("file query param missing");
-
-    const fileRel = normalizeRel(fileRelRaw);
-
-    // 1) Special-case: global help doc (NodeAnalyzer UI help)
-    const helpResult = tryServeAnalyzerHelp(fileRel);
-    if (helpResult) {
-      return res.json(helpResult);
-    }
-
-    // 2) Resolve target project root (analyzed app)
-    const appId = getQueryString(req, "appId");
-    if (!appId) return res.status(400).send("appId query param missing");
-
-    const appRootAbs = resolveAppRootAbs(appId);
-    if (!appRootAbs) return res.status(400).send(`Unknown appId: ${appId}`);
-
-    // Resolve absolute and enforce project boundary
-    const fileAbs = resolveInsideRootOrNull(appRootAbs, fileRel);
-    if (!fileAbs) return res.status(400).send("file outside target app rootDir");
-
-    // 3) Validate target exists
-    if (!fs.existsSync(fileAbs)) return res.status(404).send("file not found");
-
-    // 4) Walk upward for README
-    const found = findNearestReadme({ appRootAbs, fileAbs });
-    if (!found) return res.json({ found: false });
-
-    return res.json({
-      found: true,
-      readmePath: toRelPosix(appRootAbs, found.readmeAbs),
-      markdown: found.markdown
-    });
+    fn();
   } catch (err) {
-    return res.status(500).send(err?.stack || String(err));
+    sendText(res, 500, err?.stack || String(err));
   }
-});
+}
+
+function requireNormalizedFileRel(req, res) {
+  const raw = requireQueryParam(req, res, "file", "file query param missing");
+  if (!raw) return "";
+  return normalizeRel(raw);
+}
+
+function tryReplyWithAnalyzerHelp(res, fileRel) {
+  const helpResult = tryServeAnalyzerHelp(fileRel);
+  if (!helpResult) return false;
+  sendJson(res, 200, helpResult);
+  return true;
+}
+
+function requireAppRootAbs(req, res) {
+  const appId = requireQueryParam(req, res, "appId", "appId query param missing");
+  if (!appId) return "";
+
+  const appRootAbs = resolveAppRootAbs(appId);
+  if (appRootAbs) return appRootAbs;
+
+  sendText(res, 400, `Unknown appId: ${appId}`);
+  return "";
+}
+
+function requireFileAbsInsideRoot(res, appRootAbs, fileRel) {
+  const fileAbs = resolveInsideRootOrNull(appRootAbs, fileRel);
+  if (fileAbs) return fileAbs;
+  sendText(res, 400, "file outside target app rootDir");
+  return "";
+}
+
+function requireExistingPath(res, absPath) {
+  if (fs.existsSync(absPath)) return true;
+  sendText(res, 404, "file not found");
+  return false;
+}
+
+function replyWithNearestReadme(res, appRootAbs, fileAbs) {
+  const found = findNearestReadme({ appRootAbs, fileAbs });
+
+  if (!found) {
+    sendJson(res, 200, { found: false });
+    return;
+  }
+
+  sendJson(res, 200, {
+    found: true,
+    readmePath: toRelPosix(appRootAbs, found.readmeAbs),
+    markdown: found.markdown
+  });
+}
+
+function handleReadmeRequest(req, res) {
+  return withRouteErrors(res, () => {
+    const fileRel = requireNormalizedFileRel(req, res);
+    if (!fileRel) return;
+
+    if (tryReplyWithAnalyzerHelp(res, fileRel)) return;
+
+    const appRootAbs = requireAppRootAbs(req, res);
+    if (!appRootAbs) return;
+
+    const fileAbs = requireFileAbsInsideRoot(res, appRootAbs, fileRel);
+    if (!fileAbs) return;
+
+    if (!requireExistingPath(res, fileAbs)) return;
+
+    replyWithNearestReadme(res, appRootAbs, fileAbs);
+  });
+}
 
 export default router;
 

@@ -118,46 +118,70 @@ function countLines(code) {
   return String(code).split(/\r\n|\r|\n/).length;
 }
 
+function stripUtf8Bom(src) {
+  // Strip UTF-8 BOM if present
+  return String(src || "").replace(/^\ufeff?/, "");
+}
+
+function removeShebangLine(src) {
+  const s = String(src || "");
+  if (!s.startsWith("#!")) return s;
+
+  // Remove the first line (shebang) and keep the rest.
+  return s.split(/\r\n|\r|\n/).slice(1).join("\n");
+}
+
+function readLeadingJSDocBlock(src) {
+  // Prefer a leading block comment (/** ... */) at the top of file.
+  const m = String(src || "").match(/^\s*\/\*\*([\s\S]*?)\*\//);
+  if (!m || !m[1]) return "";
+
+  return normalizeJSDocBody(m[1]);
+}
+
+function normalizeJSDocBody(body) {
+  return String(body || "")
+    .split("\n")
+    .map((l) => String(l).replace(/^\s*\*\s?/, "").trimEnd())
+    .join("\n")
+    .trim();
+}
+
+function readLeadingLineCommentBlock(src) {
+  // Fallback: leading // comment block (consecutive lines)
+  const lines = String(src || "").split(/\r\n|\r|\n/);
+  const buf = collectLeadingLineComments(lines);
+  return buf.join("\n").trim();
+}
+
+function collectLeadingLineComments(lines) {
+  const buf = [];
+
+  for (const line of lines || []) {
+    const t = String(line || "").trim();
+
+    if (!t) {
+      if (buf.length) break; // stop once started and hit blank
+      continue;
+    }
+
+    if (!t.startsWith("//")) break;
+
+    buf.push(t.replace(/^\/\/\s?/, ""));
+  }
+
+  return buf;
+}
+
 function extractHeaderComment(code) {
   const src = String(code || "");
+  if (!src) return "";
 
-  // ---------------------------------------------------------------------
-  // Prefer a leading block comment (/** ... */) at the top of file.
-  // ---------------------------------------------------------------------
-  const trimmed = src.replace(/^\ufeff?/, ""); // strip UTF-8 BOM if present
+  const base = stripUtf8Bom(src);
+  const text = removeShebangLine(base);
 
-  // Allow a shebang first line.
-  const afterShebang = trimmed.startsWith("#!")
-    ? trimmed.split(/\r\n|\r|\n/).slice(1).join("\n")
-    : trimmed;
+  const block = readLeadingJSDocBlock(text);
+  if (block) return block;
 
-  const m = afterShebang.match(/^\s*\/\*\*([\s\S]*?)\*\//);
-  if (m && m[1]) {
-    return m[1]
-      .split("\n")
-      .map((l) => l.replace(/^\s*\*\s?/, "").trimEnd())
-      .join("\n")
-      .trim();
-  }
-
-  // ---------------------------------------------------------------------
-  // Fallback: leading // comment block (consecutive lines)
-  // ---------------------------------------------------------------------
-  const lines = afterShebang.split(/\r\n|\r|\n/);
-  const buf = [];
-  for (const line of lines) {
-    const t = line.trim();
-    if (!t) {
-      // Stop once we have started collecting and hit a blank line.
-      if (buf.length) break;
-      continue;
-    }
-    if (t.startsWith("//")) {
-      buf.push(t.replace(/^\/\/\s?/, ""));
-      continue;
-    }
-    break;
-  }
-
-  return buf.join("\n").trim();
+  return readLeadingLineCommentBlock(text);
 }
