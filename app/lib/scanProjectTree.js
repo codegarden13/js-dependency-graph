@@ -77,6 +77,84 @@ function isReadableDirent(d) {
   return d && typeof d.name === "string" && d.name.length > 0;
 }
 
+function requireProjectRootAbs(opts) {
+  const projectRootAbs = String(opts?.projectRootAbs || "");
+  if (!projectRootAbs) throw new Error("scanProjectTree: projectRootAbs is required");
+  return projectRootAbs;
+}
+
+function logScanStart(projectRootAbs, opts) {
+  // Keep this as a separate helper so scanProjectTree stays focused.
+  console.log("────────────────────────────────────────────");
+  console.log("NodeAnalyzer: scanProjectTree START");
+  console.log("Root:", projectRootAbs);
+  console.log("MaxDepth:", opts?.maxDepth ?? 2);
+  console.log("MaxEntriesPerDir:", opts?.maxEntriesPerDir ?? 500);
+  console.log("────────────────────────────────────────────");
+}
+
+function asPlainObject(x) {
+  return x && typeof x === "object" ? x : Object.create(null);
+}
+
+function finiteNumberOr(value, fallback) {
+  return Number.isFinite(value) ? Number(value) : fallback;
+}
+
+function pickFn(obj, key) {
+  const fn = obj && typeof obj[key] === "function" ? obj[key] : null;
+  return fn;
+}
+
+function normalizeIgnoreSet(ignoreDirs) {
+  if (!ignoreDirs) return DEFAULT_IGNORE_NAMES;
+  if (ignoreDirs instanceof Set) return ignoreDirs;
+  return new Set(ignoreDirs);
+}
+
+function normalizeScanOptions(opts, projectRootAbs) {
+  const o = asPlainObject(opts);
+
+  const maxDepth = finiteNumberOr(o.maxDepth, 2);
+  const maxEntriesPerDir = finiteNumberOr(o.maxEntriesPerDir, 500);
+
+  const ignoreSet = normalizeIgnoreSet(o.ignoreDirs);
+
+  const toId = pickFn(o, "toId") || defaultToId;
+  const shouldIncludePath = pickFn(o, "shouldIncludePath");
+  const onDir = pickFn(o, "onDir");
+  const onFile = pickFn(o, "onFile");
+
+  return {
+    projectRootAbs,
+    maxDepth,
+    maxEntriesPerDir,
+    ignoreSet,
+    toId,
+    shouldIncludePath,
+    onDir,
+    onFile
+  };
+}
+
+function makeShouldSkipName(ignoreSet) {
+  /**
+   * Decide whether a directory entry name should be skipped.
+   * - Skips explicit ignore names (caller-provided + defaults)
+   * - Skips hidden dotfiles/dotdirs by default (e.g. `.DS_Store`)
+   *
+   * Note: Callers can still include hidden paths via `shouldIncludePath` by
+   * providing a custom implementation that returns true.
+   */
+  return function shouldSkipName(name) {
+    const n = String(name || "");
+    if (!n) return true;
+    if (ignoreSet && ignoreSet.has(n)) return true;
+    if (n.startsWith(".")) return true;
+    return false;
+  };
+}
+
 /**
  * @typedef {Object} ScanOptions
  * @property {string} projectRootAbs Absolute path of the project root.
@@ -94,124 +172,127 @@ function isReadableDirent(d) {
  * @param {ScanOptions} opts
  */
 export function scanProjectTree(opts) {
-  const projectRootAbs = String(opts?.projectRootAbs || "");
-  if (!projectRootAbs) {
-    throw new Error("scanProjectTree: projectRootAbs is required");
-  }
+  const projectRootAbs = requireProjectRootAbs(opts);
+  logScanStart(projectRootAbs, opts);
 
+  const cfg = normalizeScanOptions(opts, projectRootAbs);
 
-  console.log("────────────────────────────────────────────");
-  console.log("NodeAnalyzer: scanProjectTree START");
-  console.log("Root:", projectRootAbs);
-  console.log("MaxDepth:", opts?.maxDepth ?? 2);
-  console.log("MaxEntriesPerDir:", opts?.maxEntriesPerDir ?? 500);
-  console.log("────────────────────────────────────────────");
+  const maxDepth = cfg.maxDepth;
+  const maxEntriesPerDir = cfg.maxEntriesPerDir;
+  const toId = cfg.toId;
+  const shouldIncludePath = cfg.shouldIncludePath;
+  const onDir = cfg.onDir;
+  const onFile = cfg.onFile;
 
-
-  const maxDepth = Number.isFinite(opts?.maxDepth) ? Number(opts.maxDepth) : 2;
-  const maxEntriesPerDir = Number.isFinite(opts?.maxEntriesPerDir)
-    ? Number(opts.maxEntriesPerDir)
-    : 500;
-
-  const ignoreSet = opts?.ignoreDirs
-    ? (opts.ignoreDirs instanceof Set ? opts.ignoreDirs : new Set(opts.ignoreDirs))
-    : DEFAULT_IGNORE_NAMES;
-
-  const toId = typeof opts?.toId === "function" ? opts.toId : defaultToId;
-  const shouldIncludePath =
-    typeof opts?.shouldIncludePath === "function" ? opts.shouldIncludePath : null;
-
-  const onDir = typeof opts?.onDir === "function" ? opts.onDir : null;
-  const onFile = typeof opts?.onFile === "function" ? opts.onFile : null;
+  const shouldSkipName = makeShouldSkipName(cfg.ignoreSet);
 
   /** @type {Set<string>} */
   const visitedDirs = new Set();
 
-  /**
-   * Decide whether a directory entry name should be skipped.
-   * - Skips explicit ignore names (caller-provided + defaults)
-   * - Skips hidden dotfiles/dotdirs by default (e.g. `.DS_Store`)
-   *
-   * Note: Callers can still include hidden paths via `shouldIncludePath` by
-   * providing a custom implementation that returns true. This helper is the
-   * baseline policy.
-   *
-   * @param {string} name
-   * @returns {boolean}
-   */
-  function shouldSkipName(name) {
-    const n = String(name || "");
-    if (!n) return true;
-    if (ignoreSet && ignoreSet.has(n)) return true;
-    if (n.startsWith(".")) return true;
-    return false;
+  function walkDir(absDir, parentMeta, depth) {
+    if (!shouldProcessDir(absDir)) return;
+
+    const dirMeta = buildDirMeta(absDir, depth);
+    if (onDir) onDir(dirMeta, parentMeta);
+
+    if (!canDescend(depth)) return;
+
+    const entries = readDirEntriesSorted(absDir);
+    if (!entries.length) return;
+
+    forEachCapped(entries, maxEntriesPerDir, (ent) => {
+      processDirent(ent, absDir, dirMeta, depth);
+    });
   }
 
-  function walkDir(absDir, parentMeta, depth) {
+  function shouldProcessDir(absDir) {
     const base = path.basename(absDir);
-    if (shouldSkipName(base)) return;
+    if (shouldSkipName(base)) return false;
 
     // Prevent infinite recursion via symlink cycles by tracking real paths.
     const real = safeRealpath(absDir);
-    if (real && visitedDirs.has(real)) return;
-    if (real) visitedDirs.add(real);
+    if (!real) return true;
 
-    const dirMeta = { abs: absDir, id: toId(projectRootAbs, absDir), depth };
-    if (onDir) onDir(dirMeta, parentMeta);
+    if (visitedDirs.has(real)) return false;
+    visitedDirs.add(real);
+    return true;
+  }
 
-    if (depth >= maxDepth) return;
+  function buildDirMeta(absDir, depth) {
+    return { abs: absDir, id: toId(projectRootAbs, absDir), depth };
+  }
 
+  function canDescend(depth) {
+    return depth < maxDepth;
+  }
+
+  function readDirEntriesSorted(absDir) {
     let entries;
     try {
       entries = fs.readdirSync(absDir, { withFileTypes: true });
     } catch {
+      return [];
+    }
+
+    // Deterministic ordering + defensive filtering
+    return entries
+      .filter(isReadableDirent)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  function forEachCapped(items, limit, fn) {
+    let count = 0;
+    for (const it of items) {
+      if (count >= limit) break;
+      count++;
+      fn(it);
+    }
+  }
+
+  function processDirent(ent, absDir, dirMeta, depth) {
+    if (shouldSkipName(ent.name)) return;
+
+    const childAbs = path.join(absDir, ent.name);
+    if (shouldIncludePath && !shouldIncludePath(childAbs)) return;
+
+    if (ent.isDirectory()) {
+      walkDir(childAbs, dirMeta, depth + 1);
       return;
     }
 
-    // deterministic ordering
-    entries = entries.filter(d => d && typeof d.name === "string" && d.name.length > 0).sort((a, b) => a.name.localeCompare(b.name));
+    if (ent.isFile()) {
+      emitFileIfEnabled(childAbs, ent.name, dirMeta, depth + 1);
+      return;
+    }
 
+    if (ent.isSymbolicLink()) {
+      processSymlink(childAbs, ent.name, dirMeta, depth + 1);
+    }
+  }
 
+  function emitFileIfEnabled(childAbs, name, dirMeta, depth) {
+    if (!onFile) return;
+    const fileMeta = buildFileMeta(childAbs, name, depth);
+    onFile(fileMeta, dirMeta);
+  }
 
+  function buildFileMeta(childAbs, name, depth) {
+    const ext = path.extname(name).toLowerCase();
+    return { abs: childAbs, id: toId(projectRootAbs, childAbs), depth, ext };
+  }
 
+  // If symlink, try to follow if it points to a dir/file, but stay safe.
+  function processSymlink(childAbs, name, dirMeta, depth) {
+    const st = safeStat(childAbs);
+    if (!st) return;
 
+    if (st.isDirectory()) {
+      walkDir(childAbs, dirMeta, depth);
+      return;
+    }
 
-    let count = 0;
-    for (const ent of entries) {
-      if (count >= maxEntriesPerDir) break;
-      count++;
-
-      if (shouldSkipName(ent.name)) continue;
-
-      const childAbs = path.join(absDir, ent.name);
-      if (shouldIncludePath && !shouldIncludePath(childAbs)) continue;
-
-      if (ent.isDirectory()) {
-        walkDir(childAbs, dirMeta, depth + 1);
-        continue;
-      }
-
-      if (ent.isFile()) {
-        if (!onFile) continue;
-        const ext = path.extname(ent.name).toLowerCase();
-        const fileMeta = { abs: childAbs, id: toId(projectRootAbs, childAbs), depth: depth + 1, ext };
-        onFile(fileMeta, dirMeta);
-        continue;
-      }
-
-      // If symlink, try to follow if it points to a dir/file, but stay safe.
-      if (ent.isSymbolicLink()) {
-        const st = safeStat(childAbs);
-        if (!st) continue;
-        if (st.isDirectory()) {
-          walkDir(childAbs, dirMeta, depth + 1);
-        } else if (st.isFile()) {
-          if (!onFile) continue;
-          const ext = path.extname(ent.name).toLowerCase();
-          const fileMeta = { abs: childAbs, id: toId(projectRootAbs, childAbs), depth: depth + 1, ext };
-          onFile(fileMeta, dirMeta);
-        }
-      }
+    if (st.isFile()) {
+      emitFileIfEnabled(childAbs, name, dirMeta, depth);
     }
   }
 
