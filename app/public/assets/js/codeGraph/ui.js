@@ -36,212 +36,7 @@
     return window.__codeGraphLegendFilterState;
   }
 
-  /**
-   * Retrieves the stored state object for a given svgId.
-   * Returns a new default state if none exists.
-   * @param {string} svgId
-   * @returns {object}
-   */
-  function getState(svgId) {
-    const store = getLegendFilterStore();
-    if (!store[svgId]) {
-      store[svgId] = {
-        preset: "architecture",
-        showNodeGroups: {
-          root: true,
-          dir: true,
-          code: true,
-          doc: true,
-          data: true,
-          image: true,
-        },
-        visibleLinkTypes: {
-          include: true,
-          use: true,
-          call: true,
-          extends: true,
-        },
-        showFilesDirs: true,
-        showFunctions: true,
-        showUnused: false,
-        unusedOnly: false,
-        showVisitorHandlers: true,
-        hideIsolates: false,
-      };
-    }
-    return store[svgId];
-  }
 
-
-    /**
-   * Build tooltip HTML for a node (pure string builder).
-   * Rendering/positioning is handled by window.CodeStructure.tooltip.
-   * @param {object} d Node datum.
-   * @returns {string} HTML string.
-   */
-  function buildTooltipHtml(d) {
-    const esc = window.CodeGraphUI.escapeHtml;
-
-    const lines =
-      d.__displayLines ??
-      d.lines ??
-      d.loc ??
-      d.size ??
-      "?";
-
-    const cx =
-      d.__displayComplexity ??
-      d.complexity ??
-      d.cc ??
-      ((d._inbound || 0) + (d._outbound || 0)) ??
-      "?";
-
-    const display = d.__displayLabel ? esc(d.__displayLabel) : esc(d.id);
-    const t = esc(d.type || "file");
-
-    const line = Number.isFinite(d.__startLine) ? d.__startLine : null;
-    const file = d.__fileFromId || d.file || "";
-    const url = buildNodeSourceUrl(d);
-
-    const atLineHtml = (line && url)
-      ? `<br><small>At: <a href="${esc(url)}" target="_blank" rel="noopener">${esc(String(file))}:${esc(String(line))}</a></small>`
-      : (line ? `<br><small>At: ${esc(String(file))}:${esc(String(line))}</small>` : "");
-
-    const idHtml = (d.__displayLabel && d.id && d.__displayLabel !== d.id)
-      ? `<br><small>ID: ${esc(String(d.id))}</small>`
-      : "";
-
-    const fnDiag = (() => {
-      if (!isFunctionNode(d)) return "";
-
-      const inCalls = toSafeInt(d?._inCalls);
-      const outCalls = toSafeInt(d?._outCalls);
-      const exported = d?.exported === true ? "yes" : "no";
-      const unused = d?._unused === true ? "yes" : "no";
-
-      const callers = Array.isArray(d?._callers) ? d._callers : [];
-      const callees = Array.isArray(d?._callees) ? d._callees : [];
-
-      const topCallers = callers.slice(0, 5).map((x) => esc(shortIdLabel(x))).join(", ");
-      const topCallees = callees.slice(0, 5).map((x) => esc(shortIdLabel(x))).join(", ");
-
-      const callersHtml = callers.length
-        ? `<br><small>Top callers: ${topCallers}</small>`
-        : `<br><small>Top callers: (none)</small>`;
-
-      const calleesHtml = callees.length
-        ? `<br><small>Top callees: ${topCallees}</small>`
-        : `<br><small>Top callees: (none)</small>`;
-
-      return (
-        `<br><small>Calls: in ${esc(String(inCalls))} / out ${esc(String(outCalls))}</small>` +
-        `<br><small>Exported: ${esc(exported)} | Unused: ${esc(unused)}</small>` +
-        callersHtml +
-        calleesHtml
-      );
-    })();
-
-    return (
-      `<strong>${display}</strong>` +
-      `<br><small>Type: ${t}</small>` +
-      atLineHtml +
-      idHtml +
-      `<br><small>Lines: ${esc(lines)}</small>` +
-      `<br><small>Complexity: ${esc(cx)}</small>` +
-      fnDiag
-    );
-  }
-
-  /**
-   * Build a best-effort URL to open a node at its source location.
-   * Uses the legacy CMS tooling route if available.
-   *
-   * Contract:
-   * - If a node has `__startLine` and a resolvable file path, we create a URL
-   *   including `file`, `highlight`, and `line`.
-   * - If not, returns null.
-   *
-   * @param {object} d Node datum.
-   * @returns {string|null} URL to open the source location, or null.
-   */
-  function buildNodeSourceUrl(d) {
-    try {
-      const file = d?.__fileFromId || d?.file || resolveFile(d);
-      const line = Number.isFinite(d?.__startLine) ? d.__startLine : null;
-      if (!file || !line) return null;
-
-      const base = window.CMS_TOOLS_BASE || "/cms/_tools";
-      const highlightId = encodeURIComponent(String(d?.id || ""));
-      const url = `${base}/viewD3CodeNodes?file=${encodeURIComponent(String(file))}&highlight=${highlightId}&line=${encodeURIComponent(String(line))}`;
-      return url;
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Make a short display label from a node id (best-effort).
-   * @param {string} id Node id.
-   * @returns {string} Short label.
-   */
-  function shortIdLabel(id) {
-    const s = String(id || "");
-    if (!s) return "";
-    // Prefer the last path segment; keep function ids readable.
-    const last = s.split("/").pop() || s;
-    return last;
-  }
-
-
-  /**
-   * Resolve the file path for a node datum (best-effort).
-   * Used by legacy navigation.
-   * @param {object} d Node datum.
-   * @returns {string|null} Resolved file path or null.
-   */
-  function resolveFile(d) {
-    const normalize = (p) => (p ? p.replace(/\\/g, "/") : null);
-
-    if (d?.file) return normalize(d.file);
-    if (typeof d?.id !== "string") return null;
-
-    const id = normalize(d.id);
-    if (!id) return null;
-
-    const lower = id.toLowerCase();
-
-    const looksLikeFile =
-      /\.php$/.test(lower) ||
-      lower.includes("app/") ||
-      lower.includes("cms/") ||
-      lower.includes("public/") ||
-      lower.includes("modules/") ||
-      lower.includes("config/") ||
-      lower.includes("core/");
-
-    return looksLikeFile ? id : null;
-  }
-
-
-  /**
-   * Sets the stored state object for a given svgId.
-   * Performs shallow merge with existing state.
-   * @param {string} svgId
-   * @param {object} state
-   */
-  function setState(svgId, state) {
-    const store = getLegendFilterStore();
-    store[svgId] = Object.assign(getState(svgId), state);
-  }
-
-  /**
-   * Deep clones an object or array.
-   * @param {object|array} obj
-   * @returns {object|array}
-   */
-  function clone(obj) {
-    return JSON.parse(JSON.stringify(obj));
-  }
 
   /**
    * Counts elements in an array that satisfy a predicate.
@@ -673,9 +468,17 @@
     const linkSel = sels?.linkSel;
     const unusedBadgeSel = sels?.unusedBadgeSel;
 
-    if (!nodeShapeSel || !labelSel || !linkSel) {
-      console.warn("CodeGraphUI.attachLegendFilterWiring: missing selections", { svgId, sels });
+    if (!hasRequiredSelections({ nodeShapeSel, labelSel, linkSel })) {
+      warnMissingSelections(svgId, sels);
       return;
+    }
+
+    function hasRequiredSelections({ nodeShapeSel, labelSel, linkSel }) {
+      return Boolean(nodeShapeSel && labelSel && linkSel);
+    }
+
+    function warnMissingSelections(svgId, sels) {
+      console.warn("CodeGraphUI.attachLegendFilterWiring: missing selections", { svgId, sels });
     }
 
     // De-dupe listeners across re-renders.
@@ -699,14 +502,33 @@
 
 
     const onFiltersChanged = (ev) => {
+      const detail = readFilterEventDetail(ev);
+      if (!detail) return;
+      if (!isForThisGraph(detail, id)) return;
+
+      safeApplyFilters(detail.state);
+    };
+
+    function readFilterEventDetail(ev) {
+      // CustomEvent carries payload in `detail`.
+      // Keep this tiny so it is easy to test and reuse.
+      return ev && typeof ev === "object" ? ev.detail : null;
+    }
+
+    function isForThisGraph(detail, expectedSvgId) {
+      // Only react to events for the current svgId.
+      const svgId = String(detail?.svgId || "");
+      return svgId === String(expectedSvgId || "");
+    }
+
+    function safeApplyFilters(state) {
+      // Never allow UI wiring to crash the renderer; failures are non-fatal.
       try {
-        const detail = ev?.detail;
-        if (!detail || String(detail.svgId || "") !== id) return;
-        applyFiltersFromState(detail.state);
+        applyFiltersFromState(state);
       } catch {
         // ignore
       }
-    };
+    }
 
     // Register listener (and remember it for de-dupe)
     try {
@@ -925,16 +747,197 @@
 
   const CodeGraphUI = window.CodeGraphUI;
 
+
+  /**
+     * Make a short display label from a node id (best-effort).
+     * @param {string} id Node id.
+     * @returns {string} Short label.
+     */
   function shortIdLabel(id) {
     const s = String(id || "");
     if (!s) return "";
+    // Prefer the last path segment; keep function ids readable.
     return s.split("/").pop() || s;
   }
 
+  /**
+   * Resolve the file path for a node datum (best-effort).
+   * Used by legacy navigation and the tooltip source-link.
+   */
+  function resolveFile(d) {
+    const normalize = (p) => (p ? String(p).replace(/\\/g, "/") : null);
 
+    if (d?.file) return normalize(d.file);
+    if (typeof d?.id !== "string") return null;
 
+    const id = normalize(d.id);
+    if (!id) return null;
 
- 
+    const lower = id.toLowerCase();
+
+    const looksLikeFile =
+      /\.php$/.test(lower) ||
+      lower.includes("app/") ||
+      lower.includes("cms/") ||
+      lower.includes("public/") ||
+      lower.includes("modules/") ||
+      lower.includes("config/") ||
+      lower.includes("core/");
+
+    return looksLikeFile ? id : null;
+  }
+
+  /**
+   * Build a best-effort URL to open a node at its source location.
+   * Contract:
+   * - Requires `__startLine` and a resolvable file path.
+   * - Returns null if location information is missing.
+   */
+  function buildNodeSourceUrl(d) {
+    try {
+      const file = d?.__fileFromId || d?.file || resolveFile(d);
+      const line = Number.isFinite(d?.__startLine) ? d.__startLine : null;
+      if (!file || !line) return null;
+
+      const base = window.CMS_TOOLS_BASE || "/cms/_tools";
+      const highlightId = encodeURIComponent(String(d?.id || ""));
+
+      return `${base}/viewD3CodeNodes?file=${encodeURIComponent(String(file))}&highlight=${highlightId}&line=${encodeURIComponent(String(line))}`;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Build tooltip HTML for a node (pure string builder).
+   * Rendering/positioning is handled by window.CodeStructure.tooltip.
+   */
+  /**
+   * Build tooltip HTML for a node.
+   *
+   * Responsibilities (kept small + testable):
+   * - pick display values (lines/complexity/label)
+   * - build optional location + id blocks
+   * - append function diagnostics for function nodes
+   */
+  function buildTooltipHtml(d) {
+    const esc = CodeGraphUI.escapeHtml;
+
+    const lines = pickLinesForTooltip(d);
+    const cx = pickComplexityForTooltip(d);
+
+    const display = pickDisplayLabel(d, esc);
+    const typeLabel = esc(String(d?.type || "file"));
+
+    const atLineHtml = buildLocationHtml(d, esc);
+    const idHtml = buildIdAliasHtml(d, esc);
+    const fnDiagHtml = buildFunctionDiagHtml(d, esc);
+
+    return (
+      `<strong>${display}</strong>` +
+      `<br><small>Type: ${typeLabel}</small>` +
+      atLineHtml +
+      idHtml +
+      `<br><small>Lines: ${esc(lines)}</small>` +
+      `<br><small>Complexity: ${esc(cx)}</small>` +
+      fnDiagHtml
+    );
+  }
+
+  function pickLinesForTooltip(d) {
+    return (
+      d?.__displayLines ??
+      d?.lines ??
+      d?.loc ??
+      d?.size ??
+      "?"
+    );
+  }
+
+  function pickComplexityForTooltip(d) {
+    return (
+      d?.__displayComplexity ??
+      d?.complexity ??
+      d?.cc ??
+      safeDegreeComplexityFallback(d) ??
+      "?"
+    );
+  }
+
+  function safeDegreeComplexityFallback(d) {
+    // Keep legacy fallback behavior: use degree when no explicit complexity exists.
+    const inbound = Number(d?._inbound || 0);
+    const outbound = Number(d?._outbound || 0);
+    return inbound + outbound;
+  }
+
+  function pickDisplayLabel(d, esc) {
+    // If we computed a prettier label, use it; otherwise fall back to id.
+    const label = d?.__displayLabel ? d.__displayLabel : d?.id;
+    return esc(String(label || ""));
+  }
+
+  function buildLocationHtml(d, esc) {
+    const line = Number.isFinite(d?.__startLine) ? d.__startLine : null;
+    if (!line) return "";
+
+    const file = String(d?.__fileFromId || d?.file || "");
+    const url = buildNodeSourceUrl(d);
+
+    if (url) {
+      return `<br><small>At: <a href="${esc(url)}" target="_blank" rel="noopener">${esc(file)}:${esc(String(line))}</a></small>`;
+    }
+
+    return `<br><small>At: ${esc(file)}:${esc(String(line))}</small>`;
+  }
+
+  function buildIdAliasHtml(d, esc) {
+    // Only show the full id when we displayed a shortened/aliased label.
+    const hasAlias = Boolean(d?.__displayLabel && d?.id && d.__displayLabel !== d.id);
+    if (!hasAlias) return "";
+    return `<br><small>ID: ${esc(String(d.id))}</small>`;
+  }
+
+  function buildFunctionDiagHtml(d, esc) {
+    if (!CodeGraphUI.isFunctionNode?.(d)) return "";
+
+    const callStats = readCallStats(d);
+    const exported = d?.exported === true ? "yes" : "no";
+    const unused = d?._unused === true ? "yes" : "no";
+
+    const callers = Array.isArray(d?._callers) ? d._callers : [];
+    const callees = Array.isArray(d?._callees) ? d._callees : [];
+
+    const callersHtml = buildTopListHtml("Top callers", callers, esc);
+    const calleesHtml = buildTopListHtml("Top callees", callees, esc);
+
+    return (
+      `<br><small>Calls: in ${esc(String(callStats.inCalls))} / out ${esc(String(callStats.outCalls))}</small>` +
+      `<br><small>Exported: ${esc(exported)} | Unused: ${esc(unused)}</small>` +
+      callersHtml +
+      calleesHtml
+    );
+  }
+
+  function readCallStats(d) {
+    const toInt = CodeGraphUI.toSafeInt || ((x) => (Number.isFinite(Number(x)) ? Math.trunc(Number(x)) : 0));
+    return {
+      inCalls: toInt(d?._inCalls),
+      outCalls: toInt(d?._outCalls)
+    };
+  }
+
+  function buildTopListHtml(label, ids, esc) {
+    const list = Array.isArray(ids) ? ids : [];
+    if (!list.length) return `<br><small>${esc(label)}: (none)</small>`;
+
+    const top = list
+      .slice(0, 5)
+      .map((x) => esc(shortIdLabel(x)))
+      .join(", ");
+
+    return `<br><small>${esc(label)}: ${top}</small>`;
+  }
 
   CodeGraphUI.shortIdLabel = shortIdLabel;
   CodeGraphUI.resolveFile = resolveFile;
@@ -1161,8 +1164,8 @@
             <strong>Node Groups:</strong>
             <div class="d-flex flex-wrap gap-2 mt-1">
               ${nodeGroupKeys.map((key) =>
-                `<div class="badge node-group-chip btn btn-sm btn-outline-secondary" role="button" data-key="${key}" title="${nodeGroupLabels[key]}">${nodeGroupLabels[key]}</div>`
-              ).join("")}
+      `<div class="badge node-group-chip btn btn-sm btn-outline-secondary" role="button" data-key="${key}" title="${nodeGroupLabels[key]}">${nodeGroupLabels[key]}</div>`
+    ).join("")}
             </div>
           </div>
 
@@ -1170,9 +1173,9 @@
             <strong>Link Types:</strong>
             <div class="d-flex flex-wrap gap-2 mt-1">
               ${linkTypeKeys.map((key) => {
-                const count = linkTypeCounts[key] || 0;
-                return `<div class="badge link-type-chip btn btn-sm btn-outline-secondary" role="button" data-key="${key}" title="${linkTypeLabels[key]} (${count})">${linkTypeLabels[key]} (${count})</div>`;
-              }).join("")}
+      const count = linkTypeCounts[key] || 0;
+      return `<div class="badge link-type-chip btn btn-sm btn-outline-secondary" role="button" data-key="${key}" title="${linkTypeLabels[key]} (${count})">${linkTypeLabels[key]} (${count})</div>`;
+    }).join("")}
             </div>
           </div>
 
@@ -1273,28 +1276,56 @@
     // Switches
     container.querySelectorAll("input[type=checkbox]").forEach((input) => {
       input.addEventListener("change", () => {
-        const name = input.name;
-        if (!(name in state)) return;
+        const key = String(input?.name || "").trim();
+        if (!key || !(key in state)) return;
 
-        const checked = input.checked;
+        // Standard case: mirror checkbox -> state boolean
+        const checked = Boolean(input.checked);
 
-        if (name === "unusedOnly") {
-          state.unusedOnly = checked;
-          if (checked) state.showUnused = true;
-        } else if (name === "showUnused") {
-          state.showUnused = checked;
-          if (!checked && state.unusedOnly) {
-            state.unusedOnly = false;
-            const uo = container.querySelector("input[name='unusedOnly']");
-            if (uo) uo.checked = false;
-          }
-        } else {
-          state[name] = checked;
+        // Special coupled toggles live in one place to avoid nested conditionals.
+        if (applyCoupledUnusedToggles({ key, checked, state, container })) {
+          state.preset = "custom";
+          updateUI();
+          return;
         }
 
+        state[key] = checked;
         state.preset = "custom";
         updateUI();
       });
+
+      /**
+       * Handle the only coupled checkbox pair:
+       * - unusedOnly implies showUnused
+       * - turning off showUnused disables unusedOnly
+       *
+       * Returns true if the key was handled here.
+       */
+      function applyCoupledUnusedToggles({ key, checked, state, container }) {
+        if (key !== "unusedOnly" && key !== "showUnused") return false;
+
+        if (key === "unusedOnly") {
+          state.unusedOnly = checked;
+          if (checked) state.showUnused = true;
+          return true;
+        }
+
+        // key === "showUnused"
+        state.showUnused = checked;
+
+        // If user disables "showUnused", "unusedOnly" becomes invalid.
+        if (!checked && state.unusedOnly) {
+          state.unusedOnly = false;
+          syncCheckbox(container, "unusedOnly", false);
+        }
+
+        return true;
+      }
+
+      function syncCheckbox(container, name, checked) {
+        const el = container.querySelector(`input[name='${name}']`);
+        if (el) el.checked = Boolean(checked);
+      }
     });
 
     // Initial sync + emit
@@ -1302,37 +1333,37 @@
   };
 
 
-/* ====================================================================== */
-/* Graph header helpers                                                   */
-/* ====================================================================== */
+  /* ====================================================================== */
+  /* Graph header helpers                                                   */
+  /* ====================================================================== */
 
-/**
- * Update the small graph header above the graph panel.
- *
- * Accepts either `appName` (preferred, human readable) or `appId`.
- *
- * Example output:
- *   "Graph · My App · ƒ 128 · LOC 14,532"
- *
- * @param {{ appName?: string, appId?: string, functions?: number, loc?: number }} info
- */
-CodeGraphUI.updateGraphHeader = function updateGraphHeader(info) {
-  const el = document.getElementById("graphInfoHeader");
-  if (!el) return;
+  /**
+   * Update the small graph header above the graph panel.
+   *
+   * Accepts either `appName` (preferred, human readable) or `appId`.
+   *
+   * Example output:
+   *   "Graph · My App · ƒ 128 · LOC 14,532"
+   *
+   * @param {{ appName?: string, appId?: string, functions?: number, loc?: number }} info
+   */
+  CodeGraphUI.updateGraphHeader = function updateGraphHeader(info) {
+    const el = document.getElementById("graphInfoHeader");
+    if (!el) return;
 
-  const appName = String(info?.appName ?? info?.appId ?? "").trim();//#TODO: name oder id 
-  const fnRaw = Number(info?.functions);
-  const locRaw = Number(info?.loc);
+    const appName = String(info?.appName ?? info?.appId ?? "").trim();//#TODO: name oder id 
+    const fnRaw = Number(info?.functions);
+    const locRaw = Number(info?.loc);
 
-  const fmt = (n) => (Number.isFinite(n) ? Math.round(n).toLocaleString() : "?");
+    const fmt = (n) => (Number.isFinite(n) ? Math.round(n).toLocaleString() : "?");
 
-  const parts = ["Graph"];
-  if (appName) parts.push(appName);
-  if (Number.isFinite(fnRaw)) parts.push(`ƒ ${fmt(fnRaw)}`);
-  if (Number.isFinite(locRaw)) parts.push(`LOC ${fmt(locRaw)}`);
+    const parts = ["Graph"];
+    if (appName) parts.push(appName);
+    if (Number.isFinite(fnRaw)) parts.push(`ƒ ${fmt(fnRaw)}`);
+    if (Number.isFinite(locRaw)) parts.push(`LOC ${fmt(locRaw)}`);
 
-  el.textContent = parts.join(" · ");
-};
+    el.textContent = parts.join(" · ");
+  };
 
 
 })();
@@ -1447,37 +1478,113 @@ CodeGraphUI.updateGraphHeader = function updateGraphHeader(info) {
 
     const statusEmoji = (st) => ({ isolated: "🟥", producer: "🔵", consumer: "🟢", hub: "🟣" }[st] || "");
 
+    /**
+     * Render diagnostics rows into the table body.
+     *
+     * Split into small helpers to keep cyclomatic complexity low:
+     * - read active filters
+     * - filter enriched rows
+     * - sort rows
+     * - build HTML
+     */
     function renderTable() {
-      const statusFilter = root.querySelector('[data-diag-filter="status"]').value;
-      const typeFilter = root.querySelector('[data-diag-filter="type"]').value;
+      const filters = readDiagFilters(root);
+      const filtered = filterDiagRows(enriched, filters);
+      const sorted = sortDiagRows(filtered, sortState);
+      tbody.innerHTML = buildDiagTableBodyHtml(sorted, { truncate, statusEmoji, esc: CodeGraphUI.escapeHtml });
+    }
 
-      let rows = enriched.filter((r) => {
-        if (statusFilter && r.status !== statusFilter) return false;
-        if (typeFilter && r.type !== typeFilter) return false;
-        return true;
-      });
+    function readDiagFilters(rootEl) {
+      return {
+        status: readSelectValue(rootEl, "status"),
+        type: readSelectValue(rootEl, "type")
+      };
+    }
 
-      rows.sort((a, b) => {
-        const col = sortState.column;
-        const av = a[col] ?? -Infinity;
-        const bv = b[col] ?? -Infinity;
-        if (av < bv) return sortState.asc ? -1 : 1;
-        if (av > bv) return sortState.asc ? 1 : -1;
-        return 0;
-      });
+    function readSelectValue(rootEl, key) {
+      const sel = rootEl.querySelector(`[data-diag-filter="${key}"]`);
+      return String(sel?.value || "");
+    }
 
-      tbody.innerHTML = rows.map((r) => `
-        <tr data-node="${CodeGraphUI.escapeHtml(r.id)}">
-          <td title="${CodeGraphUI.escapeHtml(r.id)}">${CodeGraphUI.escapeHtml(truncate(r.id))}</td>
-          <td>${CodeGraphUI.escapeHtml(r.type)}</td>
-          <td>${statusEmoji(r.status)} ${CodeGraphUI.escapeHtml(r.status)}</td>
-          <td>${r.degree}</td>
-          <td>${r.inbound}</td>
-          <td>${r.outbound}</td>
-          <td>${r.complexity ?? "–"}</td>
-          <td>${r.distance}</td>
+    function filterDiagRows(rows, filters) {
+      const statusFilter = String(filters?.status || "");
+      const typeFilter = String(filters?.type || "");
+
+      // Fast path: no filters => return original reference (no copy)
+      if (!statusFilter && !typeFilter) return rows;
+
+      return (rows || []).filter((r) => matchesDiagFilters(r, statusFilter, typeFilter));
+    }
+
+    /**
+     * Check whether a row matches the currently selected filters.
+     *
+     * Design:
+     * - Each filter is optional.
+     * - If a filter value is empty, it does not constrain the result.
+     * - Keep logic flat via tiny field match helper.
+     */
+    function matchesDiagFilters(r, statusFilter, typeFilter) {
+      return (
+        matchesFieldFilter(r, "status", statusFilter) &&
+        matchesFieldFilter(r, "type", typeFilter)
+      );
+    }
+
+    function matchesFieldFilter(row, field, filterValue) {
+      const fv = String(filterValue || "");
+      if (!fv) return true; // filter inactive
+
+      const v = String(row?.[field] || "");
+      return v === fv;
+    }
+
+    function sortDiagRows(rows, sortState) {
+      const next = (rows || []).slice();
+      next.sort((a, b) => compareDiagRows(a, b, sortState));
+      return next;
+    }
+
+    function compareDiagRows(a, b, sortState) {
+      const col = String(sortState?.column || "");
+      const asc = Boolean(sortState?.asc);
+
+      const av = readComparable(a, col);
+      const bv = readComparable(b, col);
+
+      if (av < bv) return asc ? -1 : 1;
+      if (av > bv) return asc ? 1 : -1;
+      return 0;
+    }
+
+    function readComparable(row, col) {
+      // Use -Infinity so missing values drift to the end for descending,
+      // and to the front for ascending (consistent with prior behavior).
+      const v = row ? row[col] : undefined;
+      return v ?? -Infinity;
+    }
+
+    function buildDiagTableBodyHtml(rows, { truncate, statusEmoji, esc }) {
+      return (rows || []).map((r) => buildDiagRowHtml(r, { truncate, statusEmoji, esc })).join("");
+    }
+
+    function buildDiagRowHtml(r, { truncate, statusEmoji, esc }) {
+      const id = String(r?.id || "");
+      const type = String(r?.type || "");
+      const status = String(r?.status || "");
+
+      return `
+        <tr data-node="${esc(id)}">
+          <td title="${esc(id)}">${esc(truncate(id))}</td>
+          <td>${esc(type)}</td>
+          <td>${statusEmoji(status)} ${esc(status)}</td>
+          <td>${r?.degree ?? 0}</td>
+          <td>${r?.inbound ?? 0}</td>
+          <td>${r?.outbound ?? 0}</td>
+          <td>${r?.complexity ?? "–"}</td>
+          <td>${r?.distance ?? 0}</td>
         </tr>
-      `).join("");
+      `;
     }
 
     tbody.addEventListener("click", (e) => {
@@ -1562,101 +1669,188 @@ CodeGraphUI.updateGraphHeader = function updateGraphHeader(info) {
       return (Number(x.in || 0) + Number(x.out || 0)) === 0;
     };
 
+    /**
+     * Apply legend/filter state to D3 selections.
+     *
+     * Responsibility split
+     * --------------------
+     * - `normalizeFilterState`   : validates + fills defaults
+     * - `computeHiddenNodeIds`   : decides which nodes to hide
+     * - `applyNodeVisibility`    : updates node + label selections
+     * - `applyUnusedBadgeVisibility` : updates unused badges (optional)
+     * - `applyLinkVisibility`    : updates link selection
+     */
     const applyFiltersFromState = (state) => {
-      const s = state && typeof state === "object" ? state : Object.create(null);
+      const s = normalizeFilterState(state);
 
-      const showNodeGroups = s.showNodeGroups && typeof s.showNodeGroups === "object" ? s.showNodeGroups : Object.create(null);
-      const visibleLinkTypes = s.visibleLinkTypes && typeof s.visibleLinkTypes === "object" ? s.visibleLinkTypes : Object.create(null);
+      // Derived rules:
+      // - "unusedOnly" always implies "showUnused"
+      const effShowUnused = s.unusedOnly ? true : s.showUnused;
 
-      const showFilesDirs = (typeof s.showFilesDirs === "boolean") ? s.showFilesDirs : true;
-      const showFunctions = (typeof s.showFunctions === "boolean") ? s.showFunctions : true;
-      const showUnused = (typeof s.showUnused === "boolean") ? s.showUnused : false;
-      const unusedOnly = (typeof s.unusedOnly === "boolean") ? s.unusedOnly : false;
-      const showVisitorHandlers = (typeof s.showVisitorHandlers === "boolean") ? s.showVisitorHandlers : true;
-      const hideIsolates = (typeof s.hideIsolates === "boolean") ? s.hideIsolates : false;
+      // Degree map is used only when "hideIsolates" is enabled.
+      const deg = s.hideIsolates ? computeDegrees() : null;
 
-      // unusedOnly implies showUnused
-      const effShowUnused = unusedOnly ? true : showUnused;
+      const hidden = computeHiddenNodeIds({
+        nodes,
+        deg,
+        state: s,
+        effShowUnused,
+        isIsolateNode,
+        CodeGraphUI
+      });
 
-      const deg = computeDegrees();
+      applyNodeVisibility({ nodeShapeSel, labelSel, hidden });
+      applyUnusedBadgeVisibility({ unusedBadgeSel, hidden, effShowUnused, CodeGraphUI });
+      applyLinkVisibility({ linkSel, hidden, visibleLinkTypes: s.visibleLinkTypes });
+    };
 
+    function normalizeFilterState(state) {
+      const s = (state && typeof state === "object") ? state : Object.create(null);
+
+      return {
+        showNodeGroups: normalizeMap(s.showNodeGroups),
+        visibleLinkTypes: normalizeMap(s.visibleLinkTypes),
+
+        showFilesDirs: readBool(s.showFilesDirs, true),
+        showFunctions: readBool(s.showFunctions, true),
+        showUnused: readBool(s.showUnused, false),
+        unusedOnly: readBool(s.unusedOnly, false),
+        showVisitorHandlers: readBool(s.showVisitorHandlers, true),
+        hideIsolates: readBool(s.hideIsolates, false)
+      };
+    }
+
+    function normalizeMap(x) {
+      return (x && typeof x === "object") ? x : Object.create(null);
+    }
+
+    function readBool(v, fallback) {
+      return (typeof v === "boolean") ? v : fallback;
+    }
+
+    function computeHiddenNodeIds({ nodes, deg, state, effShowUnused, isIsolateNode, CodeGraphUI }) {
       const hidden = new Set();
 
       for (const n of nodes || []) {
-        const nid = String(n?.id || "");
+        const nid = getNodeId(n);
         if (!nid) continue;
 
-        const group = String(n?.group || "").trim();
-
-        // Group filter (canonical)
-        if (group && Object.prototype.hasOwnProperty.call(showNodeGroups, group) && !showNodeGroups[group]) {
+        if (shouldHideNode({ n, nid, deg, state, effShowUnused, isIsolateNode, CodeGraphUI })) {
           hidden.add(nid);
-          continue;
-        }
-
-        // High-level category toggles
-        if (!showFunctions && CodeGraphUI.isFunctionNode(n)) {
-          hidden.add(nid);
-          continue;
-        }
-
-        if (!showFilesDirs && !CodeGraphUI.isFunctionNode(n)) {
-          hidden.add(nid);
-          continue;
-        }
-
-        // Unused filter
-        if (!effShowUnused && CodeGraphUI.isUnusedFunctionNode(n)) {
-          hidden.add(nid);
-          continue;
-        }
-
-        if (unusedOnly && CodeGraphUI.isFunctionNode(n) && !CodeGraphUI.isUnusedFunctionNode(n)) {
-          hidden.add(nid);
-          continue;
-        }
-
-        // Visitor handler filter
-        if (!showVisitorHandlers && CodeGraphUI.isFunctionNode(n) && CodeGraphUI.isVisitorHandlerNode(n)) {
-          hidden.add(nid);
-          continue;
-        }
-
-        // Hide isolates
-        if (hideIsolates && isIsolateNode(n, deg)) {
-          hidden.add(nid);
-          continue;
         }
       }
 
-      const nodeDisplay = (d) => (hidden.has(String(d?.id || "")) ? "none" : null);
+      return hidden;
+    }
 
-      nodeShapeSel.style("display", nodeDisplay);
-      labelSel.style("display", nodeDisplay);
+    /**
+     * Decide whether a node should be hidden for the current filter state.
+     *
+     * This is written as a tiny rule engine to keep cyclomatic complexity low:
+     * - Each rule is a small predicate.
+     * - First matching rule wins.
+     */
+    function shouldHideNode({ n, deg, state, effShowUnused, isIsolateNode, CodeGraphUI }) {
+      const ctx = buildNodeFilterCtx(n, deg, state, effShowUnused, isIsolateNode, CodeGraphUI);
+      if (!ctx.nid) return false;
 
-      if (unusedBadgeSel) {
-        unusedBadgeSel.style("display", (d) => {
-          const nid = String(d?.id || "");
-          if (hidden.has(nid)) return "none";
-          if (!effShowUnused) return "none";
-          return CodeGraphUI.isUnusedFunctionNode(d) ? "block" : "none";
-        });
+      for (const rule of nodeHideRules) {
+        if (rule(ctx)) return true;
       }
 
+      return false;
+    }
+
+    function buildNodeFilterCtx(n, deg, state, effShowUnused, isIsolateNode, CodeGraphUI) {
+      const nid = getNodeId(n);
+
+      const group = String(n?.group || "").trim();
+      const isFn = CodeGraphUI.isFunctionNode(n);
+      const isUnused = isFn ? CodeGraphUI.isUnusedFunctionNode(n) : false;
+      const isVisitor = isFn ? CodeGraphUI.isVisitorHandlerNode(n) : false;
+      const isIsolate = Boolean(state.hideIsolates && deg && isIsolateNode(n, deg));
+
+      return {
+        n,
+        nid,
+        group,
+        isFn,
+        isUnused,
+        isVisitor,
+        isIsolate,
+        state,
+        effShowUnused
+      };
+    }
+
+    // Rule predicates: return true => hide.
+    const nodeHideRules = [
+      // 1) Group filter (canonical)
+      (c) => Boolean(c.group && hasOwn(c.state.showNodeGroups, c.group) && !c.state.showNodeGroups[c.group]),
+
+      // 2) High-level category toggles
+      (c) => Boolean(!c.state.showFunctions && c.isFn),
+      (c) => Boolean(!c.state.showFilesDirs && !c.isFn),
+
+      // 3) Unused filter
+      (c) => Boolean(!c.effShowUnused && c.isUnused),
+      (c) => Boolean(c.state.unusedOnly && c.isFn && !c.isUnused),
+
+      // 4) Visitor handler filter
+      (c) => Boolean(!c.state.showVisitorHandlers && c.isVisitor),
+
+      // 5) Hide isolates
+      (c) => Boolean(c.isIsolate)
+    ];
+
+    function applyNodeVisibility({ nodeShapeSel, labelSel, hidden }) {
+      const display = (d) => (hidden.has(getNodeId(d)) ? "none" : null);
+      nodeShapeSel.style("display", display);
+      labelSel.style("display", display);
+    }
+
+    function applyUnusedBadgeVisibility({ unusedBadgeSel, hidden, effShowUnused, CodeGraphUI }) {
+      if (!unusedBadgeSel) return;
+
+      unusedBadgeSel.style("display", (d) => {
+        const nid = getNodeId(d);
+        if (!nid || hidden.has(nid)) return "none";
+        if (!effShowUnused) return "none";
+        return CodeGraphUI.isUnusedFunctionNode(d) ? "block" : "none";
+      });
+    }
+
+    function applyLinkVisibility({ linkSel, hidden, visibleLinkTypes }) {
       linkSel.style("display", (l) => {
-        const sid = typeof l?.source === "object" ? l.source?.id : l?.source;
-        const tid = typeof l?.target === "object" ? l.target?.id : l?.target;
-        const sId = String(sid || "");
-        const tId = String(tid || "");
+        const sId = getLinkEndpointId(l?.source);
+        const tId = getLinkEndpointId(l?.target);
 
+        // Hide links whose endpoints are hidden.
         if (hidden.has(sId) || hidden.has(tId)) return "none";
 
+        // Hide links by type if that type is explicitly disabled.
         const ty = String(l?.type || "use");
-        if (Object.prototype.hasOwnProperty.call(visibleLinkTypes, ty) && !visibleLinkTypes[ty]) return "none";
+        if (hasOwn(visibleLinkTypes, ty) && !visibleLinkTypes[ty]) return "none";
 
         return null;
       });
-    };
+    }
+
+    function getNodeId(n) {
+      const id = String(n?.id || "");
+      return id ? id : "";
+    }
+
+    function getLinkEndpointId(x) {
+      if (!x) return "";
+      if (typeof x === "string") return x;
+      if (typeof x === "object" && x.id) return String(x.id);
+      return "";
+    }
+
+    function hasOwn(obj, key) {
+      return Object.prototype.hasOwnProperty.call(obj, key);
+    }
 
     const onFiltersChanged = (ev) => {
       try {

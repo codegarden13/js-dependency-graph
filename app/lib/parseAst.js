@@ -49,55 +49,63 @@ const traverseAst = (typeof traverse === "function")
  * @param {any} out
  * @param {any} helpers  (reserved; currently unused)
  */
-export function parseJsTsAst(src, filename, baseDir, out, helpers) {
-  const code = String(src || "");
-
-  // ---------------------------------------------------------------------------
-  // 0) Ensure containers exist (backward compatible out)
-  // ---------------------------------------------------------------------------
+// Helper: ensure output structure shape
+function ensureOutShape(out) {
   if (!Array.isArray(out.imports)) out.imports = [];
   if (!Array.isArray(out.symbols)) out.symbols = [];
   if (!Array.isArray(out.functions)) out.functions = [];
   if (!Array.isArray(out.calls)) out.calls = [];
   if (!out.importBindings || typeof out.importBindings !== "object") out.importBindings = {};
-
-  // Complexity is incremental (parseFile initializes it).
   if (!Number.isFinite(out.complexity)) out.complexity = 0;
+}
 
-  // ---------------------------------------------------------------------------
-  // Config (passed from parseFile)
-  // ---------------------------------------------------------------------------
-  // Defaults are architecture-first (high-signal graph).
-  const cfg = (helpers && typeof helpers === "object" && helpers.config && typeof helpers.config === "object")
-    ? helpers.config
-    : Object.create(null);
+// Helper: read parser config from helpers
+function readParserConfig(helpers) {
+  /**
+   * Config model
+   * ------------
+   * `parseJsTsAst` supports a small feature-toggle surface that lets the caller
+   * trade graph noise vs. detail.
+   *
+   * - mode: "architecture" (default) keeps the graph high-signal
+   * - mode: "full" enables ALL optional details
+   *
+   * The effective flags (prefixed with `eff`) are what the rest of the parser
+   * uses. In "full" mode we force them to `true` so callers don't have to set
+   * each flag manually.
+   */
 
-  const mode = String(cfg.mode || "architecture").toLowerCase();
-
-  // Inline callbacks like `.every(x => ...)` are never architecture nodes.
-  const includeInlineCallbacks = cfg.includeInlineCallbacks === true ? true : false;
-
-  // Accessors/constructors tend to clutter architecture graphs.
-  const includeClassAccessors = cfg.includeClassAccessors === true ? true : false;
-  const includeClassConstructor = cfg.includeClassConstructor === true ? true : false;
-
-  // Anonymous functions (`anon@line`) create lots of low-signal fragments.
-  // Keep call attribution, but do not emit them as nodes by default.
-  const includeAnonymousFunctions = cfg.includeAnonymousFunctions === true ? true : false;
-
-  // Convenience: in "full" mode, keep more details.
+  const cfg = readConfigObject(helpers);
+  const mode = readMode(cfg);
   const isFullMode = mode === "full";
-  const effIncludeInlineCallbacks = isFullMode ? true : includeInlineCallbacks;
-  const effIncludeClassAccessors = isFullMode ? true : includeClassAccessors;
-  const effIncludeClassConstructor = isFullMode ? true : includeClassConstructor;
-  const effIncludeAnonymousFunctions = isFullMode ? true : includeAnonymousFunctions;
 
-  // ---------------------------------------------------------------------------
-  // 1) Parse (best-effort)
-  // ---------------------------------------------------------------------------
-  let ast = null;
+  return {
+    effIncludeInlineCallbacks: effectiveFlag(isFullMode, cfg.includeInlineCallbacks),
+    effIncludeClassAccessors: effectiveFlag(isFullMode, cfg.includeClassAccessors),
+    effIncludeClassConstructor: effectiveFlag(isFullMode, cfg.includeClassConstructor),
+    effIncludeAnonymousFunctions: effectiveFlag(isFullMode, cfg.includeAnonymousFunctions)
+  };
+}
+
+function readConfigObject(helpers) {
+  const cfg = helpers?.config;
+  return cfg && typeof cfg === "object" ? cfg : Object.create(null);
+}
+
+function readMode(cfg) {
+  return String(cfg?.mode || "architecture").toLowerCase();
+}
+
+function effectiveFlag(isFullMode, value) {
+  // In full mode every optional detail is enabled.
+  if (isFullMode) return true;
+  return value === true;
+}
+
+// Helper: parse AST, best-effort
+function tryParseAst(code, filename) {
   try {
-    ast = parse(code, {
+    return parse(code, {
       sourceType: "unambiguous",
       sourceFilename: String(filename || ""),
       allowReturnOutsideFunction: true,
@@ -116,28 +124,14 @@ export function parseJsTsAst(src, filename, baseDir, out, helpers) {
       ]
     });
   } catch {
-    // Syntax errors are expected; keep minimal output.
-    return;
+    return null;
   }
+}
 
-  if (!traverseAst) return;
-
-  // ---------------------------------------------------------------------------
-  // 2) Local state
-  // ---------------------------------------------------------------------------
-
-  /** @type {Set<string>} */
-  const exportedNames = new Set();
-
-  /** @type {string[]} */
-  const fnStack = [];
-
-  /** @type {Map<string, any>} */
+// Helper: function index seeding from out.functions
+function seedFunctionIndex(out) {
   const fnById = new Map();
-
-  /** @type {Set<string>} */
   const fnIdSeen = new Set();
-
   for (const f of out.functions) {
     const id = String(f?.id || "");
     if (id) {
@@ -145,35 +139,111 @@ export function parseJsTsAst(src, filename, baseDir, out, helpers) {
       fnById.set(id, f);
     }
   }
+  return { fnById, fnIdSeen };
+}
+
+function isObj(v) {
+  return Boolean(v) && typeof v === "object";
+}
+
+function fnNameTrimmed(fn) {
+  return String(fn?.name || "").trim();
+}
+
+function shouldMarkExported(name, exportedNames) {
+  if (!exportedNames) return false;
+  if (name && exportedNames.has(name)) return true;
+  // Default exports without a stable name (or emitted as anon) are considered exported.
+  return exportedNames.has("default") && (!name || name === "anon");
+}
+
+function normalizeFnComplexity(fn) {
+  const c = Number(fn?.complexity);
+  if (!Number.isFinite(c) || c <= 0) fn.complexity = 1;
+
+  const cc = Number(fn?.cc);
+  if (!Number.isFinite(cc) || cc <= 0) fn.cc = fn.complexity;
+}
+
+// Helper: finalize exported flags and cc normalization
+function finalizeExportFlags(out, exportedNames) {
+  const fns = Array.isArray(out?.functions) ? out.functions : [];
+
+  for (const fn of fns) {
+    if (!isObj(fn)) continue;
+
+    const name = fnNameTrimmed(fn);
+    if (shouldMarkExported(name, exportedNames)) fn.exported = true;
+
+    normalizeFnComplexity(fn);
+  }
+}
+
+// Helper: build visitors for traverseAst
+function buildVisitors(api) {
+  return {
+    ImportDeclaration(p) {
+      api.handleImportDeclaration(p);
+    },
+    CallExpression(p) {
+      api.handleCallExpression(p);
+    },
+    ExportNamedDeclaration(p) {
+      api.handleExportNamedDeclaration(p);
+    },
+    ExportDefaultDeclaration(p) {
+      api.handleExportDefaultDeclaration(p);
+    },
+    IfStatement() { api.bumpCx(1); },
+    ForStatement() { api.bumpCx(1); },
+    WhileStatement() { api.bumpCx(1); },
+    DoWhileStatement() { api.bumpCx(1); },
+    ForInStatement() { api.bumpCx(1); },
+    ForOfStatement() { api.bumpCx(1); },
+    SwitchCase() { api.bumpCx(1); },
+    CatchClause() { api.bumpCx(1); },
+    ConditionalExpression() { api.bumpCx(1); },
+    LogicalExpression(p) {
+      const op = p.node?.operator;
+      if (op === "&&" || op === "||") api.bumpCx(1);
+    },
+    Function: {
+      enter(p) { api.enterFunction(p); },
+      exit(p) { api.exitFunction(p); }
+    }
+  };
+}
+
+export function parseJsTsAst(src, filename, baseDir, out, helpers) {
+  const code = String(src || "");
+
+  // 0) Ensure containers exist (backward compatible out)
+  ensureOutShape(out);
+
+  // 1) Config (passed from parseFile)
+  const cfg = readParserConfig(helpers);
+
+  // 2) Parse (best-effort)
+  const ast = tryParseAst(code, filename);
+  if (!ast || !traverseAst) return;
+
+  // 3) Local state
+  /** @type {Set<string>} */
+  const exportedNames = new Set();
+
+  /** @type {string[]} */
+  const fnStack = [];
+
+  const { fnById, fnIdSeen } = seedFunctionIndex(out);
 
   // Inline callbacks (e.g. arr.every(x => ...)) are NOT architecture nodes.
   // We skip registering them as functions and keep call attribution on the
   // enclosing function / toplevel.
   const skippedFnNodes = new WeakSet();
 
-  const isInlineCallback = (p) => {
-    if (effIncludeInlineCallbacks) return false;
-    const node = p?.node;
-    if (!node) return false;
-
-    // Only skip anonymous function/arrow expressions.
-    const isAnonFnExpr =
-      (node.type === "FunctionExpression" || node.type === "ArrowFunctionExpression") &&
-      !node.id?.name;
-
-    if (!isAnonFnExpr) return false;
-
-    // Must be directly inside a CallExpression arguments list.
-    const parent = p?.parentPath?.node;
-    if (!parent || parent.type !== "CallExpression") return false;
-
-    // Babel uses listKey/key metadata; be permissive.
-    return p?.listKey === "arguments" || p?.key === "arguments";
-  };
-
-  // ---------------------------------------------------------------------------
-  // 3) Helpers
-  // ---------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Helpers (kept local, but wired via a small API surface)
+  // -------------------------------------------------------------------------
 
   const lineOf = (node) => {
     const l = node?.loc?.start?.line;
@@ -186,19 +256,6 @@ export function parseJsTsAst(src, filename, baseDir, out, helpers) {
     return `${n}@${ln}`;
   };
 
-  /**
-   * currentFn
-   * ---------
-   * Returns the current *emitted* function id for call attribution.
-   *
-   * IMPORTANT:
-   * - We keep the stack stable for traversal, but we must NEVER leak anonymous
-   *   pseudo-ids (like `<anon@123>`) to downstream phases.
-   * - Anonymous scopes therefore return `null`, which downstream treats as
-   *   "toplevel".
-   *
-   * @returns {string|null}
-   */
   const currentFn = () => {
     if (!fnStack.length) return null;
     const top = fnStack[fnStack.length - 1];
@@ -220,8 +277,6 @@ export function parseJsTsAst(src, filename, baseDir, out, helpers) {
     const fnObj = fnById.get(cur);
     if (!fnObj || typeof fnObj !== "object") return;
 
-    // Cyclomatic complexity is 1 + decision points. The +1 baseline is
-    // initialized when the function node is created; here we only add deltas.
     const next = Number(fnObj.complexity || 0) + inc;
     fnObj.complexity = next;
     fnObj.cc = next; // explicit alias for cyclomatic complexity
@@ -250,117 +305,222 @@ export function parseJsTsAst(src, filename, baseDir, out, helpers) {
 
   const isConstructorMethod = (n) => n?.type === "ClassMethod" && n.kind === "constructor";
 
+  function inlineCallbacksEnabled() {
+    // In full mode (or when explicitly enabled), we treat inline callbacks as real function nodes.
+    return cfg.effIncludeInlineCallbacks === true;
+  }
+
+  function isAnonymousFnExpression(node) {
+    if (!node) return false;
+    const isFn = node.type === "FunctionExpression" || node.type === "ArrowFunctionExpression";
+    return isFn && !node.id?.name;
+  }
+
+  function isDirectCallArgumentPath(p) {
+    // Babel exposes both `listKey` and `key` depending on traversal shape.
+    return p?.listKey === "arguments" || p?.key === "arguments";
+  }
+
+  function isParentCallExpression(p) {
+    return p?.parentPath?.node?.type === "CallExpression";
+  }
+
+  /**
+   * Inline callback detection
+   * ------------------------
+   * In architecture mode we usually do NOT emit function nodes for callbacks like:
+   *   arr.map(x => x * 2)
+   *   promise.then(() => ...)
+   * because they create lots of low-signal nodes and clutter the graph.
+   *
+   * This predicate returns true only when ALL are true:
+   * 1) Inline callbacks are NOT enabled in config (architecture mode default)
+   * 2) The current node is an anonymous function/arrow expression
+   * 3) That node sits directly in a CallExpression's arguments list
+   */
+  const isInlineCallback = (p) => {
+    if (inlineCallbacksEnabled()) return false;
+
+    const node = p?.node;
+    if (!isAnonymousFnExpression(node)) return false;
+
+    if (!isParentCallExpression(p)) return false;
+    if (!isDirectCallArgumentPath(p)) return false;
+
+    return true;
+  };
+
+  const allowAnonymousName = () => (cfg.effIncludeAnonymousFunctions ? "anon" : null);
+
+  const shouldSkipLowSignalClassFragment = (n) =>
+    (!cfg.effIncludeClassAccessors && isAccessorMethod(n)) ||
+    (!cfg.effIncludeClassConstructor && isConstructorMethod(n));
+
+  const inferNameFromNodeType = (n) => {
+    if (!n) return null;
+
+    if (n.type === "FunctionDeclaration") return n.id?.name || null;
+
+    const isMethod = n.type === "ClassMethod" || n.type === "ObjectMethod";
+    if (isMethod && n.key) return getKeyName(n.key);
+
+    return null;
+  };
+
+  const inferNameFromParent = (parent) => {
+    if (!parent) return null;
+
+    if (parent.type === "VariableDeclarator" && parent.id?.type === "Identifier") {
+      return parent.id.name;
+    }
+
+    if (parent.type === "AssignmentExpression") {
+      return getAssignmentTargetName(parent.left);
+    }
+
+    return null;
+  };
+
   const inferFnName = (p) => {
     const n = p?.node;
     if (!n) return null;
 
     // Architecture mode: skip low-signal class fragments.
-    if (!effIncludeClassAccessors && isAccessorMethod(n)) return null;
-    if (!effIncludeClassConstructor && isConstructorMethod(n)) return null;
+    if (shouldSkipLowSignalClassFragment(n)) return null;
 
-    // FunctionDeclaration
-    if (n.type === "FunctionDeclaration") return n.id?.name || null;
+    const direct = inferNameFromNodeType(n);
+    if (direct) return direct;
 
-    // ClassMethod / ObjectMethod (real methods)
-    if ((n.type === "ClassMethod" || n.type === "ObjectMethod") && n.key) {
-      return getKeyName(n.key);
-    }
-
-    const parent = p?.parentPath?.node;
-    if (!parent) return effIncludeAnonymousFunctions ? "anon" : null;
-
-    // const foo = () => {}
-    if (parent.type === "VariableDeclarator" && parent.id?.type === "Identifier") {
-      return parent.id.name;
-    }
-
-    // foo.bar = function() {}
-    if (parent.type === "AssignmentExpression") {
-      return getAssignmentTargetName(parent.left);
-    }
+    const parentName = inferNameFromParent(p?.parentPath?.node);
+    if (parentName) return parentName;
 
     // Deliberately do NOT invent callback names.
-    return effIncludeAnonymousFunctions ? "anon" : null;
+    return allowAnonymousName();
   };
 
+  const pushFnStackMarker = (fnIdOrNull) => {
+    fnStack.push(fnIdOrNull || null);
+  };
+
+  const ensureFnBaseline = (fnObj) => {
+    if (!fnObj || typeof fnObj !== "object") return;
+
+    const base = Number(fnObj.complexity);
+    fnObj.complexity = Number.isFinite(base) && base > 0 ? base : 1;
+
+    const cc = Number(fnObj.cc);
+    fnObj.cc = Number.isFinite(cc) && cc > 0 ? cc : fnObj.complexity;
+  };
+
+  const createFunctionRecord = (fnId, name, line) => ({
+    id: fnId,
+    name: String(name || ""),
+    exported: false,
+    complexity: 1,
+    cc: 1,
+    startLine: Number(line) || 0,
+    endLine: Number(line) || 0,
+    locLines: 0
+  });
+
+  const registerFunctionIfNew = (fnId, name, line) => {
+    if (fnIdSeen.has(fnId)) return;
+
+    fnIdSeen.add(fnId);
+
+    out.functions.push(createFunctionRecord(fnId, name, line));
+
+    const fnObj = out.functions[out.functions.length - 1];
+    fnById.set(fnId, fnObj);
+
+    ensureFnBaseline(fnObj);
+
+    out.symbols.push({ name: String(name || ""), kind: "function" });
+  };
+
+  const computeEmittedFnId = (p) => {
+    const inferred = inferFnName(p);
+    if (!inferred) return null;
+
+    const name = String(inferred).trim();
+    if (!name) return null;
+
+    const line = lineOf(p.node);
+    return { fnId: mkFnId(name, line), name, line };
+  };
+
+  /**
+   * Enter function scope
+   * --------------------
+   * Maintains `fnStack` so calls can be attributed to the nearest enclosing
+   * *emitted* function node.
+   *
+   * Rules:
+   * - Inline callbacks (e.g. arr.map(x => ...)) may be skipped in architecture mode.
+   *   When skipped, we also avoid pushing to the stack so nesting stays correct.
+   * - If we cannot infer a stable name/id, we push a `null` marker. That preserves
+   *   traversal nesting without emitting noisy anonymous function nodes.
+   * - When we do emit a function node, we register it once and push its id.
+   */
   const enterFunction = (p) => {
     // Skip inline callbacks entirely in architecture mode.
     if (isInlineCallback(p)) {
       skippedFnNodes.add(p.node);
-      return; // do not push onto fnStack
+      return;
     }
 
-    const inferred = inferFnName(p);
-    const line = lineOf(p.node);
+    const info = computeEmittedFnId(p);
 
     // Keep call attribution stable even when we do not emit a function node.
-    if (!inferred) {
-      fnStack.push(null);
+    if (!info) {
+      pushFnStackMarker(null);
       return;
     }
 
-    const name = String(inferred || "").trim();
-    if (!name) {
-      fnStack.push(null);
-      return;
-    }
+    registerFunctionIfNew(info.fnId, info.name, info.line);
+    pushFnStackMarker(info.fnId);
+  };
 
-    const fnId = mkFnId(name, line);
+  const peekFnStack = () => (fnStack.length ? fnStack[fnStack.length - 1] : null);
 
-    if (!fnIdSeen.has(fnId)) {
-      fnIdSeen.add(fnId);
+  const popFnStack = () => {
+    fnStack.pop();
+  };
 
-      out.functions.push({
-        id: fnId,
-        name: String(name || ""),
-        exported: false,
-        complexity: 1,
-        cc: 1,
-        startLine: Number(line) || 0,
-        endLine: Number(line) || 0,
-        locLines: 0
-      });
+  const getFnObjById = (fnId) => {
+    if (!fnId) return null;
+    const o = fnById.get(fnId);
+    return o && typeof o === "object" ? o : null;
+  };
 
-      fnById.set(fnId, out.functions[out.functions.length - 1]);
-      // Ensure any pre-existing fnObj has baseline and alias
-      const fnObj = fnById.get(fnId);
-      if (fnObj && typeof fnObj === "object") {
-        const base = Number(fnObj.complexity);
-        fnObj.complexity = Number.isFinite(base) && base > 0 ? base : 1;
-        fnObj.cc = Number(fnObj.cc);
-        if (!Number.isFinite(fnObj.cc) || fnObj.cc <= 0) fnObj.cc = fnObj.complexity;
-      }
-      out.symbols.push({ name: String(name || ""), kind: "function" });
-    }
+  const computeLocLines = (startLine, endLine) => {
+    const s = Number(startLine) || 0;
+    const e = Number(endLine) || 0;
+    return s && e && e >= s ? (e - s + 1) : 0;
+  };
 
-    fnStack.push(fnId);
+  const updateFnEndAndLoc = (p, fnObj) => {
+    if (!fnObj) return;
+
+    const end = Number(p?.node?.loc?.end?.line) || 0;
+    if (end) fnObj.endLine = end;
+
+    fnObj.locLines = computeLocLines(fnObj.startLine, fnObj.endLine);
   };
 
   const exitFunction = (p) => {
     if (skippedFnNodes.has(p?.node)) return;
 
-    const fnId = fnStack.length ? fnStack[fnStack.length - 1] : null;
+    const fnId = peekFnStack();
+    const fnObj = getFnObjById(fnId);
+    updateFnEndAndLoc(p, fnObj);
 
-    if (fnId) {
-      const fnObj = fnById.get(fnId);
-
-      // Anonymous stack markers (e.g. <anon@123>) are used for call attribution only.
-      if (fnObj && typeof fnObj === "object") {
-        const end = Number(p?.node?.loc?.end?.line) || 0;
-        if (end) fnObj.endLine = end;
-
-        const s = Number(fnObj.startLine) || 0;
-        const e = Number(fnObj.endLine) || 0;
-        fnObj.locLines = s && e && e >= s ? (e - s + 1) : 0;
-      }
-    }
-
-    fnStack.pop();
+    popFnStack();
   };
 
-  // ---------------------------------------------------------------------------
-  // 4) Traverse
-  // ---------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Traversal helpers (imports / calls / exports)
+  // -------------------------------------------------------------------------
 
   const recordImportBinding = (local, spec, imported) => {
     if (!local || !spec) return;
@@ -368,7 +528,6 @@ export function parseJsTsAst(src, filename, baseDir, out, helpers) {
   };
 
   const getImportSourceSpec = (p) => String(p?.node?.source?.value || "").trim();
-
   const getImportedName = (s) => s?.imported?.name || s?.imported?.value || "";
 
   const importSpecifierHandlers = {
@@ -475,13 +634,7 @@ export function parseJsTsAst(src, filename, baseDir, out, helpers) {
     if (maybeRecordRequireImport(callee, arg0)) return;
     if (maybeRecordIdentifierCall(callee)) return;
 
-    // Member calls (best-effort)
     maybeRecordMemberCall(callee);
-  };
-
-  const addExportedName = (name) => {
-    const n = String(name || "").trim();
-    if (n) exportedNames.add(n);
   };
 
   const getExportedFromSpecifier = (s) => s?.exported?.name || s?.exported?.value || "";
@@ -508,110 +661,83 @@ export function parseJsTsAst(src, filename, baseDir, out, helpers) {
     return fn ? fn(decl) : [];
   };
 
-  const addExportedFromDeclaration = (decl) => {
+  // --- Export helpers (for exportedNames set) ---
+  function addExportedNameToSet(exportedNamesSet, name) {
+    const s = String(name || "").trim();
+    if (s) exportedNamesSet.add(s);
+  }
+
+  function addExportedNamesFromDeclaration(exportedNamesSet, decl) {
     for (const nm of extractExportNamesFromDeclaration(decl)) {
-      addExportedName(nm);
+      addExportedNameToSet(exportedNamesSet, nm);
     }
-  };
+  }
 
-  const addExportedFromSpecifiers = (specifiers) => {
+  function exportedNameFromSpecifier(s) {
+    return getExportedFromSpecifier(s) || getLocalFromSpecifier(s) || "";
+  }
+
+  function addExportedNamesFromSpecifiers(exportedNamesSet, specifiers) {
     for (const s of specifiers || []) {
-      const exported = getExportedFromSpecifier(s);
-      if (exported) {
-        addExportedName(exported);
-        continue;
-      }
-
-      const local = getLocalFromSpecifier(s);
-      if (local) addExportedName(local);
+      addExportedNameToSet(exportedNamesSet, exportedNameFromSpecifier(s));
     }
-  };
+  }
 
+  /**
+   * Handle `export { ... }` and `export const/let/var` / `export function` forms.
+   *
+   * What we record
+   * --------------
+   * We only collect *names* of exported symbols so we can later mark matching
+   * function records in `out.functions` as `exported: true`.
+   *
+   * Supported shapes
+   * ----------------
+   * - `export function foo() {}`             -> "foo"
+   * - `export const a = 1, b = 2`           -> "a", "b"
+   * - `export { foo as bar }`               -> "bar" (exported name)
+   * - `export { foo }`                      -> "foo"
+   *
+   * Note: we intentionally ignore re-exports with `from "..."` here because
+   * they do not define local functions in this file.
+   */
   const handleExportNamedDeclaration = (p) => {
     const node = p?.node;
     if (!node) return;
 
-    addExportedFromDeclaration(node.declaration);
-    addExportedFromSpecifiers(node.specifiers);
+    addExportedNamesFromDeclaration(exportedNames, node.declaration);
+    addExportedNamesFromSpecifiers(exportedNames, node.specifiers);
   };
 
-  traverseAst(ast, {
-    // -----------------------------------------------------------------------
-    // Imports + bindings
-    // -----------------------------------------------------------------------
-    ImportDeclaration(p) {
-      handleImportDeclaration(p);
-    },
+  const handleExportDefaultDeclaration = (p) => {
+    const decl = p.node.declaration;
 
-    // require("x")
-    CallExpression(p) {
-      handleCallExpression(p);
-    },
-
-    // -----------------------------------------------------------------------
-    // Export discovery (names)
-    // -----------------------------------------------------------------------
-    ExportNamedDeclaration(p) {
-      handleExportNamedDeclaration(p);
-    },
-
-    ExportDefaultDeclaration(p) {
-      const decl = p.node.declaration;
-
-      // default export: if named function, use its name; else mark "default"
-      if (decl?.type === "FunctionDeclaration" && decl.id?.name) {
-        exportedNames.add(decl.id.name);
-      } else {
-        exportedNames.add("default");
-      }
-    },
-
-    // -----------------------------------------------------------------------
-    // Complexity heuristic (cheap)
-    // -----------------------------------------------------------------------
-    IfStatement() { bumpCx(1); },
-    ForStatement() { bumpCx(1); },
-    WhileStatement() { bumpCx(1); },
-    DoWhileStatement() { bumpCx(1); },
-    ForInStatement() { bumpCx(1); },
-    ForOfStatement() { bumpCx(1); },
-    SwitchCase() { bumpCx(1); },
-    CatchClause() { bumpCx(1); },
-    ConditionalExpression() { bumpCx(1); },
-    LogicalExpression(p) {
-      const op = p.node?.operator;
-      if (op === "&&" || op === "||") bumpCx(1);
-    },
-
-    // -----------------------------------------------------------------------
-    // Function tracking (valid visitor form)
-    // -----------------------------------------------------------------------
-    Function: {
-      enter(p) { enterFunction(p); },
-      exit(p) { exitFunction(p); }
+    if (decl?.type === "FunctionDeclaration" && decl.id?.name) {
+      exportedNames.add(decl.id.name);
+      return;
     }
-  });
 
-  // ---------------------------------------------------------------------------
-  // 5) Finalize: mark exported functions
-  // ---------------------------------------------------------------------------
-  for (const fn of out.functions) {
-    if (!fn || typeof fn !== "object") continue;
+    exportedNames.add("default");
+  };
 
-    const n = String(fn.name || "").trim();
+  // -------------------------------------------------------------------------
+  // 4) Traverse
+  // -------------------------------------------------------------------------
 
-    if (n && exportedNames.has(n)) fn.exported = true;
-    if (exportedNames.has("default") && (!n || n === "anon")) fn.exported = true;
-  }
+  const api = {
+    bumpCx,
+    enterFunction,
+    exitFunction,
+    handleImportDeclaration,
+    handleCallExpression,
+    handleExportNamedDeclaration,
+    handleExportDefaultDeclaration
+  };
 
-  // Normalize: ensure cc is present for all emitted functions.
-  for (const fn of out.functions) {
-    if (!fn || typeof fn !== "object") continue;
-    const c = Number(fn.complexity);
-    if (!Number.isFinite(c) || c <= 0) fn.complexity = 1;
-    const cc = Number(fn.cc);
-    if (!Number.isFinite(cc) || cc <= 0) fn.cc = fn.complexity;
-  }
+  traverseAst(ast, buildVisitors(api));
+
+  // 5) Finalize: mark exported functions + normalize cc
+  finalizeExportFlags(out, exportedNames);
 
   // Reserved parameters (kept for future AST-based path extraction)
   void baseDir;
