@@ -122,82 +122,124 @@ function parseMaxDirDepth(body) {
 // mounting styles:
 //   app.use("/analyze", router)  -> client POSTs to "/analyze" (router POST "/")
 //   app.use("/", router)         -> client POSTs to "/analyze" (router POST "/analyze")
+function sendBadRequest(res, message) {
+  return res.status(400).json({ error: { message: String(message || "Bad Request") } });
+}
+
+function sendUnsupported(res, { reason, message, details }) {
+  return res.status(400).json({
+    analysisStatus: "unsupported",
+    reason: String(reason || "unsupported"),
+    message: String(message || "Unsupported target"),
+    details
+  });
+}
+
+function sendServerError(res, err) {
+  const msg = String(err?.message || err || "Analyze failed");
+  return res.status(500).json({ error: { message: msg } });
+}
+
+function getRequestedAppId(req) {
+  return normalizeId(req?.body?.appId);
+}
+
+function getAppsAndApp(appId) {
+  const apps = loadAppsConfig();
+  const app = findAppById(apps, appId);
+  return { apps, app };
+}
+
+function resolveAndValidateAppRoot(app) {
+  const appRootAbs = resolveAppRootAbs(app);
+  if (!appRootAbs) {
+    return {
+      ok: false,
+      kind: "unsupported",
+      payload: {
+        reason: "missing-rootDir",
+        message: "App config is missing rootDir/root/path.",
+        details: app
+      }
+    };
+  }
+
+  if (!fs.existsSync(appRootAbs) || !fs.statSync(appRootAbs).isDirectory()) {
+    return {
+      ok: false,
+      kind: "unsupported",
+      payload: {
+        reason: "rootDir-not-found",
+        message: `App rootDir does not exist or is not a directory: ${appRootAbs}`,
+        details: app
+      }
+    };
+  }
+
+  return { ok: true, appRootAbs };
+}
+
+function resolveAndValidateEntryAbs(appRootAbs, app) {
+  const entryAbs = resolveEntryAbs(appRootAbs, app);
+  if (entryAbs) return { ok: true, entryAbs };
+
+  return {
+    ok: false,
+    kind: "unsupported",
+    payload: {
+      reason: "missing-entry",
+      message: "Cannot resolve entry file. Provide 'entry' in apps.json (relative to rootDir).",
+      details: app
+    }
+  };
+}
+
+function buildUrlInfo(appId, app) {
+  return {
+    appId,
+    appName: String(app?.name || appId),
+    url: String(app?.url || ""),
+    entry: String(app?.entry || "")
+  };
+}
+
+function buildAnalyzeResponse(runToken, metrics) {
+  const summary = summaryFromMetrics(metrics);
+  const metricsUrl = `/metrics?runToken=${encodeURIComponent(runToken)}`;
+  return { runToken, metricsUrl, summary };
+}
 
 async function handleAnalyze(req, res) {
   try {
-    const appId = normalizeId(req?.body?.appId);
-    if (!appId) return res.status(400).json({ error: { message: "Missing appId" } });
+    const appId = getRequestedAppId(req);
+    if (!appId) return sendBadRequest(res, "Missing appId");
 
-    const apps = loadAppsConfig();
-    const app = findAppById(apps, appId);
-    if (!app) return res
-      .status(400)
-      .json({ error: { message: `Unknown appId: ${appId}` } });
+    const { app } = getAppsAndApp(appId);
+    if (!app) return sendBadRequest(res, `Unknown appId: ${appId}`);
 
-    const appRootAbs = resolveAppRootAbs(app);
-    if (!appRootAbs) {
-      return res.status(400).json({
-        analysisStatus: "unsupported",
-        reason: "missing-rootDir",
-        message: "App config is missing rootDir/root/path.",
-        details: app,
-      });
-    }
+    const rootResult = resolveAndValidateAppRoot(app);
+    if (!rootResult.ok) return sendUnsupported(res, rootResult.payload);
 
-    if (!fs.existsSync(appRootAbs) || !fs.statSync(appRootAbs).isDirectory()) {
-      return res.status(400).json({
-        analysisStatus: "unsupported",
-        reason: "rootDir-not-found",
-        message: `App rootDir does not exist or is not a directory: ${appRootAbs}`,
-        details: app,
-      });
-    }
-
-    const entryAbs = resolveEntryAbs(appRootAbs, app);
-    if (!entryAbs) {
-      return res.status(400).json({
-        analysisStatus: "unsupported",
-        reason: "missing-entry",
-        message:
-          "Cannot resolve entry file. Provide 'entry' in apps.json (relative to rootDir).",
-        details: app,
-      });
-    }
+    const entryResult = resolveAndValidateEntryAbs(rootResult.appRootAbs, app);
+    if (!entryResult.ok) return sendUnsupported(res, entryResult.payload);
 
     const maxDirDepth = parseMaxDirDepth(req.body);
-
     const runToken = newRunToken();
 
-    // `urlInfo` is optional. The UI uses it for labels; keep compatible.
-    const urlInfo = {
-      appId,
-      appName: String(app?.name || appId),
-      url: String(app?.url || ""),
-      entry: String(app?.entry || ""),
-    };
+    const urlInfo = buildUrlInfo(appId, app);
 
     const metrics = await buildMetrics({
-      projectRootAbs: appRootAbs,
-      entryAbs,
+      projectRootAbs: rootResult.appRootAbs,
+      entryAbs: entryResult.entryAbs,
       urlInfo,
-      maxDirDepth,
+      maxDirDepth
     });
 
     metricsByToken.set(runToken, metrics);
 
-    const summary = summaryFromMetrics(metrics);
-
-    // Metrics endpoint. We expose both variants for mounting compatibility.
-    const metricsUrl = `/metrics?runToken=${encodeURIComponent(runToken)}`;
-
-    return res.json({
-      runToken,
-      metricsUrl,
-      summary,
-    });
+    return res.json(buildAnalyzeResponse(runToken, metrics));
   } catch (e) {
-    const msg = String(e?.message || e || "Analyze failed");
-    return res.status(500).json({ error: { message: msg } });
+    return sendServerError(res, e);
   }
 }
 
