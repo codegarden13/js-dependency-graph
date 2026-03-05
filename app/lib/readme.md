@@ -1,4 +1,6 @@
-# lib — Analysis Core
+# lib — Analysis Core und Node runtime code
+
+
 
 contains the **core analysis and resolution logic** used by NodeAnalyzer.
 All modules in this folder are **pure, side-effect-free utilities** that perform static
