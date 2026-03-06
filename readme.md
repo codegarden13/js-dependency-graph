@@ -2,7 +2,6 @@
 
 Interactive Architecture & Dependency Visualization for Complex JavaScript & TypeScript Systems
 
-
 ## Why
 
 Large and long-lived codebases tend to lose architectural transparency over time.  
@@ -18,7 +17,7 @@ NodeAnalyzer makes architecture visible again — supporting informed technical 
 
 NodeAnalyzer helps technical leaders and teams:
 
-- Understand real dependency structures instead of assumed ones
+- Understand dependency structures instead of assumed ones
 - Detect architectural hotspots and complexity clusters
 - Make refactoring decisions based on structural data
 - Reduce onboarding time for new developers
@@ -28,9 +27,9 @@ NodeAnalyzer helps technical leaders and teams:
 <br>(Developers, teams, CTO, Tech Lead)</summary>
 
 ## Devteam Leader / You ?
-**Scenario:** Everyone wants a (Live) dashboard which presents the current status uf the teams projects - including structure, done and missing documentation and more.
+**Scenario:** Everyone wants a (Live) dashboard about the current status of the teams projects - including structure, done and missing documentation and more.
 If someone from the team changes something in the common (remote) project, it gets visible:
-![visible remote change](assets/NodeAnalyzer_ScS03.png)
+![visible remote change](assets/NodeAnalyzer_Sc03.png)
 
 ## CTO / Tech Lead Perspective
 
@@ -78,6 +77,7 @@ The tool focuses on **static structure**, not runtime behavior. It supports:
 - Cross-team understanding
 
 It does not replace documentation — it *supports* it by exposing structural reality.
+It does not replace your tools. I just try to adopt features from **payed tools** like CodesScene to me personal needs and to my **NodeAnalyzer learning journey**
 
 </details>
 
@@ -101,8 +101,8 @@ Key capabilities:
 - Asset and documentation linkage
 - JSON export for further processing or integration
 
-The physical location of analyzed projects is irrelevant. Targets are defined centrally via configuration. 
-Entrypoint: is detected automatically (e.g., `app/server.js`, `app/index.js`, etc.). 
+Physical location of analyzed projects is irrelevant. Targets are defined centrally via configuration. 
+
 
 </details>
 
