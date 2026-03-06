@@ -61,15 +61,24 @@ function mean(arr) {
   return sum / arr.length;
 }
 
+/** Read the normalized simulation viewport. */
+function readSimulationViewport(input) {
+  return {
+    width: readSimulationNumber(input.width),
+    height: readSimulationNumber(input.height),
+  };
+}
+
 /** Normalize the simulation input bag. */
 function normalizeSimulationOptions(opts) {
   const input = (opts && typeof opts === "object") ? opts : Object.create(null);
+  const viewport = readSimulationViewport(input);
 
   return {
     nodes: readSimulationNodes(input.nodes),
     links: readSimulationLinks(input.links),
-    width: readSimulationNumber(input.width),
-    height: readSimulationNumber(input.height),
+    width: viewport.width,
+    height: viewport.height,
     getRadius: readSimulationRadiusFn(input.getRadius),
   };
 }
@@ -233,28 +242,59 @@ function makeChargeStrengthFn(chargeBase) {
   };
 }
 
-/** Derive the proven layout defaults for one graph instance. */
-export function deriveLayoutDefaults(nodes, links, getRadius) {
+/** Count layout-driving graph metrics for one simulation input. */
+function readLayoutMetrics(nodes, links, getRadius) {
   const nodeCount = countNodes(nodes);
   const rAvg = computeAverageRadius(nodes, getRadius);
   const typeCounts = countLinkTypes(links);
   const structuralRatio = computeStructuralRatio(nodeCount, links, typeCounts);
   const nFactor = computeNodeFactor(nodeCount);
-  const scale = CODE_STRUCTURE_CONFIG.layoutScale;
 
-  const baseLinkDistance = computeBaseLinkDistance({ rAvg, nFactor, structuralRatio, scale });
-  const chargeBase = computeChargeBase({ rAvg, nodeCount, scale });
-  const chargeDistanceMin = computeChargeDistanceMin({ rAvg });
-  const chargeDistanceMax = computeChargeDistanceMax({ rAvg, scale });
+  return {
+    nodeCount,
+    rAvg,
+    typeCounts,
+    structuralRatio,
+    nFactor,
+  };
+}
+
+/** Compute the bounded charge distances for one layout. */
+function readChargeDistances(rAvg, scale) {
+  return {
+    chargeDistanceMin: computeChargeDistanceMin({ rAvg }),
+    chargeDistanceMax: computeChargeDistanceMax({ rAvg, scale }),
+  };
+}
+
+/** Derive the proven layout defaults for one graph instance. */
+export function deriveLayoutDefaults(nodes, links, getRadius) {
+  const scale = CODE_STRUCTURE_CONFIG.layoutScale;
+  const metrics = readLayoutMetrics(nodes, links, getRadius);
+
+  const baseLinkDistance = computeBaseLinkDistance({
+    rAvg: metrics.rAvg,
+    nFactor: metrics.nFactor,
+    structuralRatio: metrics.structuralRatio,
+    scale,
+  });
+
+  const chargeBase = computeChargeBase({
+    rAvg: metrics.rAvg,
+    nodeCount: metrics.nodeCount,
+    scale,
+  });
+
+  const chargeDistances = readChargeDistances(metrics.rAvg, scale);
 
   return {
     baseLinkDistance,
-    chargeDistanceMin,
-    chargeDistanceMax,
+    chargeDistanceMin: chargeDistances.chargeDistanceMin,
+    chargeDistanceMax: chargeDistances.chargeDistanceMax,
     linkDistanceFn: makeLinkDistanceFn(baseLinkDistance),
     linkStrengthFn: makeLinkStrengthFn(),
     chargeStrengthFn: makeChargeStrengthFn(chargeBase),
-    centerStrength: computeCenterStrength(nodeCount),
+    centerStrength: computeCenterStrength(metrics.nodeCount),
   };
 }
 
@@ -286,14 +326,74 @@ function createForceX(width, layout) {
   return d3.forceX(width / 2).strength(layout.centerStrength);
 }
 
-/** Create the vertical centering force. */
-function createForceY(height, layout) {
-  return d3.forceY(height / 2).strength(layout.centerStrength);
+/**
+ * Resolve optional layer metadata embedded in the graph payload.
+ * The backend may attach a shared `meta` object to nodes containing:
+ *   - meta.layerY: explicit Y coordinates per layer
+ *   - meta.layerOrder: preferred layer ordering
+ */
+function readLayerMeta(nodes) {
+  const first = Array.isArray(nodes) && nodes.length ? nodes[0] : null;
+  const meta = first?.meta || null;
+
+  return {
+    layerY: meta?.layerY || null,
+    layerOrder: Array.isArray(meta?.layerOrder) ? meta.layerOrder : null
+  };
+}
+
+/** Default architectural layer order used as last fallback. */
+function defaultLayerOrder() {
+  return ["structure", "ui", "http", "app", "graph", "io", "data", "doc"];
+}
+
+/** Build a stable layer → Y coordinate mapping. */
+function buildLayerYMap(nodes, height) {
+  const meta = readLayerMeta(nodes);
+
+  if (meta.layerY && typeof meta.layerY === "object") {
+    return meta.layerY;
+  }
+
+  const order = meta.layerOrder || defaultLayerOrder();
+  const step = height / (order.length + 1);
+
+  const map = Object.create(null);
+  order.forEach((layer, i) => {
+    map[layer] = step * (i + 1);
+  });
+
+  return map;
+}
+
+/** Create the vertical layer force. */
+function createForceY(height, layout, nodes) {
+  const layerY = buildLayerYMap(nodes, height);
+
+  return d3.forceY((node) => {
+    const layer = String(node?.layer || "");
+    const y = layerY[layer];
+
+    if (typeof y === "number") return y;
+
+    return height / 2;
+  }).strength(layout.centerStrength * 1.2);
 }
 
 /** Create the absolute center force. */
 function createCenterForce(width, height) {
   return d3.forceCenter(width / 2, height / 2);
+}
+
+/** Create the configured force bundle for one simulation. */
+function applySimulationForces(simulation, simOpts, layout) {
+  return simulation
+    .force("link", createLinkForce(simOpts.links, layout))
+    .force("charge", createChargeForce(layout))
+    .force("collide", createCollideForce(simOpts.getRadius))
+    .force("x", createForceX(simOpts.width, layout))
+    .force("y", createForceY(simOpts.height, layout, simOpts.nodes))
+    .force("center", createCenterForce(simOpts.width, simOpts.height));
 }
 
 /**
@@ -304,12 +404,7 @@ function createCenterForce(width, height) {
 export function createSimulation(opts) {
   const simOpts = normalizeSimulationOptions(opts);
   const layout = deriveLayoutDefaults(simOpts.nodes, simOpts.links, simOpts.getRadius);
+  const simulation = d3.forceSimulation(simOpts.nodes);
 
-  return d3.forceSimulation(simOpts.nodes)
-    .force("link", createLinkForce(simOpts.links, layout))
-    .force("charge", createChargeForce(layout))
-    .force("collide", createCollideForce(simOpts.getRadius))
-    .force("x", createForceX(simOpts.width, layout))
-    .force("y", createForceY(simOpts.height, layout))
-    .force("center", createCenterForce(simOpts.width, simOpts.height));
+  return applySimulationForces(simulation, simOpts, layout);
 }

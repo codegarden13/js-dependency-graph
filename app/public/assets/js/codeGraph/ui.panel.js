@@ -1,3 +1,4 @@
+
 /**
  * CodeGraph legend/filter panel.
  *
@@ -213,6 +214,14 @@ function buildOptionItems(state) {
       title: "Show function nodes",
       description: "Displays function-level nodes in addition to file-level structure.",
       checked: state.showFunctions !== false,
+    }),
+    createLegendItem({
+      key: "showHulls",
+      label: "Show hull zones",
+      kind: "opt",
+      title: "Show cluster hull zones",
+      description: "Shows the soft area overlays that group related nodes into larger architecture zones.",
+      checked: state.showHulls !== false,
     }),
     createLegendItem({
       key: "showUnused",

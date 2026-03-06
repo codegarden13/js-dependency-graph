@@ -1,7 +1,5 @@
 # lib — Analysis Core und Node runtime code
 
-
-
 contains the **core analysis and resolution logic** used by NodeAnalyzer.
 All modules in this folder are **pure, side-effect-free utilities** that perform static
 inspection, dependency resolution, and metadata extraction.
@@ -14,8 +12,14 @@ No HTTP, UI, or persistence concerns exist here.
 
 The analysis pipeline is intentionally layered:
 
+
+Filesystem
+     │
+     ▼
 buildMetricsFromEntrypoint
-↓
+(Node Backend)
+     │ Ruft auf:
+     ▼
 parseFile
 ↓
 resolveImports
@@ -115,11 +119,11 @@ Important:
 
 ## Future Extensions (Planned)
 
-- Function and method extraction
+
 - Call-graph generation
 - Symbol-level navigation
 - Language adapters (PHP, others)
-- Complexity heuristics per function
+
 
 All future work should build on these primitives rather than bypassing them.
 

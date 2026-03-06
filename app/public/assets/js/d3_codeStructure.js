@@ -657,6 +657,40 @@ export function initcodeStructureChart(svgId, metrics, opts = {}) {
       labelSel: s.labelSel,
       linkSel: s.linkSel,
       unusedBadgeSel: s.unusedBadgeSel,
+      hullGroup: s.hullGroup,
+    };
+  }
+
+  /**
+   * Read the panel render hook.
+   */
+  function readLegendPanelDeps() {
+    return {
+      buildLegendFilterPanel: CodeGraphUI?.buildLegendFilterPanel,
+      attachLegendFilterWiring: CodeGraphUI?.attachLegendFilterWiring,
+    };
+  }
+
+  /**
+   * Read the legend/filter state hooks.
+   */
+  function readLegendStateDeps() {
+    return {
+      getState: CodeGraphUI?.getState,
+      stateBySvgId: CodeGraphUI?.stateBySvgId,
+      dispatchFiltersChanged: CodeGraphUI?.dispatchFiltersChanged,
+      updateGroupFilter: CodeGraphUI?.updateGroupFilter,
+      updateLinkFilter: CodeGraphUI?.updateLinkFilter,
+      updateOptionFilter: CodeGraphUI?.updateOptionFilter,
+    };
+  }
+
+  /**
+   * Read the shared escaping hook.
+   */
+  function readLegendTextDeps() {
+    return {
+      escapeHtml: CodeGraphUI?.escapeHtml,
     };
   }
 
@@ -665,15 +699,9 @@ export function initcodeStructureChart(svgId, metrics, opts = {}) {
    */
   function readLegendFilterUiDeps() {
     return {
-      buildLegendFilterPanel: CodeGraphUI?.buildLegendFilterPanel,
-      attachLegendFilterWiring: CodeGraphUI?.attachLegendFilterWiring,
-      getState: CodeGraphUI?.getState,
-      stateBySvgId: CodeGraphUI?.stateBySvgId,
-      dispatchFiltersChanged: CodeGraphUI?.dispatchFiltersChanged,
-      updateGroupFilter: CodeGraphUI?.updateGroupFilter,
-      updateLinkFilter: CodeGraphUI?.updateLinkFilter,
-      updateOptionFilter: CodeGraphUI?.updateOptionFilter,
-      escapeHtml: CodeGraphUI?.escapeHtml,
+      ...readLegendPanelDeps(),
+      ...readLegendStateDeps(),
+      ...readLegendTextDeps(),
     };
   }
 
@@ -804,7 +832,8 @@ const repaintNodes = makeRepaint({
       nodeShapeSel,
       labelSel,
       linkSel,
-      unusedBadgeSel
+      unusedBadgeSel,
+      hullGroup: layers.hullGroup
     }
   });
 
