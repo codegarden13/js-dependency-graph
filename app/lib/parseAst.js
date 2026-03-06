@@ -194,6 +194,12 @@ function buildVisitors(api) {
     ExportDefaultDeclaration(p) {
       api.handleExportDefaultDeclaration(p);
     },
+    VariableDeclarator(p) {
+      api.handleVariableDeclarator(p);
+    },
+    AssignmentExpression(p) {
+      api.handleAssignmentExpression(p);
+    },
     IfStatement() { api.bumpCx(1); },
     ForStatement() { api.bumpCx(1); },
     WhileStatement() { api.bumpCx(1); },
@@ -235,6 +241,30 @@ export function parseJsTsAst(src, filename, baseDir, out, helpers) {
   const fnStack = [];
 
   const { fnById, fnIdSeen } = seedFunctionIndex(out);
+
+  /**
+   * Best-effort function alias tracking.
+   *
+   * Why this exists
+   * ---------------
+   * The call graph already captures direct calls like `foo()`, but self-analysis
+   * also needs to recognize simple indirections such as:
+   * - `const x = foo; x()`
+   * - `const x = a || foo; x()`
+   * - `x = foo; x()`
+   *
+   * Without this, fallback strategy functions can look "unused" even though they
+   * are invoked through a local alias.
+   *
+   * Model
+   * -----
+   * We keep a tiny alias map from local identifier -> possible function names.
+   * This is intentionally shallow and static. It does NOT try to solve general
+   * data-flow; it only handles high-signal assignment patterns.
+   *
+   * @type {Map<string, Set<string>>}
+   */
+  const fnAliasTargets = new Map();
 
   // Inline callbacks (e.g. arr.every(x => ...)) are NOT architecture nodes.
   // We skip registering them as functions and keep call attribution on the
@@ -294,6 +324,109 @@ export function parseJsTsAst(src, filename, baseDir, out, helpers) {
     if (left.type === "Identifier") return left.name;
     if (left.type === "MemberExpression" && left.property) return getKeyName(left.property);
     return null;
+  };
+
+  const addAliasTarget = (aliasName, targetName) => {
+    const alias = String(aliasName || "").trim();
+    const target = String(targetName || "").trim();
+    if (!alias || !target) return;
+    if (alias === target) return;
+
+    let bucket = fnAliasTargets.get(alias);
+    if (!bucket) {
+      bucket = new Set();
+      fnAliasTargets.set(alias, bucket);
+    }
+
+    bucket.add(target);
+  };
+
+  const clearAliasTargets = (aliasName) => {
+    const alias = String(aliasName || "").trim();
+    if (!alias) return;
+    fnAliasTargets.delete(alias);
+  };
+
+  /**
+   * Collect identifier-based function references from a shallow expression tree.
+   *
+   * Scope
+   * -----
+   * This is intentionally conservative. We only walk expression shapes that are
+   * useful for simple local aliasing such as:
+   * - `const x = foo;`
+   * - `const x = a || foo;`
+   * - `const x = cond ? foo : bar;`
+   * - `x = (foo, bar);`
+   *
+   * We do NOT try to perform general data-flow analysis here.
+   */
+  const collectFnRefsFromExpression = (expr, outNames = new Set()) => {
+    if (!expr) return outNames;
+
+    if (expr.type === "Identifier") {
+      outNames.add(expr.name);
+      return outNames;
+    }
+
+    for (const child of getAliasExpressionChildren(expr)) {
+      collectFnRefsFromExpression(child, outNames);
+    }
+
+    return outNames;
+  };
+
+  function getAliasExpressionChildren(expr) {
+    if (!expr) return [];
+
+    const type = expr.type;
+    if (type === "LogicalExpression" || type === "BinaryExpression") {
+      return [expr.left, expr.right];
+    }
+
+    if (type === "ConditionalExpression") {
+      return [expr.test, expr.consequent, expr.alternate];
+    }
+
+    return getSingleAliasExpressionChildren(expr);
+  }
+
+  function getSingleAliasExpressionChildren(expr) {
+    const type = expr?.type;
+
+    if (type === "AssignmentExpression") return [expr.right];
+    if (type === "ParenthesizedExpression") return [expr.expression];
+    if (type === "SequenceExpression") return safeExpressionList(expr.expressions);
+
+    return [];
+  }
+
+  function safeExpressionList(expressions) {
+    return Array.isArray(expressions) ? expressions : [];
+  }
+
+  const updateAliasTargets = (aliasName, expr) => {
+    const alias = String(aliasName || "").trim();
+    if (!alias) return;
+
+    const refs = collectFnRefsFromExpression(expr);
+    if (!refs.size) {
+      clearAliasTargets(alias);
+      return;
+    }
+
+    clearAliasTargets(alias);
+    for (const ref of refs) {
+      addAliasTarget(alias, ref);
+    }
+  };
+
+  const getAliasTargets = (aliasName) => {
+    const alias = String(aliasName || "").trim();
+    if (!alias) return [];
+
+    const refs = fnAliasTargets.get(alias);
+    return refs ? Array.from(refs) : [];
   };
 
   const isAccessorMethod = (n) => {
@@ -367,18 +500,46 @@ export function parseJsTsAst(src, filename, baseDir, out, helpers) {
     return null;
   };
 
+  /**
+   * Infer a function name from the direct parent node.
+   *
+   * Why this exists
+   * ---------------
+   * Function expressions and arrow functions often do not carry a stable name on
+   * the function node itself, for example:
+   * - `const foo = () => {}`
+   * - `obj.bar = function () {}`
+   *
+   * In those cases the surrounding parent node is the best static signal for a
+   * useful emitted function name.
+   *
+   * Supported parent patterns
+   * -------------------------
+   * - VariableDeclarator   -> `const foo = () => {}`        => `foo`
+   * - AssignmentExpression -> `obj.bar = function () {}`    => `bar`
+   *
+   * Deliberate limits
+   * -----------------
+   * This helper only inspects the *direct* parent. It stays intentionally small
+   * and deterministic so architecture-mode naming does not become overly clever
+   * or unstable.
+   *
+   * @param {any} parent
+   * @returns {string|null}
+   */
   const inferNameFromParent = (parent) => {
     if (!parent) return null;
 
-    if (parent.type === "VariableDeclarator" && parent.id?.type === "Identifier") {
-      return parent.id.name;
-    }
+    switch (parent.type) {
+      case "VariableDeclarator":
+        return parent.id?.type === "Identifier" ? parent.id.name : null;
 
-    if (parent.type === "AssignmentExpression") {
-      return getAssignmentTargetName(parent.left);
-    }
+      case "AssignmentExpression":
+        return getAssignmentTargetName(parent.left);
 
-    return null;
+      default:
+        return null;
+    }
   };
 
   const inferFnName = (p) => {
@@ -561,6 +722,20 @@ export function parseJsTsAst(src, filename, baseDir, out, helpers) {
     }
   };
 
+  const handleVariableDeclarator = (p) => {
+    const id = p?.node?.id;
+    if (id?.type !== "Identifier") return;
+
+    updateAliasTargets(id.name, p?.node?.init);
+  };
+
+  const handleAssignmentExpression = (p) => {
+    const left = p?.node?.left;
+    if (left?.type !== "Identifier") return;
+
+    updateAliasTargets(left.name, p?.node?.right);
+  };
+
   const isRequireCall = (callee, arg0) =>
     callee?.type === "Identifier" &&
     callee.name === "require" &&
@@ -583,6 +758,19 @@ export function parseJsTsAst(src, filename, baseDir, out, helpers) {
     if (!isRequireCall(callee, arg0)) return false;
     const spec = String(arg0.value || "").trim();
     if (spec) out.imports.push(spec);
+    return true;
+  };
+
+  const maybeRecordAliasedIdentifierCall = (callee) => {
+    if (callee?.type !== "Identifier") return false;
+
+    const targets = getAliasTargets(callee.name);
+    if (!targets.length) return false;
+
+    for (const target of targets) {
+      recordCall(target);
+    }
+
     return true;
   };
 
@@ -632,6 +820,7 @@ export function parseJsTsAst(src, filename, baseDir, out, helpers) {
     const { callee, arg0 } = getCalleeAndFirstArg(p);
 
     if (maybeRecordRequireImport(callee, arg0)) return;
+    if (maybeRecordAliasedIdentifierCall(callee)) return;
     if (maybeRecordIdentifierCall(callee)) return;
 
     maybeRecordMemberCall(callee);
@@ -731,7 +920,9 @@ export function parseJsTsAst(src, filename, baseDir, out, helpers) {
     handleImportDeclaration,
     handleCallExpression,
     handleExportNamedDeclaration,
-    handleExportDefaultDeclaration
+    handleExportDefaultDeclaration,
+    handleVariableDeclarator,
+    handleAssignmentExpression
   };
 
   traverseAst(ast, buildVisitors(api));

@@ -53,10 +53,16 @@ const DEFAULT_IGNORE_NAMES = new Set([
   "__MACOSX"
 ]);
 
-/**
- * Convert an absolute path to a stable project-relative id.
- * - Uses POSIX separators in ids, regardless of OS.
- * - Never returns a leading "./".
+
+ /**
+ * Default path → node id mapping.
+ *
+ * Converts an absolute path into a stable project-relative id:
+ * - relative to project root
+ * - always POSIX separators (/)
+ * - never starts with "./"
+ *
+ * Used when no custom `opts.toId` function is provided.
  *
  * @param {string} projectRootAbs
  * @param {string} abs

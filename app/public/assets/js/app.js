@@ -12,16 +12,17 @@
  * - Requires marked + DOMPurify for README HTML rendering (optional fallback)
  * - Expects a hidden input: <input type="hidden" id="appSelect" value="">
  * - Expects: #appList, #status, #graphInfoPanel, #readmePanel, #codeStructureSvg
- * - Uses ESM import: initcodeStructureChart(svgId, metrics, { onNodeSelected })
- * - Uses ESM import for other helpers; no window namespace bridge.
+ * - Uses ESM imports: initcodeStructureChart(svgId, metrics, { onNodeSelected })
+ * - Uses ESM imports for other helpers
  */
+
 "use strict";
 
 import { initcodeStructureChart } from "./d3_codeStructure.js";
 
 // App-local state (no window globals)
 let selectedNode = null;
-let hasRenderedGraphOnce = false;
+
 let graphController = null;
 
   /* ======================================================================= */
@@ -65,7 +66,6 @@ let graphController = null;
       } catch { }
     });
   }
-
 
   function ensurePanelsExist() {
     const missing = [];
@@ -1124,19 +1124,58 @@ let graphController = null;
     return loc;
   }
 
-  function updateGraphHeader(metrics) {
-    try {
-      const appId = getSelectedAppId();
-      const nodes = pickNodes(metrics);
-      const fnCount = countFunctions(nodes);
-      const loc = sumLoc(nodes);
+function setTextById(id, text) {
+  const el = byId(id);
+  if (!el) return false;
+  el.textContent = String(text || "");
+  return true;
+}
 
-      const h = document.getElementById("graphInfoHeader");
-      if (h) h.textContent = `${appId} · ƒ ${fnCount} · LOC ${loc}`;
-    } catch {
-      // Non-fatal UI header enrichment.
-    }
+function compactStat(label, value) {
+  return `${label} ${Number(value || 0)}`;
+}
+
+function joinHeaderParts(parts) {
+  return (parts || []).filter(Boolean).join(" · ");
+}
+
+function buildCurrentAppSummary(cfg = {}) {
+  return joinHeaderParts([
+    String(cfg.appLabel || cfg.appId || "Current app"),
+    compactStat("ƒ", cfg.functionCount),
+    compactStat("LOC", cfg.loc),
+  ]);
+}
+
+function deriveGraphStats(metrics) {
+  const nodes = pickNodes(metrics);
+  return {
+    functionCount: countFunctions(nodes),
+    loc: sumLoc(nodes),
+  };
+}
+
+function updateTextSummary(targetId, buildText) {
+  try {
+    const text = typeof buildText === "function" ? buildText() : "";
+    if (!text) return false;
+    return setTextById(targetId, text);
+  } catch {
+    return false;
   }
+}
+
+function updateCurrentAppSummary(metrics) {
+  return updateTextSummary("currentAppSummary", () => {
+    const appId = getSelectedAppId();
+    const stats = deriveGraphStats(metrics);
+    return buildCurrentAppSummary({
+      appId,
+      functionCount: stats.functionCount,
+      loc: stats.loc,
+    });
+  });
+}
 
   function statusDone(data) {
     setStatus(`Done. Nodes: ${data.summary?.nodes ?? "?"}, Links: ${data.summary?.links ?? "?"}`);
@@ -1177,8 +1216,8 @@ let graphController = null;
       const metrics = await fetchJson(data.metricsUrl);
       renderGraph(metrics);
 
-      // Header is updated by the renderer; keep this as a best-effort fallback.
-      updateGraphHeader(metrics);
+      // Best-effort summary update for the current app accordion header.
+      updateCurrentAppSummary(metrics);
 
       statusDone(data);
     } catch (e) {

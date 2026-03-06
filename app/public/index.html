@@ -44,15 +44,17 @@
       <aside class="col-12 col-lg-5 col-xl-4">
         <div class="accordion" id="rightAccordion">
 
-          <!-- Apps -->
+          <!-- Current app -->
           <div class="accordion-item">
             <h2 class="accordion-header" id="accAppsHdr">
-              <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse" data-bs-target="#accApps" aria-expanded="false" aria-controls="accApps">
-                <span class="small fw-semibold">Apps</span>
-                <span class="badge bg-secondary ms-2" id="appsCountBadge">0</span>
+              <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse"
+                data-bs-target="#accApps" aria-expanded="false" aria-controls="accApps">
+               
+                <span class="small fw-semibold" id="currentAppSummary">Current app</span>
               </button>
             </h2>
-            <div id="accApps" class="accordion-collapse collapse" aria-labelledby="accAppsHdr" data-bs-parent="#rightAccordion">
+            <div id="accApps" class="accordion-collapse collapse" aria-labelledby="accAppsHdr"
+              data-bs-parent="#rightAccordion">
               <div class="accordion-body p-2">
                 <div id="appList" class="appsList appsScroll" role="list">
                   <div class="text-secondary small px-2 py-2">Loading…</div>
@@ -61,48 +63,55 @@
                 <!-- Hidden state used by runAnalysis() -->
                 <input type="hidden" id="appSelect" value="" />
 
-                <div class="d-flex gap-2 align-items-center mt-2">
-                  <button type="button" class="btn btn-outline-secondary btn-sm" id="helpBtn">Help</button>
-                </div>
-              </div>
-            </div>
-          </div>
 
-          <!-- Recommendations -->
-          <div class="accordion-item">
-            <h2 class="accordion-header" id="accRecoHdr">
-              <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse" data-bs-target="#accReco" aria-expanded="false" aria-controls="accReco">
-                <span class="small fw-semibold">Recommendations</span>
-                <span class="badge bg-secondary ms-2" id="recoCountBadge">0</span>
-              </button>
-            </h2>
-            <div id="accReco" class="accordion-collapse collapse" aria-labelledby="accRecoHdr" data-bs-parent="#rightAccordion">
-              <div class="accordion-body panelScroll" id="recommendationsPanel"></div>
+              </div>
             </div>
           </div>
 
           <!-- Legend & Filter -->
           <div class="accordion-item">
             <h2 class="accordion-header" id="accLegendHdr">
-              <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse" data-bs-target="#accLegend" aria-expanded="false" aria-controls="accLegend">
+              <button class="accordion-button py-2" type="button" data-bs-toggle="collapse" data-bs-target="#accLegend"
+                aria-expanded="true" aria-controls="accLegend">
                 <span class="small fw-semibold">Legend &amp; Filter</span>
                 <span class="small text-secondary ms-2" id="filterSummary">architecture</span>
               </button>
             </h2>
-            <div id="accLegend" class="accordion-collapse collapse" aria-labelledby="accLegendHdr" data-bs-parent="#rightAccordion">
+
+            <div id="accLegend" class="accordion-collapse collapse show" aria-labelledby="accLegendHdr"
+              data-bs-parent="#rightAccordion">
               <div class="accordion-body panelScroll" id="legendFilterPanel"></div>
             </div>
           </div>
 
+          <!-- Recommendations -->
+          <div class="accordion-item">
+            <h2 class="accordion-header" id="accRecoHdr">
+              <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse"
+                data-bs-target="#accReco" aria-expanded="false" aria-controls="accReco">
+                <span class="small fw-semibold">Recommendations</span>
+                <span class="badge bg-secondary ms-2" id="recoCountBadge">0</span>
+              </button>
+            </h2>
+            <div id="accReco" class="accordion-collapse collapse" aria-labelledby="accRecoHdr"
+              data-bs-parent="#rightAccordion">
+              <div class="accordion-body panelScroll" id="recommendationsPanel"></div>
+            </div>
+          </div>
+
+
+
           <!-- Selection -->
           <div class="accordion-item">
             <h2 class="accordion-header" id="accSelectionHdr">
-              <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse" data-bs-target="#accSelection" aria-expanded="false" aria-controls="accSelection">
+              <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse"
+                data-bs-target="#accSelection" aria-expanded="false" aria-controls="accSelection">
                 <span class="small fw-semibold">Selection</span>
                 <span class="small text-secondary ms-2" id="selectionSummary">none</span>
               </button>
             </h2>
-            <div id="accSelection" class="accordion-collapse collapse" aria-labelledby="accSelectionHdr" data-bs-parent="#rightAccordion">
+            <div id="accSelection" class="accordion-collapse collapse" aria-labelledby="accSelectionHdr"
+              data-bs-parent="#rightAccordion">
               <div class="accordion-body panelScroll" id="graphInfoPanel"></div>
             </div>
           </div>
@@ -110,12 +119,14 @@
           <!-- README -->
           <div class="accordion-item">
             <h2 class="accordion-header" id="accReadmeHdr">
-              <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse" data-bs-target="#accReadme" aria-expanded="false" aria-controls="accReadme">
+              <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse"
+                data-bs-target="#accReadme" aria-expanded="false" aria-controls="accReadme">
                 <span class="small fw-semibold">README</span>
                 <span class="small text-secondary ms-2" id="readmeSummary">none</span>
               </button>
             </h2>
-            <div id="accReadme" class="accordion-collapse collapse" aria-labelledby="accReadmeHdr" data-bs-parent="#rightAccordion">
+            <div id="accReadme" class="accordion-collapse collapse" aria-labelledby="accReadmeHdr"
+              data-bs-parent="#rightAccordion">
               <div class="accordion-body panelScroll" id="readmePanel"></div>
             </div>
           </div>

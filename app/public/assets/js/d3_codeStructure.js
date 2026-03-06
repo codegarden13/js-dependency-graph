@@ -6,6 +6,7 @@ import CodeGraphInteractions from "./codeGraph/interactions.js";
 import CodeGraphHulls from "./codeGraph/hulls.js";
 import * as CodeGraphUI from "./codeGraph/ui.js";
 import { ensureTooltip, showTooltip, moveTooltip, hideTooltip } from "./codeGraph/ui.tooltip.js";
+import { wireLegendAndFilters } from "./codeGraph/ui.filters.js";
 /**
  * D3 Code Structure Graph Renderer
  * ===========================
@@ -1002,30 +1003,78 @@ function formatUnknownExamples(unknown) {
     }
     
 
-    function createSimulation(nodes, links, width, height, getRadius) {
-      const layout = deriveLayoutDefaults(nodes, links, getRadius);
+    function createSimulation(opts) {
+      const simOpts = normalizeSimulationOptions(opts);
+      const layout = deriveLayoutDefaults(simOpts.nodes, simOpts.links, simOpts.getRadius);
 
-      const simulation = d3.forceSimulation(nodes)
-        .force(
-          "link",
-          d3.forceLink(links)
-            .id((d) => d.id)
-            .distance((l) => layout.linkDistanceFn(l))
-            .strength((l) => layout.linkStrengthFn(l))
-        )
-        .force(
-          "charge",
-          d3.forceManyBody()
-            .strength((d) => layout.chargeStrengthFn(d))
-            .distanceMin(layout.chargeDistanceMin)
-            .distanceMax(layout.chargeDistanceMax)
-        )
-        .force("collide", d3.forceCollide().radius((d) => getRadius(d) + 4).iterations(2))
-        .force("x", d3.forceX(width / 2).strength(layout.centerStrength))
-        .force("y", d3.forceY(height / 2).strength(layout.centerStrength))
-        .force("center", d3.forceCenter(width / 2, height / 2));
+      return d3.forceSimulation(simOpts.nodes)
+        .force("link", createLinkForce(simOpts.links, layout))
+        .force("charge", createChargeForce(layout))
+        .force("collide", createCollideForce(simOpts.getRadius))
+        .force("x", createForceX(simOpts.width, layout))
+        .force("y", createForceY(simOpts.height, layout))
+        .force("center", createCenterForce(simOpts.width, simOpts.height));
+    }
 
-      return simulation;
+    function normalizeSimulationOptions(opts) {
+      const o = (opts && typeof opts === "object") ? opts : Object.create(null);
+
+      return {
+        nodes: readSimulationNodes(o.nodes),
+        links: readSimulationLinks(o.links),
+        width: readSimulationNumber(o.width),
+        height: readSimulationNumber(o.height),
+        getRadius: readSimulationRadiusFn(o.getRadius),
+      };
+    }
+
+    function readSimulationNodes(v) {
+      return Array.isArray(v) ? v : [];
+    }
+
+    function readSimulationLinks(v) {
+      return Array.isArray(v) ? v : [];
+    }
+
+    function readSimulationNumber(v) {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : 0;
+    }
+
+    function readSimulationRadiusFn(v) {
+      return (typeof v === "function") ? v : () => 0;
+    }
+
+    function createLinkForce(links, layout) {
+      return d3.forceLink(links)
+        .id((d) => d.id)
+        .distance((l) => layout.linkDistanceFn(l))
+        .strength((l) => layout.linkStrengthFn(l));
+    }
+
+    function createChargeForce(layout) {
+      return d3.forceManyBody()
+        .strength((d) => layout.chargeStrengthFn(d))
+        .distanceMin(layout.chargeDistanceMin)
+        .distanceMax(layout.chargeDistanceMax);
+    }
+
+    function createCollideForce(getRadius) {
+      return d3.forceCollide()
+        .radius((d) => getRadius(d) + 4)
+        .iterations(2);
+    }
+
+    function createForceX(width, layout) {
+      return d3.forceX(width / 2).strength(layout.centerStrength);
+    }
+
+    function createForceY(height, layout) {
+      return d3.forceY(height / 2).strength(layout.centerStrength);
+    }
+
+    function createCenterForce(width, height) {
+      return d3.forceCenter(width / 2, height / 2);
     }
 
     function renderLinks(linkGroup, links) {
@@ -1444,160 +1493,44 @@ function readChangeAt(evt) {
   // Legend + Filter wiring
   // -------------------------------------------------------------------
 
-  /** @param {any} fn */
-  function isFn(fn) {
-    return typeof fn === "function";
-  }
-
-  /**
-   * Narrow value to a plain object.
-   * Keeps downstream code branch-free (small CC).
-   * @param {any} v
-   * @returns {Record<string, any>|null}
-   */
-  function asPlainObject(v) {
-    return (v && typeof v === "object") ? /** @type {any} */ (v) : null;
-  }
-
-  /**
-   * Read and normalize `svgId` from a context object.
-   * @param {Record<string, any>|null} obj
-   * @returns {string}
-   */
-  function readSvgId(obj) {
-    return String(obj?.svgId || "").trim();
-  }
-
-  /**
-   * Read an array field or return an empty array.
-   * @param {any} v
-   * @returns {any[]}
-   */
-  function asArray(v) {
-    return Array.isArray(v) ? v : [];
-  }
-
-  /**
-   * Read the `sels` container or return an empty object.
-   * @param {any} v
-   * @returns {Record<string, any>}
-   */
-  function asObjectOrEmpty(v) {
-    return (v && typeof v === "object") ? /** @type {any} */ (v) : Object.create(null);
-  }
-
-  /**
-   * Normalize the incoming legend/filter wiring context.
-   *
-   * Why it exists:
-   * - The renderer can be called from different pages.
-   * - We want one safe shape for wiring without spreading null-checks.
-   *
-   * The function is intentionally tiny:
-   * - coerce to object
-   * - read svgId (required)
-   * - normalize nodes/links arrays
-   * - normalize selections container
-   *
-   * @param {any} ctx
-   * @returns {{svgId:string, metrics:any, nodes:any[], links:any[], sels:any}|null}
-   */
-  function normalizeLegendFilterCtx(ctx) {
-    const obj = asPlainObject(ctx);
-    if (!obj) return null;
-
-    const svgId = readSvgId(obj);
-    if (!svgId) return null;
-
-    return {
-      svgId,
-      metrics: obj.metrics,
-      nodes: asArray(obj.nodes),
-      links: asArray(obj.links),
-      sels: asObjectOrEmpty(obj.sels),
-    };
-  }
-
-  /**
-   * Extract only the D3 selections we care about.
-   * @param {any} sels
-   */
   function pickLegendSelections(sels) {
+    const s = (sels && typeof sels === "object") ? sels : Object.create(null);
     return {
-      nodeShapeSel: sels?.nodeShapeSel,
-      labelSel: sels?.labelSel,
-      linkSel: sels?.linkSel,
-      unusedBadgeSel: sels?.unusedBadgeSel
+      nodeShapeSel: s.nodeShapeSel,
+      labelSel: s.labelSel,
+      linkSel: s.linkSel,
+      unusedBadgeSel: s.unusedBadgeSel,
     };
   }
 
-  /**
-   * Legacy (pre-panel) UI. Still called for backward compatibility.
-   */
+  function buildLegendFilterDeps() {
+    return {
+      buildLegendFilterPanel: CodeGraphUI?.buildLegendFilterPanel,
+      attachLegendFilterWiring: CodeGraphUI?.attachLegendFilterWiring,
+      getState: CodeGraphUI?.getState,
+      stateBySvgId: CodeGraphUI?.stateBySvgId,
+      dispatchFiltersChanged: CodeGraphUI?.dispatchFiltersChanged,
+      updateGroupFilter: CodeGraphUI?.updateGroupFilter,
+      updateLinkFilter: CodeGraphUI?.updateLinkFilter,
+      updateOptionFilter: CodeGraphUI?.updateOptionFilter,
+      escapeHtml: CodeGraphUI?.escapeHtml,
+      nodeGroupColors: NODE_GROUP_COLORS,
+      linkTypeColors: LINK_TYPE_COLORS,
+    };
+  }
+
+  function buildLegendFilterCtx(cfg) {
+    const c = (cfg && typeof cfg === "object") ? cfg : Object.create(null);
+    return {
+      svgId: String(c.svgId || ""),
+      nodes: Array.isArray(c.nodes) ? c.nodes : [],
+      links: Array.isArray(c.links) ? c.links : [],
+      sels: pickLegendSelections(c.sels),
+      deps: buildLegendFilterDeps(),
+    };
+  }
+
   
-  /*
-  function renderLegacyLegendAndFilters(svgId, metrics, nodes, links, sels) {
-    if (isFn(CodeGraphUI?.setupGraphFilters)) {
-      CodeGraphUI.setupGraphFilters(svgId, metrics, sels.nodeShapeSel, sels.linkSel);
-    }
-
-    if (isFn(CodeGraphUI?.buildGraphLegend)) {
-      CodeGraphUI.buildGraphLegend(
-        svgId,
-        nodes,
-        links,
-        NODE_GROUP_COLORS,
-        LINK_TYPE_COLORS,
-        clusterColor
-      );
-    }
-  }
-  */
-
-  /**
-   * Unified legend/filter panel.
-   */
-  function renderLegendFilterPanel(svgId, nodes, links) {
-    if (isFn(CodeGraphUI?.buildLegendFilterPanel)) {
-      CodeGraphUI.buildLegendFilterPanel(svgId, nodes, links);
-    }
-  }
-
-  /**
-   * Attach the filter -> D3 selection wiring (live show/hide).
-   */
-  function attachLegendFilterWiringOrWarn(svgId, nodes, links, sels) {
-    if (!isFn(CodeGraphUI?.attachLegendFilterWiring)) {
-      console.warn(
-        "CodeGraphUI.attachLegendFilterWiring missing. Update public/assets/js/codeGraph/ui.js to enable live filter repaint."
-      );
-      return;
-    }
-
-    CodeGraphUI.attachLegendFilterWiring(svgId, nodes, links, sels);
-  }
-
-  /**
-   * Wire legend + filters for this graph instance.
-   *
-   * This function stays intentionally small:
-   * - normalize input
-   * - render legacy UI bits
-   * - render the panel
-   * - attach the live wiring
-   *
-   * @param {any} ctx
-   */
-  function wireLegendAndFilters(ctx) {
-    const c = normalizeLegendFilterCtx(ctx);
-    if (!c) return;
-
-    const sels = pickLegendSelections(c.sels);
-
-    //renderLegacyLegendAndFilters(c.svgId, c.metrics, c.nodes, c.links, sels);
-    renderLegendFilterPanel(c.svgId, c.nodes, c.links);
-    attachLegendFilterWiringOrWarn(c.svgId, c.nodes, c.links, sels);
-  }
 
     // -------------------------------------------------------------------
     // 1) Setup SVG
@@ -1626,7 +1559,7 @@ function readChangeAt(evt) {
     // 3) Encoders + simulation
     // -------------------------------------------------------------------
     const enc = makeEncoders(nodes);
-    const simulation = createSimulation(nodes, links, width, height, enc.getRadius);
+    const simulation = createSimulation({ nodes, links, width, height, getRadius: enc.getRadius });
 
     // -------------------------------------------------------------------
     // 4) Render
@@ -1674,10 +1607,9 @@ function readChangeAt(evt) {
     // -------------------------------------------------------------------
     // 7) UI integrations (legend/filter + event wiring)
     // -------------------------------------------------------------------
-    // Bundle UI wiring inputs once (keeps the call-site compact).
-    const legendFilterCtx = {
+    // Bundle legend/filter wiring inputs once.
+    const legendFilterCtx = buildLegendFilterCtx({
       svgId,
-      metrics,
       nodes,
       links,
       sels: {
@@ -1686,7 +1618,7 @@ function readChangeAt(evt) {
         linkSel,
         unusedBadgeSel
       }
-    };
+    });
 
     wireLegendAndFilters(legendFilterCtx);
 
@@ -1820,6 +1752,13 @@ function getDepChecks() {
     // UI
     { label: "CodeGraphUI.escapeHtml", isPresent: () => Boolean(CodeGraphUI?.escapeHtml) },
     { label: "CodeGraphUI.attachLegendFilterWiring", isPresent: () => Boolean(CodeGraphUI?.attachLegendFilterWiring) },
+    { label: "CodeGraphUI.buildLegendFilterPanel", isPresent: () => Boolean(CodeGraphUI?.buildLegendFilterPanel) },
+    { label: "CodeGraphUI.getState", isPresent: () => Boolean(CodeGraphUI?.getState) },
+    { label: "CodeGraphUI.stateBySvgId", isPresent: () => Boolean(CodeGraphUI?.stateBySvgId) },
+    { label: "CodeGraphUI.dispatchFiltersChanged", isPresent: () => Boolean(CodeGraphUI?.dispatchFiltersChanged) },
+    { label: "CodeGraphUI.updateGroupFilter", isPresent: () => Boolean(CodeGraphUI?.updateGroupFilter) },
+    { label: "CodeGraphUI.updateLinkFilter", isPresent: () => Boolean(CodeGraphUI?.updateLinkFilter) },
+    { label: "CodeGraphUI.updateOptionFilter", isPresent: () => Boolean(CodeGraphUI?.updateOptionFilter) },
   ];
 }
 
