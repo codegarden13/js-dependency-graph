@@ -281,27 +281,6 @@ function handleReferencedFile(ctx, fileAbs) {
   });
 }
 
-
-
-function shouldApplySkeletonFallback(nodeCount, linkCount) {
-  // Conservative trigger: only if we basically found nothing.
-  return !(nodeCount > 5 || linkCount > 1);
-}
-
-function ensureRootNode(ensureNode) {
-  const rootId = ".";
-  ensureNode({
-    id: rootId,
-    file: rootId,
-    kind: "root",
-    type: "root",
-    lines: 0,
-    complexity: 0,
-    headerComment: ""
-  });
-  return rootId;
-}
-
 function ensureDirNode(ensureNode, dirId) {
   ensureNode({
     id: dirId,
@@ -394,90 +373,6 @@ function isAllowedSkeletonFile(name) {
   return true;
 }
 
-function addSkeletonFilesInDir({ rootAbs, dirAbs, dirId, ensureNode, ensureLink }) {
-  const entries = safeReadDir(dirAbs);
-
-  let fileCount = 0;
-  for (const name of entries) {
-    if (fileCount >= AUTO_MAX_SKELETON_FILES_PER_DIR) break;
-    if (!isAllowedSkeletonFile(name)) continue;
-
-    const childAbs = path.join(dirAbs, name);
-    const st = safeStat(childAbs);
-    if (!st || !st.isFile()) continue;
-
-    const childId = toProjectRelativeId(rootAbs, childAbs);
-
-    ensureFileNode(ensureNode, childId, childAbs);
-    ensureLink(dirId, childId, "include");
-
-    fileCount++;
-  }
-}
-
-function addPreferredDirsSkeleton({ rootAbs, rootId, ensureNode, ensureLink }) {
-  let addedDirs = 0;
-
-  for (const dirName of AUTO_PREFERRED_DIRS) {
-    if (addedDirs >= AUTO_MAX_SKELETON_DIRS) break;
-    if (!dirName || AUTO_SKIP_NAMES.has(dirName)) continue;
-
-    const dirAbs = path.join(rootAbs, dirName);
-    const st = safeStat(dirAbs);
-    if (!st || !st.isDirectory()) continue;
-
-    const dirId = toProjectRelativeId(rootAbs, dirAbs);
-
-    ensureDirNode(ensureNode, dirId);
-    ensureLink(rootId, dirId, "include");
-
-    addSkeletonFilesInDir({ rootAbs, dirAbs, dirId, ensureNode, ensureLink });
-
-    addedDirs++;
-  }
-}
-
-function addTopLevelFilesSkeleton({ rootAbs, rootId, ensureNode, ensureLink }) {
-  for (const name of AUTO_TOP_FILES) {
-    if (!name) continue;
-
-    const abs = path.join(rootAbs, name);
-    const st = safeStat(abs);
-    if (!st || !st.isFile()) continue;
-
-    const id = toProjectRelativeId(rootAbs, abs);
-
-    ensureFileNode(ensureNode, id, abs);
-    ensureLink(rootId, id, "include");
-  }
-}
-
-/**
- * Skeleton fallback: add a shallow, read-only “project map” when the graph
- * is nearly empty (common for single-file apps).
- *
- * @param {object} args
- * @param {string} args.projectRootAbs
- * @param {number} args.nodeCount
- * @param {number} args.linkCount
- * @param {(node:object)=>boolean} args.ensureNode
- * @param {(sourceId:string,targetId:string,type:string)=>boolean} args.ensureLink
- */
-export function applySkeletonFallback({
-  projectRootAbs,
-  nodeCount,
-  linkCount,
-  ensureNode,
-  ensureLink
-}) {
-  if (!shouldApplySkeletonFallback(nodeCount, linkCount)) return;
-
-  const rootAbs = path.resolve(projectRootAbs);
-  const rootId = ensureRootNode(ensureNode);
-
-  addPreferredDirsSkeleton({ rootAbs, rootId, ensureNode, ensureLink });
-  addTopLevelFilesSkeleton({ rootAbs, rootId, ensureNode, ensureLink });
-}
 
 /* ========================================================================== */
 /* DIRECTORY EXPANSION                                                       */
@@ -493,7 +388,7 @@ export function applySkeletonFallback({
  *
  * @param {object} args
  */
-export function expandDirectoryBounded(args) {
+function expandDirectoryBounded(args) {
   const ctx = normalizeExpandDirArgs(args);
   if (!ctx) return;
 
@@ -605,7 +500,7 @@ function expandChildFile(fileAbs, entryName, ctx) {
   });
 }
 
-export function tryParseReferencedTextFile(args) {
+function tryParseReferencedTextFile(args) {
   const ctx = normalizeTryParseTextArgs(args);
   if (!ctx) return;
 
@@ -747,18 +642,6 @@ function toAbsFromRelMaybe(projectRootAbs, relOrAbs) {
   return path.resolve(projectRootAbs, raw);
 }
 
-
-
-function toProjectRelativeId(projectRootAbs, absPath) {
-  const rootAbs = path.resolve(projectRootAbs);
-  const fileAbs = path.resolve(absPath);
-
-  let rel = path.relative(rootAbs, fileAbs);
-  if (rel.startsWith(".." + path.sep) || rel === "..") {
-    rel = path.basename(fileAbs);
-  }
-  return rel.replace(/\\/g, "/");
-}
 /**
  * Classify a file into one of the allowed graph groups.
  *
