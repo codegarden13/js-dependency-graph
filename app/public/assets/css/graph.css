@@ -120,6 +120,9 @@
   --graph-hotspot-badge-stroke-width: 1.5px;
   --graph-hotspot-badge-opacity: 1;
   --graph-hotspot-halo-opacity: 0.95;
+ 
+  --graph-exported-function-ring: #16a34a;
+
 }
 
 #codeStructureSvg .codegraph-node {

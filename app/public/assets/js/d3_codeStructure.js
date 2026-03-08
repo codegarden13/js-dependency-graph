@@ -1,5 +1,5 @@
 // public/assets/js/d3_codeStructure.js
-// ESM version: explicit imports (no window namespace bridge)
+// Rendern → Repaint-Controller bauen → Initial repaint → später wiederverwenden
 
 import CodeGraphData from "./codeGraph/data.js";
 import CodeGraphInteractions from "./codeGraph/interactions.js";
@@ -80,7 +80,7 @@ const LINK_TYPE_COLORS = {
 };
 
 // Highlight color for exported function nodes
-const EXPORTED_FUNCTION_COLOR = "#ff6666";
+const EXPORTED_FUNCTION_COLOR = "var(--graph-exported-function-ring)";
 
 // Stable cluster palette for hull rendering.
 const clusterColor = d3.scaleOrdinal(d3.schemeSet3);
@@ -444,7 +444,7 @@ export function initcodeStructureChart(svgId, metrics, opts = {}) {
       .text((d) => d.__displayLabel || (d.id || "").split("/").pop());
   }
 
- 
+
   /**
    * Attach node interaction behavior supplied by the interaction module.
    */
@@ -784,20 +784,21 @@ export function initcodeStructureChart(svgId, metrics, opts = {}) {
   // -------------------------------------------------------------------
   // 5) Repaint + initial apply (unused styles, rings, badges)
   // -------------------------------------------------------------------
- // Repaint helpers now live in `codeGraph/render.repaint.js`.
-const repaintNodes = makeRepaint({
-  nodes,
-  enc,
-  nodeBodySel,
-  fnRingSel,
-  unusedBadgeSel,
-  labelSel,
-  isFunctionNode,
-  isUnusedFunctionNode,
-  getFunctionRingWidth,
-  exportedFunctionColor: EXPORTED_FUNCTION_COLOR
-});
+  // Repaint helpers now live in `codeGraph/render.repaint.js`.
+  const repaintNodes = makeRepaint({
+    nodes,
+    enc,
+    nodeBodySel,
+    fnRingSel,
+    unusedBadgeSel,
+    labelSel,
+    isFunctionNode,
+    isUnusedFunctionNode,
+    getFunctionRingWidth,
+    exportedFunctionColor: EXPORTED_FUNCTION_COLOR
+  });
   repaintNodes();
+
 
   // -------------------------------------------------------------------
   // 6) Wire interactions + simulation loops

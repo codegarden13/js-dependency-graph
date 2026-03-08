@@ -128,8 +128,10 @@ function ringRadius(d, enc) {
  * @returns {string}
  */
 function ringStroke(d, isFunctionNode, exportedFunctionColor) {
-  if (!isFunctionNode(d)) return "transparent";
-  return (d?.exported === true) ? exportedFunctionColor : "rgba(0,0,0,0.25)";
+  if (!shouldShowFunctionRing(d, isFunctionNode)) return "transparent";
+  return hasExportedFunctionSignal(d, isFunctionNode)
+    ? exportedFunctionColor
+    : "rgba(0,0,0,0.25)";
 }
 
 /**
@@ -144,7 +146,7 @@ function ringStroke(d, isFunctionNode, exportedFunctionColor) {
  * @returns {number}
  */
 function ringOpacity(d, isFunctionNode) {
-  return isFunctionNode(d) ? 0.95 : 0;
+  return shouldShowFunctionRing(d, isFunctionNode) ? 0.95 : 0;
 }
 
 /**
@@ -160,7 +162,34 @@ function ringOpacity(d, isFunctionNode) {
  * @returns {number}
  */
 function ringWidth(d, isFunctionNode, getFunctionRingWidth) {
-  return isFunctionNode(d) ? getFunctionRingWidth(d) : 0;
+  if (!shouldShowFunctionRing(d, isFunctionNode)) return 0;
+
+  const ownWidth = Number(getFunctionRingWidth(d)) || 0;
+  if (ownWidth > 0) return ownWidth;
+
+  return hasExportedChildFunction(d) ? 2 : 1.5;
+}
+
+/** Read child functions from a module/file node. */
+function getChildFunctions(d, isFunctionNode) {
+  const items = Array.isArray(d?.children) ? d.children : [];
+  return items.filter((child) => isFunctionNode(child));
+}
+
+/** Read whether a node owns at least one exported child function. */
+function hasExportedChildFunction(d, isFunctionNode = (x) => x?.kind === "function") {
+  return getChildFunctions(d, isFunctionNode).some((child) => child?.exported === true);
+}
+
+/** Read whether a node itself or one of its child functions is exported. */
+function hasExportedFunctionSignal(d, isFunctionNode) {
+  if (isFunctionNode(d)) return d?.exported === true;
+  return hasExportedChildFunction(d, isFunctionNode);
+}
+
+/** Read whether the outer function ring should be visible. */
+function shouldShowFunctionRing(d, isFunctionNode) {
+  return isFunctionNode(d) || hasExportedChildFunction(d, isFunctionNode);
 }
 
 /**
