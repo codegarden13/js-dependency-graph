@@ -18,7 +18,10 @@ logs/
 
 # macOS Finder metadata
 .DS_Store
-
 app/config/apps.json
-
 node_modules/
+
+# output files
+app/public/output/
+
+
