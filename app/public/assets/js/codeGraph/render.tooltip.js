@@ -43,7 +43,7 @@ export function buildTooltipHtml(d, opts = {}) {
  * @param {{ escapeHtml?: ((value:any) => string)|null }=} opts
  * @returns {(value:any) => string}
  */
-export function getTooltipEscaper(opts = {}) {
+function getTooltipEscaper(opts = {}) {
   return typeof opts.escapeHtml === "function"
     ? opts.escapeHtml
     : defaultEscapeHtml;
@@ -56,7 +56,7 @@ export function getTooltipEscaper(opts = {}) {
  * @param {any} d
  * @returns {any}
  */
-export function getTooltipLines(d) {
+function getTooltipLines(d) {
   return pickFirst(d?.__displayLines, d?.lines, d?.loc, d?.size, "?");
 }
 
@@ -79,7 +79,7 @@ export function getTooltipComplexity(d) {
  * @param {(value:any) => string} esc
  * @returns {string}
  */
-export function getTooltipDisplayLabel(d, esc) {
+function getTooltipDisplayLabel(d, esc) {
   const label = d?.__displayLabel ? d.__displayLabel : d?.id;
   return esc(label);
 }
@@ -91,7 +91,7 @@ export function getTooltipDisplayLabel(d, esc) {
  * @param {(value:any) => string} esc
  * @returns {string}
  */
-export function getTooltipTypeLabel(d, esc) {
+function getTooltipTypeLabel(d, esc) {
   return esc(d?.type || d?.kind || "file");
 }
 
@@ -105,7 +105,7 @@ export function getTooltipTypeLabel(d, esc) {
  * }=} opts
  * @returns {string}
  */
-export function buildFunctionDiagHtml(d, opts = {}) {
+function buildFunctionDiagHtml(d, opts = {}) {
   const esc = getTooltipEscaper(opts);
   const calls = readFunctionCallStats(d, opts);
   const flags = readFunctionFlags(d);
@@ -113,7 +113,7 @@ export function buildFunctionDiagHtml(d, opts = {}) {
   return (
     buildCallsLine(calls, esc) +
     buildFlagsLine(flags, esc) +
-    buildTopListLine("Top callers", calls.callers, esc) +
+    buildTopListLine("Top x callers", calls.callers, esc) +
     buildTopListLine("Top callees", calls.callees, esc)
   );
 }
@@ -125,7 +125,7 @@ export function buildFunctionDiagHtml(d, opts = {}) {
  * @param {{ toSafeInt?: ((value:any) => number)|null }=} opts
  * @returns {{ inCalls:number, outCalls:number, callers:any[], callees:any[] }}
  */
-export function readFunctionCallStats(d, opts = {}) {
+function readFunctionCallStats(d, opts = {}) {
   const toSafeInt = readToSafeInt(opts);
 
   return {
@@ -142,7 +142,7 @@ export function readFunctionCallStats(d, opts = {}) {
  * @param {any} d
  * @returns {{ exported:boolean, unused:boolean }}
  */
-export function readFunctionFlags(d) {
+function readFunctionFlags(d) {
   return {
     exported: d?.exported === true,
     unused: d?._unused === true,
@@ -156,7 +156,7 @@ export function readFunctionFlags(d) {
  * @param {(value:any) => string} esc
  * @returns {string}
  */
-export function buildCallsLine(calls, esc) {
+function buildCallsLine(calls, esc) {
   return `<br><small>Calls: in ${esc(String(calls.inCalls))} / out ${esc(String(calls.outCalls))}</small>`;
 }
 
@@ -167,7 +167,7 @@ export function buildCallsLine(calls, esc) {
  * @param {(value:any) => string} esc
  * @returns {string}
  */
-export function buildFlagsLine(flags, esc) {
+function buildFlagsLine(flags, esc) {
   const exported = flags.exported ? "yes" : "no";
   const unused = flags.unused ? "yes" : "no";
   return `<br><small>Exported: ${esc(exported)} | Unused: ${esc(unused)}</small>`;
@@ -182,7 +182,7 @@ export function buildFlagsLine(flags, esc) {
  * @param {(value:any) => string} esc
  * @returns {string}
  */
-export function buildTopListLine(label, arr, esc) {
+function buildTopListLine(label, arr, esc) {
   const items = Array.isArray(arr) ? arr : [];
   if (!items.length) return `<br><small>${esc(label)}: (none)</small>`;
 
