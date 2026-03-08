@@ -99,29 +99,15 @@
 }
 
 
-/*Hotspot styles
-
-	•	zusätzliche CSS-Variablen für:
-	•	Badge-Text
-	•	Halo-Breite
-	•	Node-Stroke-Breite
-	•	Label-Gewicht
-	•	Badge-Fontgröße
-	•	Opacity-Werte
-	•	Basisregel für .codegraph-node
-	•	weiche Transitions für:
-	•	Fill
-	•	Stroke
-	•	Stroke-Width
-	•	Opacity
-	•	Transform
-	•	vollständige Sichtbarkeitssteuerung für:
-	•	.is-hotspot
-	•	.is-top-hotspot
-	•	Badge ist standardmäßig unsichtbar und nur bei Top-Hotspots sichtbar
+/* --------------------------------------------------------------------------
+   Graph hotspot styling
+   --------------------------------------------------------------------------
+   Goals:
+   - visual emphasis for hotspot nodes
+   - top-hotspot badge visibility via class only
+   - keep color ownership primarily in the repaint pipeline
+   - keep CSS responsible for sizing, opacity, transitions, and typography
 */
-
-
 
 :root {
   --graph-hotspot-fill: #ff1493;
@@ -130,22 +116,22 @@
   --graph-hotspot-halo-width: 3px;
   --graph-hotspot-node-stroke-width: 2.5px;
   --graph-hotspot-label-weight: 700;
-  --graph-hotspot-badge-font-size: 9px;
+  --graph-hotspot-badge-font-size: 7px;
   --graph-hotspot-badge-stroke-width: 1.5px;
   --graph-hotspot-badge-opacity: 1;
   --graph-hotspot-halo-opacity: 0.95;
 }
 
-.codegraph-node {
+#codeStructureSvg .codegraph-node {
   isolation: isolate;
 }
 
-.codegraph-node .node-body,
-.codegraph-node .node-label,
-.codegraph-node .node-halo,
-.codegraph-node .node-badge,
-.codegraph-node .node-badge-bg,
-.codegraph-node .node-badge-text {
+#codeStructureSvg .codegraph-node .node-body,
+#codeStructureSvg .codegraph-node .node-label,
+#codeStructureSvg .codegraph-node .node-halo,
+#codeStructureSvg .codegraph-node .node-badge,
+#codeStructureSvg .codegraph-node .node-badge-bg,
+#codeStructureSvg .codegraph-node .node-badge-text {
   transition:
     fill 120ms ease,
     stroke 120ms ease,
@@ -154,45 +140,39 @@
     transform 120ms ease;
 }
 
-.codegraph-node.is-hotspot .node-body {
-  fill: var(--graph-hotspot-fill) !important;
-  stroke: var(--graph-hotspot-outline) !important;
+#codeStructureSvg .codegraph-node.is-hotspot .node-body {
   stroke-width: var(--graph-hotspot-node-stroke-width);
 }
 
-.codegraph-node.is-hotspot .node-label {
-  fill: var(--graph-hotspot-fill);
+#codeStructureSvg .codegraph-node.is-hotspot .node-label {
   font-weight: var(--graph-hotspot-label-weight);
 }
 
-.codegraph-node .node-halo {
+#codeStructureSvg .codegraph-node .node-halo {
   fill: none;
-  stroke: var(--graph-hotspot-outline);
   stroke-width: var(--graph-hotspot-halo-width);
   opacity: 0;
   pointer-events: none;
 }
 
-.codegraph-node.is-hotspot .node-halo {
+#codeStructureSvg .codegraph-node.is-hotspot .node-halo {
   opacity: var(--graph-hotspot-halo-opacity);
 }
 
-.codegraph-node .node-badge {
+#codeStructureSvg .codegraph-node .node-badge {
   pointer-events: none;
   opacity: 0;
 }
 
-.codegraph-node.is-top-hotspot .node-badge {
+#codeStructureSvg .codegraph-node.is-top-hotspot .node-badge {
   opacity: var(--graph-hotspot-badge-opacity);
 }
 
-.codegraph-node .node-badge-bg {
-  fill: var(--graph-hotspot-fill);
-  stroke: var(--graph-hotspot-outline);
+#codeStructureSvg .codegraph-node .node-badge-bg {
   stroke-width: var(--graph-hotspot-badge-stroke-width);
 }
 
-.codegraph-node .node-badge-text {
+#codeStructureSvg .codegraph-node .node-badge-text {
   fill: var(--graph-hotspot-badge-text);
   font-size: var(--graph-hotspot-badge-font-size);
   font-weight: 700;

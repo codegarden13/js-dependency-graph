@@ -26,8 +26,11 @@
  */
 function nodeFill(d, enc) {
   if (d?._changed) return "#ff3b30";
-  if (isHotspotNode(d)) return hotspotFillVar();
-  return enc.getNodeColor(d);
+
+  const base = enc.getNodeColor(d);
+  if (!isHotspotNode(d)) return base;
+
+  return mixHex(base, hotspotFillColor(d), hotspotEmphasis01(d) * 0.55);
 }
 
 /**
@@ -43,8 +46,11 @@ function nodeFill(d, enc) {
  */
 function nodeStroke(d, enc) {
   if (d?._changed) return "#b42318";
-  if (isHotspotNode(d)) return hotspotOutlineVar();
-  return enc.getNodeStroke(d);
+
+  const base = enc.getNodeStroke(d);
+  if (!isHotspotNode(d)) return base;
+
+  return mixHex(base, hotspotOutlineColor(d), hotspotEmphasis01(d) * 0.85);
 }
 
 /**
@@ -258,7 +264,85 @@ function isTopHotspotNode(d) {
   return Number.isFinite(rank) && rank > 0 && rank <= 5;
 }
 
-/** CSS variable for hotspot body fill. */
+/** Clamp a scalar into the 0..1 range. */
+function clamp01(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 0;
+  if (n <= 0) return 0;
+  if (n >= 1) return 1;
+  return n;
+}
+
+/** Read hotspot rank as a safe number. */
+function readHotspotRank(d) {
+  const rank = Number(d?._hotspotRank);
+  return Number.isFinite(rank) && rank > 0 ? rank : null;
+}
+
+/** Read raw cyclomatic complexity for hotspot emphasis. */
+function readHotspotCc(d) {
+  const cc = Number(d?.complexity ?? d?.cc ?? 0);
+  return Number.isFinite(cc) && cc > 0 ? cc : 0;
+}
+
+/** Convert a hex color into rgb channels. */
+function hexToRgb(hex) {
+  let safe = String(hex || "").trim().replace(/^#/, "");
+  if (safe.length === 3) safe = safe.split("").map((c) => c + c).join("");
+  const num = Number.parseInt(safe, 16);
+  return {
+    r: (num >> 16) & 255,
+    g: (num >> 8) & 255,
+    b: num & 255
+  };
+}
+
+/** Convert rgb channels into a hex color. */
+function rgbToHex(r, g, b) {
+  const toHex = (value) => {
+    const safe = Math.max(0, Math.min(255, Math.round(value))).toString(16);
+    return safe.length === 1 ? `0${safe}` : safe;
+  };
+
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+/** Interpolate two hex colors. */
+function mixHex(a, b, t) {
+  const x = hexToRgb(a);
+  const y = hexToRgb(b);
+  const k = clamp01(t);
+
+  return rgbToHex(
+    x.r + ((y.r - x.r) * k),
+    x.g + ((y.g - x.g) * k),
+    x.b + ((y.b - x.b) * k)
+  );
+}
+
+/**
+ * Build one hotspot emphasis score.
+ *
+ * Strongest nodes are:
+ * - low rank number (rank 1 strongest)
+ * - high CC
+ *
+ * The color fades towards weaker ranks and lower CC.
+ */
+function hotspotEmphasis01(d) {
+  const rank = readHotspotRank(d);
+  const cc = readHotspotCc(d);
+
+  const rank01 = (rank == null)
+    ? 0
+    : clamp01(1 - ((Math.min(rank, 5) - 1) / 4));
+
+  const cc01 = clamp01(Math.log1p(cc) / Math.log1p(120));
+
+  return clamp01((rank01 * 0.6) + (cc01 * 0.4));
+}
+
+/** CSS variable / palette anchor for hotspot body fill. */
 function hotspotFillVar() {
   return "var(--graph-hotspot-fill)";
 }
@@ -268,9 +352,23 @@ function hotspotBadgeTextVar() {
   return "var(--graph-hotspot-badge-text)";
 }
 
-/** CSS variable for hotspot halo / outline. */
+/** CSS variable / palette anchor for hotspot halo / outline. */
 function hotspotOutlineVar() {
   return "var(--graph-hotspot-outline)";
+}
+
+/** Dynamic hotspot body fill from rank + CC. */
+function hotspotFillColor(d) {
+  const strong = "#ff1493";
+  const weak = "#ffd6eb";
+  return mixHex(weak, strong, hotspotEmphasis01(d));
+}
+
+/** Dynamic hotspot outline from rank + CC. */
+function hotspotOutlineColor(d) {
+  const strong = "#f0ffff";
+  const weak = "#f7fbff";
+  return mixHex(weak, strong, hotspotEmphasis01(d));
 }
 
 /** Ensure a parent node group has stable graph classes. */
@@ -307,7 +405,25 @@ function repaintHotspotHalos(nodeBodySel, enc) {
     }
 
     halo.setAttribute("r", String((Number(enc.getRadius(d)) || 0) + 5));
+    halo.setAttribute("stroke", hotspotOutlineColor(d));
+    halo.setAttribute("fill", "none");
   });
+}
+
+/** Build the visible hotspot badge label (rank + CC). */
+function hotspotBadgeLabel(d) {
+  const rank = Number(d?._hotspotRank);
+  const cc = Number(d?.complexity);
+
+  const safeRank = Number.isFinite(rank) && rank > 0 ? String(rank) : "?";
+  const safeCc = Number.isFinite(cc) && cc >= 0 ? String(Math.round(cc)) : "0";
+  return `${safeRank} · CC${safeCc}`;
+}
+
+/** Compute badge width from label length. */
+function hotspotBadgeWidth(label) {
+  const text = String(label || "");
+  return Math.max(30, 12 + (text.length * 6));
 }
 
 /** Ensure one top-hotspot badge exists per node group and keep it in sync. */
@@ -321,9 +437,10 @@ function repaintHotspotBadges(nodeBodySel, enc) {
       badge = document.createElementNS("http://www.w3.org/2000/svg", "g");
       badge.setAttribute("class", "node-badge");
 
-      const bg = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      const bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
       bg.setAttribute("class", "node-badge-bg");
-      bg.setAttribute("r", "8");
+      bg.setAttribute("rx", "8");
+      bg.setAttribute("ry", "8");
       badge.appendChild(bg);
 
       const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
@@ -334,17 +451,25 @@ function repaintHotspotBadges(nodeBodySel, enc) {
     }
 
     const r = Number(enc.getRadius(d)) || 0;
-    badge.setAttribute("transform", `translate(${r + 8},${-r - 8})`);
-    badge.setAttribute("aria-hidden", isTopHotspotNode(d) ? "false" : "true");
+    const isTop = isTopHotspotNode(d);
+    const label = isTop ? hotspotBadgeLabel(d) : "";
+    const width = hotspotBadgeWidth(label);
+    const height = 18;
+
+    badge.setAttribute("transform", `translate(${r + 10},${-r - 10})`);
+    badge.setAttribute("aria-hidden", isTop ? "false" : "true");
 
     const bg = badge.querySelector(".node-badge-bg");
     if (bg) {
-      bg.setAttribute("r", "8");
+      bg.setAttribute("x", String(-width / 2));
+      bg.setAttribute("y", String(-height / 2));
+      bg.setAttribute("width", String(width));
+      bg.setAttribute("height", String(height));
     }
 
     const text = badge.querySelector(".node-badge-text");
     if (text) {
-      text.textContent = isTopHotspotNode(d) ? String(Number(d?._hotspotRank) || "") : "";
+      text.textContent = label;
       text.setAttribute("text-anchor", "middle");
       text.setAttribute("dominant-baseline", "middle");
     }
@@ -402,8 +527,11 @@ function repaintNodeBodies(nodeBodySel, enc, isUnusedFunctionNode) {
 
     const badgeBg = group.querySelector(".node-badge-bg");
     if (badgeBg) {
-      badgeBg.setAttribute("fill", hotspotFillVar());
-      badgeBg.setAttribute("stroke", hotspotOutlineVar());
+      badgeBg.setAttribute(
+        "fill",
+        mixHex(nodeFill(d, enc), hotspotFillColor(d), hotspotEmphasis01(d) * 0.35)
+      );
+      badgeBg.setAttribute("stroke", hotspotOutlineColor(d));
     }
 
     const badgeText = group.querySelector(".node-badge-text");
@@ -476,12 +604,13 @@ function repaintLabels(labelSel, isUnusedFunctionNode) {
 
   labelSel.each(function (d) {
     const el = this;
-    if (!el || typeof el.closest !== "function") return;
-    const group = el.closest(".codegraph-node");
-    if (!group) return;
+    if (!el) return;
 
-    if (isHotspotNode(d)) el.style.removeProperty("fill");
-    else if (!d?._changed) el.style.fill = "#444";
+    if (isHotspotNode(d)) {
+      el.style.fill = mixHex("#444444", hotspotFillColor(d), hotspotEmphasis01(d) * 0.75);
+    } else if (!d?._changed) {
+      el.style.fill = "#444";
+    }
   });
 }
 
