@@ -1,0 +1,201 @@
+/* --------------------------------------------------------------------------
+   Graph edge styling (edge types)
+   --------------------------------------------------------------------------
+   Renderer attaches classes like:
+   - "link" on every edge
+   - "include" / "use" / "call" / "extends" / "default" for edge type
+
+   Goals:
+   - include  = very light / structural
+   - use      = normal / dependency
+   - call     = prominent / runtime flow
+   - extends  = moderate / inheritance
+*/
+
+/* Base edge appearance (use currentColor so marker arrows can inherit) */
+#codeStructureSvg .link,
+#codeStructureSvg .edge,
+#codeStructureSvg line.link,
+#codeStructureSvg path.link,
+#codeStructureSvg line.edge,
+#codeStructureSvg path.edge {
+  color: rgba(0, 0, 0, 0.35);
+  stroke: currentColor;
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+  vector-effect: non-scaling-stroke; /* keep widths stable when zooming */
+  opacity: 0.85;
+}
+
+/* INCLUDE (folder/file containment): extremely subtle */
+#codeStructureSvg .link.include,
+#codeStructureSvg .edge.include,
+#codeStructureSvg line.include,
+#codeStructureSvg path.include {
+  color: rgba(0, 0, 0, 0.12);
+  stroke-width: 0.9;
+  stroke-dasharray: 2 4;
+  opacity: 0.55;
+}
+
+/* USE (imports/dependencies): readable default */
+#codeStructureSvg .link.use,
+#codeStructureSvg .edge.use,
+#codeStructureSvg line.use,
+#codeStructureSvg path.use {
+  color: rgba(77, 150, 255, 0.60);
+  stroke-width: 1.4;
+  opacity: 0.92;
+}
+
+/* EXTENDS (inheritance): moderate */
+#codeStructureSvg .link.extends,
+#codeStructureSvg .edge.extends,
+#codeStructureSvg line.extends,
+#codeStructureSvg path.extends {
+  color: rgba(6, 214, 160, 0.60);
+  stroke-width: 1.4;
+  opacity: 0.92;
+}
+
+/* CALL (function calls): most prominent */
+#codeStructureSvg .link.call,
+#codeStructureSvg .edge.call,
+#codeStructureSvg line.call,
+#codeStructureSvg path.call {
+  color: rgba(131, 56, 236, 0.70);
+  stroke-width: 1.8;
+  opacity: 0.95;
+}
+
+/* Unknown / default type */
+#codeStructureSvg .link.default,
+#codeStructureSvg .edge.default,
+#codeStructureSvg line.default,
+#codeStructureSvg path.default {
+  color: rgba(0, 0, 0, 0.28);
+}
+
+/* Hover/selection boosts readability without changing layout */
+#codeStructureSvg .link:hover,
+#codeStructureSvg .edge:hover,
+#codeStructureSvg .isHovered,
+#codeStructureSvg .isHover {
+  opacity: 1;
+  stroke-width: 2.2;
+}
+
+#codeStructureSvg .isSelected,
+#codeStructureSvg .selected {
+  opacity: 1;
+  stroke-width: 2.8;
+}
+
+/* Arrow markers: inherit stroke color (renderer sets marker fill to currentColor) */
+#codeStructureSvg marker path {
+  fill: currentColor;
+}
+
+
+/*Hotspot styles
+
+	•	zusätzliche CSS-Variablen für:
+	•	Badge-Text
+	•	Halo-Breite
+	•	Node-Stroke-Breite
+	•	Label-Gewicht
+	•	Badge-Fontgröße
+	•	Opacity-Werte
+	•	Basisregel für .codegraph-node
+	•	weiche Transitions für:
+	•	Fill
+	•	Stroke
+	•	Stroke-Width
+	•	Opacity
+	•	Transform
+	•	vollständige Sichtbarkeitssteuerung für:
+	•	.is-hotspot
+	•	.is-top-hotspot
+	•	Badge ist standardmäßig unsichtbar und nur bei Top-Hotspots sichtbar
+*/
+
+
+
+:root {
+  --graph-hotspot-fill: #ff1493;
+  --graph-hotspot-outline: #f0ffff;
+  --graph-hotspot-badge-text: #ffffff;
+  --graph-hotspot-halo-width: 3px;
+  --graph-hotspot-node-stroke-width: 2.5px;
+  --graph-hotspot-label-weight: 700;
+  --graph-hotspot-badge-font-size: 9px;
+  --graph-hotspot-badge-stroke-width: 1.5px;
+  --graph-hotspot-badge-opacity: 1;
+  --graph-hotspot-halo-opacity: 0.95;
+}
+
+.codegraph-node {
+  isolation: isolate;
+}
+
+.codegraph-node .node-body,
+.codegraph-node .node-label,
+.codegraph-node .node-halo,
+.codegraph-node .node-badge,
+.codegraph-node .node-badge-bg,
+.codegraph-node .node-badge-text {
+  transition:
+    fill 120ms ease,
+    stroke 120ms ease,
+    stroke-width 120ms ease,
+    opacity 120ms ease,
+    transform 120ms ease;
+}
+
+.codegraph-node.is-hotspot .node-body {
+  fill: var(--graph-hotspot-fill) !important;
+  stroke: var(--graph-hotspot-outline) !important;
+  stroke-width: var(--graph-hotspot-node-stroke-width);
+}
+
+.codegraph-node.is-hotspot .node-label {
+  fill: var(--graph-hotspot-fill);
+  font-weight: var(--graph-hotspot-label-weight);
+}
+
+.codegraph-node .node-halo {
+  fill: none;
+  stroke: var(--graph-hotspot-outline);
+  stroke-width: var(--graph-hotspot-halo-width);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.codegraph-node.is-hotspot .node-halo {
+  opacity: var(--graph-hotspot-halo-opacity);
+}
+
+.codegraph-node .node-badge {
+  pointer-events: none;
+  opacity: 0;
+}
+
+.codegraph-node.is-top-hotspot .node-badge {
+  opacity: var(--graph-hotspot-badge-opacity);
+}
+
+.codegraph-node .node-badge-bg {
+  fill: var(--graph-hotspot-fill);
+  stroke: var(--graph-hotspot-outline);
+  stroke-width: var(--graph-hotspot-badge-stroke-width);
+}
+
+.codegraph-node .node-badge-text {
+  fill: var(--graph-hotspot-badge-text);
+  font-size: var(--graph-hotspot-badge-font-size);
+  font-weight: 700;
+  text-anchor: middle;
+  dominant-baseline: middle;
+}
