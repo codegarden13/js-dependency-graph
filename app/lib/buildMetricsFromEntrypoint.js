@@ -86,8 +86,6 @@ import { applyAutoRefs } from "./autoMode.js";
 
 import { ensureCanonicalNodeFields, DEFAULT_LAYER_ORDER, defaultLayerY } from "./nodeClassification.js";
 
-
-
 import { finalizeGraphStats } from "./graph/graphFinalize.js";
 
 
@@ -238,6 +236,7 @@ export async function buildMetricsFromEntrypoint({
 
   finalizeGraphStats(store.nodes, store.links);
 
+  attachFunctionChildren(store.nodes);
   markUnusedFunctions(store.nodes);
   enforceCanonicalFields(store.nodes);
 
@@ -343,9 +342,18 @@ function toNonNegativeNumber(v) {
   return Number.isFinite(n) ? n : 0;
 }
 
+
 function positiveOrOne(v) {
   const n = toNonNegativeNumber(v);
   return n > 0 ? n : 1;
+}
+
+function extFromFileId(fileId) {
+  return normalizeExt(path.extname(String(fileId || "")));
+}
+
+function subtypeFromExt(ext) {
+  return String(ext || "").replace(/^\./, "");
 }
 
 /** Build a canonical function node (returns null if fn has no usable id). */
@@ -354,6 +362,8 @@ function buildFunctionNode(fileId, fn) {
   if (!fnIdRaw) return null;
 
   const fnNodeId = `${fileId}::${fnIdRaw}`;
+  const fileExt = extFromFileId(fileId);
+  const fileSubtype = subtypeFromExt(fileExt);
 
   return {
     id: fnNodeId,
@@ -369,7 +379,10 @@ function buildFunctionNode(fileId, fn) {
     kind: "function",
     name: toTrimmedString(fn?.name),
     exported: Boolean(fn?.exported),
-    startLine: toNonNegativeNumber(fn?.startLine)
+    startLine: toNonNegativeNumber(fn?.startLine),
+    ext: fileExt,
+    type: "function",
+    subtype: fileSubtype || "function"
   };
 }
 
@@ -552,6 +565,45 @@ function strictSanityCheck(store) {
   }
 }
 
+/**
+ * Materialize child-function references on file nodes.
+ *
+ * Why this exists
+ * ---------------
+ * The frontend encoder computes module/file radius from the complexity of the
+ * functions contained in that file. The graph itself stays flat (`nodes[]`),
+ * but we attach a lightweight `children` array to file nodes so renderer code
+ * can inspect contained function nodes without rebuilding that relation on the
+ * client.
+ */
+function attachFunctionChildren(nodes) {
+  const fileNodes = new Map();
+  const functionsByFile = new Map();
+
+  for (const node of nodes) {
+    if (!node || typeof node !== "object") continue;
+
+    if (node.kind === "file") {
+      node.children = [];
+      fileNodes.set(String(node.file || node.id || ""), node);
+      continue;
+    }
+
+    if (node.kind !== "function") continue;
+
+    const fileId = String(node.file || "").trim();
+    if (!fileId) continue;
+
+    const bucket = functionsByFile.get(fileId) || [];
+    bucket.push(node);
+    functionsByFile.set(fileId, bucket);
+  }
+
+  for (const [fileId, fileNode] of fileNodes) {
+    fileNode.children = functionsByFile.get(fileId) || [];
+  }
+}
+
 /** Mark unused functions (best-effort heuristic). */
 function markUnusedFunctions(nodes) {
   for (const n of nodes) {
@@ -569,9 +621,18 @@ function enforceCanonicalFields(nodes) {
   for (const n of nodes) {
     ensureCanonicalNodeFields(n);
 
+    delete n._radiusHint;
+
     if (n.kind === "function") {
+      const fileExt = extFromFileId(n.file || n.id || "");
+      const fileSubtype = subtypeFromExt(fileExt);
+
       if (typeof n.exported !== "boolean") n.exported = false;
       if (!Number.isFinite(n.startLine)) n.startLine = 0;
+
+      n.ext = fileExt;
+      n.type = "function";
+      n.subtype = fileSubtype || "function";
     }
   }
 }

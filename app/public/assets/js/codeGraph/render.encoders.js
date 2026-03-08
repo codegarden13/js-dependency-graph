@@ -176,12 +176,165 @@ export function computeNodeColor(d) {
   return adjustColorIntensity(base, toneFactorForNonFunctionNode(score01));
 }
 
-/** Compute the node radius from the normalized line score. */
+/**
+ * Compute the node radius from a CodeScene-like complexity approximation plus
+ * line volume.
+ *
+ * The score intentionally weights more than raw cyclomatic complexity:
+ * complexity, nesting, and size all contribute. For module-like nodes, the
+ * child-function scores are folded in so file/module nodes reflect the code
+ * they contain.
+ */
 export function computeNodeRadius(d) {
-  const score = Number(d?._lineScore) || 0;
+  const score = computeRadiusScore01(d);
   const minR = 6;
   const maxR = 26;
   return minR + (maxR - minR) * score;
+}
+
+/** Read child function nodes for a module-like parent node. */
+function getChildFunctionNodes(d) {
+  const items = Array.isArray(d?.children) ? d.children : [];
+  return items.filter((child) => isFunctionNode(child));
+}
+
+/** Determine whether a node behaves like a module/file container. */
+function isModuleLikeNode(d) {
+  if (!d || typeof d !== "object") return false;
+
+  const group = readTrimmedString(d, "group");
+  const kind = readTrimmedString(d, "kind");
+  const type = readTrimmedString(d, "type");
+
+  return group === "code"
+    || kind === "module"
+    || kind === "file"
+    || type === "module"
+    || type === "file";
+}
+
+/** Read a node-local raw line count. */
+function readRawLineCount(d) {
+  const candidates = [
+    d?.loc,
+    d?.lines,
+    d?.lineCount,
+    d?.sloc,
+    d?.size,
+    d?._lines
+  ];
+
+  for (const value of candidates) {
+    const n = Number(value);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+
+  return 0;
+}
+
+/** Normalize a raw line count into a 0..1 range. */
+function normalizeRawLineCount01(rawLines) {
+  return clamp(Math.log1p(Math.max(0, rawLines)) / Math.log1p(400), 0, 1);
+}
+
+/** Build an effective line score for radius calculation. */
+function computeEffectiveLineScore01(d) {
+  const normalized = Number(d?._lineScore);
+  if (Number.isFinite(normalized)) return clamp(normalized, 0, 1);
+
+  return normalizeRawLineCount01(readRawLineCount(d));
+}
+
+/** Read the first finite number from a candidate list. */
+function firstFiniteNumber(...values) {
+  for (const value of values) {
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+/** Read raw nested-complexity related data from a node. */
+function readRawNestedComplexity(d) {
+  return Math.max(0, firstFiniteNumber(
+    d?._nestedComplexity,
+    d?.nestedComplexity,
+    d?.maxNestingDepth,
+    d?.nestingDepth,
+    d?.deepestNesting,
+    d?.indentationComplexity,
+    0
+  ) || 0);
+}
+
+/**
+ * Approximate a CodeScene-like complexity score.
+ *
+ * CodeScene does not rely on cyclomatic complexity alone. Their public docs
+ * emphasize a combination of method size, cyclomatic complexity, and deeply
+ * nested logic. We mirror that intention here with a weighted local score.
+ */
+function computeCodeSceneLikeFunctionScore01(d) {
+  const cyclomatic01 = normalizeRawComplexity01(readRawComplexity(d));
+  const nesting01 = clamp(Math.log1p(readRawNestedComplexity(d)) / Math.log1p(8), 0, 1);
+  const lines01 = computeEffectiveLineScore01(d);
+
+  return clamp(
+    (cyclomatic01 * 0.45) +
+    (nesting01 * 0.40) +
+    (lines01 * 0.15),
+    0,
+    1
+  );
+}
+
+function computeEffectiveComplexity01(d) {
+  const localDeclaredScore = readComplexityScore01(d);
+  const localScore = (localDeclaredScore != null)
+    ? localDeclaredScore
+    : computeCodeSceneLikeFunctionScore01(d);
+
+  if (!isModuleLikeNode(d)) {
+    return localScore;
+  }
+
+  const childFunctions = getChildFunctionNodes(d);
+  if (!childFunctions.length) {
+    return localScore;
+  }
+
+  let childTotal = 0;
+  let childLines = 0;
+
+  for (const fn of childFunctions) {
+    childTotal += computeCodeSceneLikeFunctionScore01(fn);
+    childLines += readRawLineCount(fn);
+  }
+
+  const childMean = childTotal / childFunctions.length;
+  const localLines = readRawLineCount(d);
+  const sizeWeight = clamp(
+    childLines / Math.max(1, localLines + childLines),
+    0.35,
+    0.85
+  );
+
+  return clamp(
+    (localScore * (1 - sizeWeight)) + (childMean * sizeWeight),
+    0,
+    1
+  );
+}
+
+function computeRadiusScore01(d) {
+  const complexity01 = computeEffectiveComplexity01(d);
+  const lineScore01 = computeEffectiveLineScore01(d);
+
+  return clamp(
+    (complexity01 * 0.75) + (lineScore01 * 0.25),
+    0,
+    1
+  );
 }
 
 /** Compute the node stroke color. */

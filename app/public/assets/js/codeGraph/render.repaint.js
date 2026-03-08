@@ -25,6 +25,8 @@
  * @returns {string}
  */
 function nodeFill(d, enc) {
+  if (d?._changed) return "#ff3b30";
+  if (isHotspotNode(d)) return hotspotFillVar();
   return enc.getNodeColor(d);
 }
 
@@ -40,6 +42,8 @@ function nodeFill(d, enc) {
  * @returns {string}
  */
 function nodeStroke(d, enc) {
+  if (d?._changed) return "#b42318";
+  if (isHotspotNode(d)) return hotspotOutlineVar();
   return enc.getNodeStroke(d);
 }
 
@@ -55,6 +59,8 @@ function nodeStroke(d, enc) {
  * @returns {number}
  */
 function nodeStrokeWidth(d, enc) {
+  if (d?._changed) return Math.max(2, Number(enc.getNodeStrokeWidth(d)) || 0);
+  if (isHotspotNode(d)) return Math.max(2.5, Number(enc.getNodeStrokeWidth(d)) || 0);
   return enc.getNodeStrokeWidth(d);
 }
 
@@ -222,7 +228,8 @@ function labelWeight(d) {
  * @returns {string}
  */
 function labelFill(d) {
-  return d?._changed ? "#111" : "#444";
+  if (d?._changed) return "#111";
+  return isHotspotNode(d) ? null : "#444";
 }
 
 /**
@@ -240,6 +247,124 @@ function labelOpacity(d, isUnusedFunctionNode) {
   return isUnusedFunctionNode(d) ? 0.35 : 1;
 }
 
+/** Read whether a node is marked as hotspot. */
+function isHotspotNode(d) {
+  return Boolean(d?.hotspot) || (Number(d?._hotspotScore) || 0) > 0;
+}
+
+/** Read whether a node is a top-ranked hotspot. */
+function isTopHotspotNode(d) {
+  const rank = Number(d?._hotspotRank);
+  return Number.isFinite(rank) && rank > 0 && rank <= 5;
+}
+
+/** CSS variable for hotspot body fill. */
+function hotspotFillVar() {
+  return "var(--graph-hotspot-fill)";
+}
+
+/** CSS variable for hotspot badge text. */
+function hotspotBadgeTextVar() {
+  return "var(--graph-hotspot-badge-text)";
+}
+
+/** CSS variable for hotspot halo / outline. */
+function hotspotOutlineVar() {
+  return "var(--graph-hotspot-outline)";
+}
+
+/** Ensure a parent node group has stable graph classes. */
+function repaintNodeClasses(nodeBodySel) {
+  nodeBodySel.each(function (d) {
+    const group = this?.parentNode;
+    if (!group || typeof group.setAttribute !== "function") return;
+
+    const current = String(group.getAttribute("class") || "").trim();
+    const tokens = new Set(current ? current.split(/\s+/) : []);
+
+    tokens.add("codegraph-node");
+    if (isHotspotNode(d)) tokens.add("is-hotspot");
+    else tokens.delete("is-hotspot");
+
+    if (isTopHotspotNode(d)) tokens.add("is-top-hotspot");
+    else tokens.delete("is-top-hotspot");
+
+    group.setAttribute("class", Array.from(tokens).join(" "));
+  });
+}
+
+/** Ensure one halo circle exists per node group and keep it in sync. */
+function repaintHotspotHalos(nodeBodySel, enc) {
+  nodeBodySel.each(function (d) {
+    const group = this?.parentNode;
+    if (!group || typeof group.querySelector !== "function") return;
+
+    let halo = group.querySelector(".node-halo");
+    if (!halo) {
+      halo = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      halo.setAttribute("class", "node-halo");
+      group.insertBefore(halo, group.firstChild || null);
+    }
+
+    halo.setAttribute("r", String((Number(enc.getRadius(d)) || 0) + 5));
+  });
+}
+
+/** Ensure one top-hotspot badge exists per node group and keep it in sync. */
+function repaintHotspotBadges(nodeBodySel, enc) {
+  nodeBodySel.each(function (d) {
+    const group = this?.parentNode;
+    if (!group || typeof group.querySelector !== "function") return;
+
+    let badge = group.querySelector(".node-badge");
+    if (!badge) {
+      badge = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      badge.setAttribute("class", "node-badge");
+
+      const bg = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      bg.setAttribute("class", "node-badge-bg");
+      bg.setAttribute("r", "8");
+      badge.appendChild(bg);
+
+      const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      text.setAttribute("class", "node-badge-text");
+      badge.appendChild(text);
+
+      group.appendChild(badge);
+    }
+
+    const r = Number(enc.getRadius(d)) || 0;
+    badge.setAttribute("transform", `translate(${r + 8},${-r - 8})`);
+    badge.setAttribute("aria-hidden", isTopHotspotNode(d) ? "false" : "true");
+
+    const bg = badge.querySelector(".node-badge-bg");
+    if (bg) {
+      bg.setAttribute("r", "8");
+    }
+
+    const text = badge.querySelector(".node-badge-text");
+    if (text) {
+      text.textContent = isTopHotspotNode(d) ? String(Number(d?._hotspotRank) || "") : "";
+      text.setAttribute("text-anchor", "middle");
+      text.setAttribute("dominant-baseline", "middle");
+    }
+  });
+}
+
+/**
+ * Read the current node-body transition duration.
+ *
+ * Why it is called
+ * ----------------
+ * Called during repaint so live change markers update immediately without
+ * needing a full graph rebuild.
+ *
+ * @returns {number}
+ */
+function nodeTransitionMs() {
+  return 120;
+}
+
 /**
  * Re-apply node-body styles.
  *
@@ -253,12 +378,39 @@ function labelOpacity(d, isUnusedFunctionNode) {
  * @param {(node:any) => boolean} isUnusedFunctionNode
  */
 function repaintNodeBodies(nodeBodySel, enc, isUnusedFunctionNode) {
+  repaintNodeClasses(nodeBodySel);
+  repaintHotspotHalos(nodeBodySel, enc);
+  repaintHotspotBadges(nodeBodySel, enc);
+
   nodeBodySel
+    .transition()
+    .duration(nodeTransitionMs())
     .attr("fill", (d) => nodeFill(d, enc))
     .attr("stroke", (d) => nodeStroke(d, enc))
     .attr("stroke-width", (d) => nodeStrokeWidth(d, enc))
     .style("opacity", (d) => nodeOpacity(d, isUnusedFunctionNode))
     .style("stroke-dasharray", (d) => nodeDashArray(d, isUnusedFunctionNode));
+
+  nodeBodySel.each(function (d) {
+    const group = this?.parentNode;
+    if (!group || typeof group.querySelector !== "function") return;
+
+    const halo = group.querySelector(".node-halo");
+    if (halo) {
+      halo.setAttribute("fill", "none");
+    }
+
+    const badgeBg = group.querySelector(".node-badge-bg");
+    if (badgeBg) {
+      badgeBg.setAttribute("fill", hotspotFillVar());
+      badgeBg.setAttribute("stroke", hotspotOutlineVar());
+    }
+
+    const badgeText = group.querySelector(".node-badge-text");
+    if (badgeText) {
+      badgeText.setAttribute("fill", hotspotBadgeTextVar());
+    }
+  });
 }
 
 /**
@@ -321,6 +473,16 @@ function repaintLabels(labelSel, isUnusedFunctionNode) {
     .style("font-weight", (d) => labelWeight(d))
     .style("fill", (d) => labelFill(d))
     .style("opacity", (d) => labelOpacity(d, isUnusedFunctionNode));
+
+  labelSel.each(function (d) {
+    const el = this;
+    if (!el || typeof el.closest !== "function") return;
+    const group = el.closest(".codegraph-node");
+    if (!group) return;
+
+    if (isHotspotNode(d)) el.style.removeProperty("fill");
+    else if (!d?._changed) el.style.fill = "#444";
+  });
 }
 
 /**

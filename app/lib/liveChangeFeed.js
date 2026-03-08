@@ -185,6 +185,8 @@ async function stopWatcher() {
 async function startWatcher(rootAbs) {
   await stopWatcher();
 
+
+  
   if (!rootAbs) return;
 
   watcher = chokidar.watch(rootAbs, {

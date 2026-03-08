@@ -103,9 +103,6 @@ function alertOnce(key, message) {
 }
 
 
-
-
-
 /* ======================================================================
    Public Entrypoint
 ====================================================================== */
@@ -767,7 +764,7 @@ export function initcodeStructureChart(svgId, metrics, opts = {}) {
   // -------------------------------------------------------------------
   // 3) Encoders + simulation
   // -------------------------------------------------------------------
-  // Visual encoders now live in `codeGraph/render.encoders.js`.
+  // Visual encoders live in `codeGraph/render.encoders.js`.
   const enc = makeEncoders(nodes);
   // Force simulation now lives in `codeGraph/render.simulation.js`.
   const simulation = createSimulation({ nodes, links, width, height, getRadius: enc.getRadius });

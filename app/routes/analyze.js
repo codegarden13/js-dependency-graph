@@ -2,22 +2,15 @@ import express from "express";
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
+import { spawnSync } from "node:child_process";
+
+import { activateAnalysis } from "../lib/liveChangeFeed.js";
 
 // NOTE:
 // This module is imported as a *default export* by the server bootstrap.
 // Therefore we must default-export an Express router.
 const router = express.Router();
 
-// ---------------------------------------------------------------------------
-// In-memory metrics cache
-// ---------------------------------------------------------------------------
-// The UI performs two requests:
-//  1) POST /analyze   -> returns { runToken, metricsUrl, summary }
-//  2) GET  <metricsUrl> -> returns the heavy graph payload
-//
-// We keep results in-memory per runToken. This is simple and fast.
-// If you need persistence or multi-process support, replace this with a store.
-const metricsByToken = new Map();
 
 function newRunToken() {
   // Short, URL-safe run id.
@@ -31,6 +24,138 @@ function safeJsonRead(fileAbs) {
 
 function normalizeId(v) {
   return String(v || "").trim();
+}
+
+function outputDirAbs() {
+  return path.resolve(process.cwd(), "app", "public", "output");
+}
+
+function ensureOutputDir() {
+  const dir = outputDirAbs();
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function metricsBaseName(runToken) {
+  return `code-structure-${normalizeId(runToken)}`;
+}
+
+function metricsJsonFilename(runToken) {
+  return `${metricsBaseName(runToken)}.json`;
+}
+
+function metricsCsvFilename(runToken) {
+  return `${metricsBaseName(runToken)}.csv`;
+}
+
+function metricsJsonPath(runToken) {
+  return path.join(outputDirAbs(), metricsJsonFilename(runToken));
+}
+
+function metricsCsvPath(runToken) {
+  return path.join(outputDirAbs(), metricsCsvFilename(runToken));
+}
+
+function metricsPublicUrl(runToken) {
+  return `/output/${metricsJsonFilename(runToken)}`;
+}
+
+function csvEscape(value) {
+  const s = String(value ?? "");
+  if (!/[",\n]/.test(s)) return s;
+  return `"${s.replace(/"/g, '""')}"`;
+}
+
+function nodeRow(node) {
+  return {
+    kind: node?.kind,
+    id: node?.id,
+    file: node?.file,
+    label: node?.label,
+    type: node?.type,
+    group: node?.group,
+    layer: node?.layer,
+    lines: node?.lines,
+    complexity: node?.complexity,
+    exported: node?.exported,
+    imported: node?.imported,
+    unused: node?.unused,
+    hotspot: node?.hotspot,
+    hotspotRank: node?._hotspotRank,
+    hotspotScore: node?._hotspotScore,
+    changeFreq: node?._changeFreq,
+    lastTouchedAt: node?._lastTouchedAt,
+    x: node?.x,
+    y: node?.y
+  };
+}
+
+function linkRow(link) {
+  return {
+    relation: "link",
+    source: link?.source,
+    target: link?.target,
+    kind: link?.kind,
+    type: link?.type,
+    value: link?.value
+  };
+}
+
+function buildMetricsCsv(metrics) {
+  const rows = [];
+
+  for (const node of Array.isArray(metrics?.nodes) ? metrics.nodes : []) {
+    rows.push({ relation: "node", ...nodeRow(node) });
+  }
+
+  for (const link of Array.isArray(metrics?.links) ? metrics.links : []) {
+    rows.push(linkRow(link));
+  }
+
+  const headers = [
+    "relation",
+    "kind",
+    "id",
+    "file",
+    "label",
+    "type",
+    "group",
+    "layer",
+    "lines",
+    "complexity",
+    "exported",
+    "imported",
+    "unused",
+    "hotspot",
+    "hotspotRank",
+    "hotspotScore",
+    "changeFreq",
+    "lastTouchedAt",
+    "x",
+    "y",
+    "source",
+    "target",
+    "value"
+  ];
+
+  const body = rows.map((row) => headers.map((key) => csvEscape(row?.[key])).join(","));
+  return [headers.join(","), ...body].join("\n");
+}
+
+function writeMetricsArtifacts(runToken, metrics) {
+  ensureOutputDir();
+
+  fs.writeFileSync(
+    metricsJsonPath(runToken),
+    JSON.stringify(metrics, null, 2),
+    "utf8"
+  );
+
+  fs.writeFileSync(
+    metricsCsvPath(runToken),
+    buildMetricsCsv(metrics),
+    "utf8"
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -89,6 +214,201 @@ function summaryFromMetrics(metrics) {
   return { nodes, links };
 }
 
+function clamp01(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 0;
+  if (n <= 0) return 0;
+  if (n >= 1) return 1;
+  return n;
+}
+
+function toPositiveNumber(v) {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function looksLikeFunctionNode(node) {
+  return String(node?.kind || "") === "function";
+}
+
+function looksLikeFileNode(node) {
+  return String(node?.kind || "") === "file";
+}
+
+function normalizeGraphFileId(v) {
+  return String(v || "").replace(/\\/g, "/").trim();
+}
+
+function readNodeComplexity(node) {
+  return toPositiveNumber(node?.complexity);
+}
+
+function readNodeLines(node) {
+  return toPositiveNumber(node?.lines);
+}
+
+function safeIsoDateFromEpochSeconds(epochSeconds) {
+  const ms = Number(epochSeconds) * 1000;
+  return Number.isFinite(ms) && ms > 0 ? new Date(ms).toISOString() : null;
+}
+
+function hasGitRepo(projectRootAbs) {
+  const probe = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+    cwd: projectRootAbs,
+    encoding: "utf8"
+  });
+
+  return probe.status === 0;
+}
+
+function listGitFileStats(projectRootAbs) {
+  const cmd = [
+    "log",
+    "--name-only",
+    "--format=@@@%ct",
+    "--no-merges",
+    "--",
+    "."
+  ];
+
+  const res = spawnSync("git", cmd, {
+    cwd: projectRootAbs,
+    encoding: "utf8",
+    maxBuffer: 16 * 1024 * 1024
+  });
+
+  if (res.status !== 0) {
+    const stderr = String(res.stderr || res.stdout || "git log failed").trim();
+    throw new Error(stderr || "git log failed");
+  }
+
+  const stats = new Map();
+  let currentEpoch = null;
+
+  for (const rawLine of String(res.stdout || "").split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    if (line.startsWith("@@@")) {
+      currentEpoch = Number(line.slice(3));
+      continue;
+    }
+
+    const relPath = normalizeGraphFileId(line);
+    if (!relPath) continue;
+
+    let entry = stats.get(relPath);
+    if (!entry) {
+      entry = {
+        commits: 0,
+        lastTouchedEpoch: 0
+      };
+      stats.set(relPath, entry);
+    }
+
+    entry.commits += 1;
+    if (Number.isFinite(currentEpoch) && currentEpoch > entry.lastTouchedEpoch) {
+      entry.lastTouchedEpoch = currentEpoch;
+    }
+  }
+
+  return stats;
+}
+
+function normalizeByLogScale(value, maxValue) {
+  const v = Math.max(0, Number(value) || 0);
+  const max = Math.max(0, Number(maxValue) || 0);
+  if (v <= 0 || max <= 0) return 0;
+  return clamp01(Math.log1p(v) / Math.log1p(max));
+}
+
+function computeFileHotspotScore(node, gitStat, maxima) {
+  const complexity01 = normalizeByLogScale(readNodeComplexity(node), maxima.maxComplexity);
+  const lines01 = normalizeByLogScale(readNodeLines(node), maxima.maxLines);
+  const changeFreq01 = normalizeByLogScale(gitStat?.commits || 0, maxima.maxCommits);
+
+  // CodeScene-like idea:
+  // hotspot = code we change often + code that is expensive to understand.
+  // We approximate understanding cost from complexity plus file size.
+  const codeHealthPressure01 = clamp01((complexity01 * 0.8) + (lines01 * 0.2));
+  return clamp01(changeFreq01 * codeHealthPressure01);
+}
+
+function rankByHotspot(nodes) {
+  const ranked = [...nodes].sort((a, b) => {
+    const scoreDiff = (Number(b?._hotspotScore) || 0) - (Number(a?._hotspotScore) || 0);
+    if (scoreDiff) return scoreDiff;
+    return String(a?.id || "").localeCompare(String(b?.id || ""), "de");
+  });
+
+  ranked.forEach((node, index) => {
+    node._hotspotRank = index + 1;
+    node.hotspot = index < 10 && (Number(node?._hotspotScore) || 0) > 0;
+  });
+}
+
+function enrichMetricsWithHotspots(metrics, projectRootAbs) {
+  const nodes = Array.isArray(metrics?.nodes) ? metrics.nodes : [];
+  if (!nodes.length) return metrics;
+  if (!hasGitRepo(projectRootAbs)) return metrics;
+
+  const gitStats = listGitFileStats(projectRootAbs);
+  if (!gitStats.size) return metrics;
+
+  const fileNodes = nodes.filter(looksLikeFileNode);
+  const functionNodes = nodes.filter(looksLikeFunctionNode);
+
+  const maxima = {
+    maxCommits: 0,
+    maxComplexity: 0,
+    maxLines: 0
+  };
+
+  for (const fileNode of fileNodes) {
+    const fileId = normalizeGraphFileId(fileNode?.file || fileNode?.id);
+    const stat = gitStats.get(fileId);
+
+    maxima.maxCommits = Math.max(maxima.maxCommits, toPositiveNumber(stat?.commits));
+    maxima.maxComplexity = Math.max(maxima.maxComplexity, readNodeComplexity(fileNode));
+    maxima.maxLines = Math.max(maxima.maxLines, readNodeLines(fileNode));
+  }
+
+  for (const fileNode of fileNodes) {
+    const fileId = normalizeGraphFileId(fileNode?.file || fileNode?.id);
+    const stat = gitStats.get(fileId) || { commits: 0, lastTouchedEpoch: 0 };
+
+    fileNode._changeFreq = toPositiveNumber(stat.commits);
+    fileNode._lastTouchedAt = safeIsoDateFromEpochSeconds(stat.lastTouchedEpoch);
+    fileNode._hotspotScore = computeFileHotspotScore(fileNode, stat, maxima);
+  }
+
+  rankByHotspot(fileNodes);
+
+  const fileById = new Map(
+    fileNodes.map((fileNode) => [normalizeGraphFileId(fileNode?.file || fileNode?.id), fileNode])
+  );
+
+  for (const fnNode of functionNodes) {
+    const owner = fileById.get(normalizeGraphFileId(fnNode?.file));
+    if (!owner) continue;
+
+    fnNode._changeFreq = owner._changeFreq;
+    fnNode._lastTouchedAt = owner._lastTouchedAt;
+    fnNode._hotspotScore = owner._hotspotScore;
+    fnNode._hotspotRank = owner._hotspotRank;
+    fnNode.hotspot = Boolean(owner.hotspot);
+  }
+
+  if (!metrics.meta || typeof metrics.meta !== "object") metrics.meta = {};
+  metrics.meta.hotspotModel = {
+    kind: "codescene-like",
+    basedOn: ["git_commit_frequency", "file_complexity", "file_loc"],
+    note: "Approximates CodeScene hotspots as frequently changed, cognitively expensive code."
+  };
+
+  return metrics;
+}
+
 // ---------------------------------------------------------------------------
 // Analyzer implementation
 // ---------------------------------------------------------------------------
@@ -144,10 +464,9 @@ function getRequestedAppId(req) {
   return normalizeId(req?.body?.appId);
 }
 
-function getAppsAndApp(appId) {
+function getAppById(appId) {
   const apps = loadAppsConfig();
-  const app = findAppById(apps, appId);
-  return { apps, app };
+  return findAppById(apps, appId);
 }
 
 function resolveAndValidateAppRoot(app) {
@@ -204,9 +523,12 @@ function buildUrlInfo(appId, app) {
 }
 
 function buildAnalyzeResponse(runToken, metrics) {
-  const summary = summaryFromMetrics(metrics);
-  const metricsUrl = `/metrics?runToken=${encodeURIComponent(runToken)}`;
-  return { runToken, metricsUrl, summary };
+  return {
+    runToken,
+    metricsUrl: metricsPublicUrl(runToken),
+    csvUrl: `/output/${metricsCsvFilename(runToken)}`,
+    summary: summaryFromMetrics(metrics)
+  };
 }
 
 async function handleAnalyze(req, res) {
@@ -214,7 +536,7 @@ async function handleAnalyze(req, res) {
     const appId = getRequestedAppId(req);
     if (!appId) return sendBadRequest(res, "Missing appId");
 
-    const { app } = getAppsAndApp(appId);
+    const app = getAppById(appId);
     if (!app) return sendBadRequest(res, `Unknown appId: ${appId}`);
 
     const rootResult = resolveAndValidateAppRoot(app);
@@ -224,18 +546,26 @@ async function handleAnalyze(req, res) {
     if (!entryResult.ok) return sendUnsupported(res, entryResult.payload);
 
     const maxDirDepth = parseMaxDirDepth(req.body);
+    const urlInfo = buildUrlInfo(appId, app);
     const runToken = newRunToken();
 
-    const urlInfo = buildUrlInfo(appId, app);
+    const metrics = enrichMetricsWithHotspots(
+      await buildMetrics({
+        projectRootAbs: rootResult.appRootAbs,
+        entryAbs: entryResult.entryAbs,
+        urlInfo,
+        maxDirDepth
+      }),
+      rootResult.appRootAbs
+    );
 
-    const metrics = await buildMetrics({
-      projectRootAbs: rootResult.appRootAbs,
-      entryAbs: entryResult.entryAbs,
-      urlInfo,
-      maxDirDepth
+    writeMetricsArtifacts(runToken, metrics);
+
+    await activateAnalysis({
+      appId,
+      rootAbs: rootResult.appRootAbs,
+      entryRel: String(app?.entry || "").trim() || null
     });
-
-    metricsByToken.set(runToken, metrics);
 
     return res.json(buildAnalyzeResponse(runToken, metrics));
   } catch (e) {
@@ -243,28 +573,10 @@ async function handleAnalyze(req, res) {
   }
 }
 
-router.post("/", handleAnalyze);
-router.post("/analyze", handleAnalyze);
+["/", "/analyze"].forEach((routePath) => {
+  router.post(routePath, handleAnalyze);
+});
 
-function handleMetrics(req, res) {
-  const token = normalizeId(req?.query?.runToken || req?.params?.runToken);
-  if (!token) return res.status(400).json({ error: { message: "Missing runToken" } });
-
-  const metrics = metricsByToken.get(token);
-  if (!metrics) {
-    return res.status(404).json({
-      error: { message: "Metrics not found (runToken expired or unknown)." },
-    });
-  }
-
-  return res.json(metrics);
-}
-
-// Same robustness pattern: allow /metrics and /analyze/metrics.
-router.get("/metrics", handleMetrics);
-router.get("/analyze/metrics", handleMetrics);
-router.get("/metrics/:runToken", handleMetrics);
-router.get("/analyze/metrics/:runToken", handleMetrics);
 
 // ---------------------------------------------------------------------------
 // Helper: Convert an absolute path to a root-relative POSIX id.

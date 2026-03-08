@@ -6,18 +6,12 @@
  * ----------------
  * - Serve the browser-based UI (index.html + JS/CSS assets)
  * - Expose API routes for:
- *     - /analyze   → trigger static analysis (route module may also provide GET /events)
+ *     - /analyze   → trigger static analysis
  *     - /apps      → list known applications
  *     - /readme    → resolve nearest README.md
  *     - /help      → return NodeAnalyzer UI help markdown (app/public/readme.md)
+ *     - /events    → Server-Sent Events stream for live file changes
  * - Serve generated analysis output as static JSON
- *
- * Design Notes
- * ------------
- * - This server is intentionally thin: no business logic lives here.
- * - All filesystem access and analysis logic is delegated to /routes and /lib.
- * - Static serving is configured BEFORE API routes to avoid accidental shadowing
- *   or HTML fallbacks for JS files (which can trigger browser "nosniff" errors).
  */
 
 import express from "express";
@@ -29,8 +23,10 @@ import analyzeRoute from "./routes/analyze.js";
 import appsRoute from "./routes/apps.js";
 import readmeRoute from "./routes/readme.js";
 import helpRoute from "./routes/help.js";
+import { attachSseEndpoint } from "./lib/liveChangeFeed.js";
 
 const app = express();
+const sseRouter = express.Router();
 
 const { PORT, PROJECT_ROOT, PUBLIC_ROOT, OUTPUT_ROOT } = getServerConfig({
   publicDir: path.join("app", "public")
@@ -43,6 +39,10 @@ app.use(express.static(PUBLIC_ROOT));
 
 // Generated output
 app.use("/output", express.static(OUTPUT_ROOT));
+
+// SSE
+attachSseEndpoint(sseRouter);
+app.use(sseRouter);
 
 // API
 app.use(appsRoute);
