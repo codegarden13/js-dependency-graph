@@ -2,8 +2,6 @@
 
 Interactive Architecture & Dependency Visualization for Complex JavaScript & TypeScript Systems.
 
-
-
 <video src="assets/NodeTimeline.mp4" controls width="700" title="NodeAnalyzer Timeline (startup)"></video>
 
 ## Why
