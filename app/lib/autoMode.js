@@ -2,53 +2,61 @@
 
 /**
  * autoMode
- * ========
+ * ============================================================================
  *
- * Best-effort “structure expansion” for projects that have few/no import edges.
- *
- * Problem
+ * Purpose
  * -------
- * Many real-world apps (especially small dashboards / Express servers) do not
- * express architecture purely via JS/TS imports. They reference:
- * - static directories (express.static(publicDir))
- * - config files (config.json)
- * - CSV/JSON datasets
- * - HTML/CSS assets that reference other files
+ * This module adds best-effort structural enrichment for projects whose
+ * architecture is only weakly visible through normal JS / TS import traversal.
  *
- * This module adds OPTIONAL graph enrichment to make that structure visible.
+ * Real-world projects often reference important files and folders indirectly,
+ * for example via:
+ * - `express.static(...)`
+ * - config files (`config.json`, `.env`, YAML)
+ * - CSV / JSON data files
+ * - HTML / CSS assets that reference further files
  *
- * Key Behaviors
- * -------------
- * 1) Reference expansion (AUTO REFS)
- *    - If parseFile() reports file/asset references, create nodes + `include` edges.
- *    - If a referenced directory is found, add directory node and bounded child listing.
+ * Without extra help, those relationships may never appear in the graph.
  *
- * 2) Skeleton fallback (AUTO SKELETON)
- *    - If the graph is nearly empty after traversal, add a shallow “project skeleton”
- *      for common folders + a few important top-level files.
+ * What this module adds
+ * ---------------------
+ * 1. AUTO REFS
+ *    If `parseFile()` reports file / asset references, the module creates the
+ *    referenced nodes and `include` edges.
  *
- * Safety + Performance Guardrails
- * -------------------------------
- * - Never traverse outside project root.
- * - Bounded directory expansion (depth + entry count limits).
- * - Skip known noise dirs (node_modules, .git, dist, build, etc.).
+ * 2. Referenced directory expansion
+ *    If a reference points to a directory, the module creates a directory node
+ *    and expands a shallow, bounded child listing.
  *
- * Integration
- * -----------
- * This module is intentionally decoupled from your graph builder implementation.
- * You provide callbacks:
- * - ensureNode(node)  -> boolean
- * - ensureLink(sourceId, targetId, type) -> boolean
- * - enqueue(absPath)  -> void (optional)
- * - hasVisited(absPath) -> boolean (optional)
+ * 3. AUTO SKELETON support helpers
+ *    The same file / directory classification helpers are reused by the graph
+ *    builder when it needs a lightweight project skeleton fallback.
  *
- * The builder (e.g. buildMetricsFromEntrypoint) decides WHEN to call auto mode.
+ * Safety and performance guardrails
+ * ---------------------------------
+ * - never traverse outside the project root
+ * - bounded directory expansion (depth + entry count)
+ * - skip well-known noise folders (`node_modules`, `.git`, build output, ...)
+ * - only parse cheap text-like files for secondary references
+ *
+ * Integration model
+ * -----------------
+ * This module is intentionally decoupled from the graph builder.
+ * The caller provides callbacks such as:
+ * - `ensureNode(node)`
+ * - `ensureLink(sourceId, targetId, type)`
+ * - `enqueue(absPath)`
+ * - `hasVisited(absPath)`
+ *
+ * The builder decides when auto mode is invoked. This module only performs the
+ * local enrichment work.
  */
 
 import fs from "node:fs";
 import path from "node:path";
 
 import { parseFile } from "./parseFile.js";
+import { isInsideRoot } from "./fsPaths.js";
 
 /* ========================================================================== */
 /* AUTO MODE CONFIGURATION                                                    */
@@ -163,6 +171,22 @@ export const AUTO_TOP_FILES = [
 /* PUBLIC API                                                                */
 /* ========================================================================== */
 
+/**
+ * Apply best-effort reference expansion for one already-parsed file.
+ *
+ * Expected call site
+ * ------------------
+ * The graph builder calls this after `parseFile()` returned metadata for a
+ * source file. If parse output exposes referenced files or assets, this module
+ * materializes those relationships as graph nodes and `include` edges.
+ *
+ * The function is intentionally fail-soft:
+ * - invalid / incomplete args -> no-op
+ * - missing references        -> no-op
+ * - inaccessible targets      -> ignored
+ *
+ * @param {object} args
+ */
 export function applyAutoRefs(args) {
   const ctx = normalizeAutoRefsArgs(args);
   if (!ctx) return;
@@ -176,9 +200,17 @@ export function applyAutoRefs(args) {
 }
 
 /**
- * Normalize and validate inputs once.
- * Returns a compact context object used by helpers.
+ * Normalize and validate the AUTO REFS input payload once.
+ *
+ * Why this exists
+ * ---------------
+ * The public entrypoint accepts a broad callback-based argument object. This
+ * helper converts that loose input into one compact internal context so helper
+ * functions do not need to repeatedly validate the same fields.
+ *
+ * Returns `null` if the minimum required contract is missing.
  */
+
 function normalizeAutoRefsArgs(args) {
   const a = args && typeof args === "object" ? args : null;
   if (!a) return null;
@@ -207,8 +239,14 @@ function pushArrayProp(into, obj, prop) {
 }
 
 /**
- * Merge ref buckets; parser may expose different properties across versions.
- * We keep them as-is and resolve to absolute paths later.
+ * Merge all known parser reference buckets into one flat list.
+ *
+ * Why this exists
+ * ---------------
+ * `parseFile()` may expose slightly different property names depending on file
+ * type or parser evolution. AUTO REFS does not care which bucket a reference
+ * came from; it only needs one normalized list to process.
+ *
  * @param {any} parsed
  * @returns {string[]}
  */
@@ -225,6 +263,16 @@ function collectAutoRefs(parsed) {
   return refs;
 }
 
+/**
+ * Resolve and materialize one parser-reported reference.
+ *
+ * The reference may point to:
+ * - a file   -> create / link file node
+ * - a dir    -> create / link dir node and expand it shallowly
+ * - invalid  -> ignore
+ *
+ * Out-of-root targets are rejected defensively.
+ */
 function processAutoRef(ctx, ref) {
   const refAbs = toAbsFromRelMaybe(ctx.rootAbs, ref);
   if (!refAbs) return;
@@ -575,14 +623,20 @@ function applyTextRef(ctx, ref) {
 }
 
 
-function linkReferencedDirectoryFromCtx(ctx, { parentId, projectRootAbs, dirAbs }) {
-  const dirId = ctx.toRelId(dirAbs);
-
+/**
+ * Link one discovered directory from the current caller context and expand it.
+ *
+ * Why this exists
+ * ---------------
+ * AUTO REFS and secondary text-reference parsing share the same directory
+ * materialization logic. This helper keeps the shared wiring in one place.
+ */
+function linkReferencedDirectoryFromCtx(ctx, parentId, projectRootAbs, dirAbs) {
   linkAndExpandDirectory({
     parentId,
     projectRootAbs,
     dirAbs,
-    dirId,
+    dirId: ctx.toRelId(dirAbs),
     toRelId: ctx.toRelId,
     ensureNode: ctx.ensureNode,
     ensureLink: ctx.ensureLink,
@@ -591,12 +645,11 @@ function linkReferencedDirectoryFromCtx(ctx, { parentId, projectRootAbs, dirAbs 
   });
 }
 
+/**
+ * Link one directory discovered while parsing a lightweight text file.
+ */
 function linkReferencedDirectoryFromText(ctx, dirAbs) {
-  linkReferencedDirectoryFromCtx(ctx, {
-    parentId: ctx.parentId,
-    projectRootAbs: ctx.projectRootAbs,
-    dirAbs
-  });
+  linkReferencedDirectoryFromCtx(ctx, ctx.parentId, ctx.projectRootAbs, dirAbs);
 }
 
 function linkReferencedFileFromText(ctx, fileAbs) {
@@ -629,11 +682,7 @@ function safeReadDir(dirAbs) {
   }
 }
 
-function isInsideRoot(rootAbs, fileAbs) {
-  const root = path.resolve(rootAbs);
-  const file = path.resolve(fileAbs);
-  return file === root || file.startsWith(root + path.sep);
-}
+
 
 function toAbsFromRelMaybe(projectRootAbs, relOrAbs) {
   const raw = String(relOrAbs || "").trim();

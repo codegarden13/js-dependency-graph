@@ -3,6 +3,7 @@
 
 <head>
   <meta charset="utf-8" />
+  
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>NodeAnalyzer</title>
 
@@ -81,26 +82,20 @@
 
             <div id="accLegend" class="accordion-collapse collapse show" aria-labelledby="accLegendHdr"
               data-bs-parent="#rightAccordion">
-              <div class="accordion-body panelScroll" id="legendFilterPanel"></div>
+              <div class="accordion-body panelScroll">
+                <div class="mb-3">
+                  <label for="graphTextFilterMode" class="form-label small fw-semibold mb-1">Text filter</label>
+                  <select id="graphTextFilterMode" class="form-select form-select-sm" aria-label="Text filter mode">
+                    <option value="comments_readme">Kommentare und readme</option>
+                    <option value="functions">Funktionsnamen und Funktionsinhalte</option>
+                  </select>
+                  <div class="form-text small">Bereitet textbasierte Filter für unterschiedliche Analysemodi vor.</div>
+                </div>
+
+                <div id="legendFilterPanel"></div>
+              </div>
             </div>
           </div>
-
-          <!-- Recommendations -->
-          <div class="accordion-item">
-            <h2 class="accordion-header" id="accRecoHdr">
-              <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse"
-                data-bs-target="#accReco" aria-expanded="false" aria-controls="accReco">
-                <span class="small fw-semibold">Recommendations</span>
-                <span class="badge bg-secondary ms-2" id="recoCountBadge">0</span>
-              </button>
-            </h2>
-            <div id="accReco" class="accordion-collapse collapse" aria-labelledby="accRecoHdr"
-              data-bs-parent="#rightAccordion">
-              <div class="accordion-body panelScroll" id="recommendationsPanel"></div>
-            </div>
-          </div>
-
-
 
           <!-- Selection -->
           <div class="accordion-item">
@@ -131,6 +126,23 @@
               <div class="accordion-body panelScroll" id="readmePanel"></div>
             </div>
           </div>
+
+          <!-- Recommendations -->
+          <div class="accordion-item">
+            <h2 class="accordion-header" id="accRecoHdr">
+              <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse"
+                data-bs-target="#accReco" aria-expanded="false" aria-controls="accReco">
+                <span class="small fw-semibold">Recommendations</span>
+                <span class="badge bg-secondary ms-2" id="recoCountBadge">0</span>
+              </button>
+            </h2>
+            <div id="accReco" class="accordion-collapse collapse" aria-labelledby="accRecoHdr"
+              data-bs-parent="#rightAccordion">
+              <div class="accordion-body panelScroll" id="recommendationsPanel"></div>
+            </div>
+          </div>
+
+
 
         </div>
       </aside>

@@ -5,12 +5,18 @@ import crypto from "crypto";
 import { spawnSync } from "node:child_process";
 
 import { activateAnalysis } from "../lib/liveChangeFeed.js";
+import { normalizeFsPath } from "../lib/fsPaths.js";
+
 
 // NOTE:
 // This module is imported as a *default export* by the server bootstrap.
 // Therefore we must default-export an Express router.
 const router = express.Router();
 
+
+// ---------------------------------------------------------------------------
+// Generic helpers
+// ---------------------------------------------------------------------------
 
 function newRunToken() {
   // Short, URL-safe run id.
@@ -26,8 +32,12 @@ function normalizeId(v) {
   return String(v || "").trim();
 }
 
+// ---------------------------------------------------------------------------
+// Metrics artifact paths
+// ---------------------------------------------------------------------------
+
 function outputDirAbs() {
-  return path.resolve(process.cwd(), "app", "public", "output");
+  return normalizeFsPath(path.join(process.cwd(), "app", "public", "output"));
 }
 
 function ensureOutputDir() {
@@ -40,31 +50,61 @@ function metricsBaseName(runToken) {
   return `code-structure-${normalizeId(runToken)}`;
 }
 
+/**
+ * Build the full artifact descriptor for one analysis run.
+ *
+ * Keeping the derived names/paths/urls in one place prevents tiny helper
+ * functions from drifting apart over time.
+ */
+function metricsArtifacts(runToken) {
+  const baseName = metricsBaseName(runToken);
+  const jsonFilename = `${baseName}.json`;
+  const csvFilename = `${baseName}.csv`;
+
+  return {
+    baseName,
+    jsonFilename,
+    csvFilename,
+    jsonPath: path.join(outputDirAbs(), jsonFilename),
+    csvPath: path.join(outputDirAbs(), csvFilename),
+    jsonUrl: `/output/${jsonFilename}`,
+    csvUrl: `/output/${csvFilename}`
+  };
+}
+
 function metricsJsonFilename(runToken) {
-  return `${metricsBaseName(runToken)}.json`;
+  return metricsArtifacts(runToken).jsonFilename;
 }
 
 function metricsCsvFilename(runToken) {
-  return `${metricsBaseName(runToken)}.csv`;
+  return metricsArtifacts(runToken).csvFilename;
 }
 
 function metricsJsonPath(runToken) {
-  return path.join(outputDirAbs(), metricsJsonFilename(runToken));
+  return metricsArtifacts(runToken).jsonPath;
 }
 
 function metricsCsvPath(runToken) {
-  return path.join(outputDirAbs(), metricsCsvFilename(runToken));
+  return metricsArtifacts(runToken).csvPath;
 }
 
 function metricsPublicUrl(runToken) {
-  return `/output/${metricsJsonFilename(runToken)}`;
+  return metricsArtifacts(runToken).jsonUrl;
 }
+
+// ---------------------------------------------------------------------------
+// CSV helpers
+// ---------------------------------------------------------------------------
 
 function csvEscape(value) {
   const s = String(value ?? "");
   if (!/[",\n]/.test(s)) return s;
   return `"${s.replace(/"/g, '""')}"`;
 }
+
+// ---------------------------------------------------------------------------
+// CSV row projection
+// ---------------------------------------------------------------------------
 
 function nodeRow(node) {
   return {
@@ -145,14 +185,16 @@ function buildMetricsCsv(metrics) {
 function writeMetricsArtifacts(runToken, metrics) {
   ensureOutputDir();
 
+  const artifacts = metricsArtifacts(runToken);
+
   fs.writeFileSync(
-    metricsJsonPath(runToken),
+    artifacts.jsonPath,
     JSON.stringify(metrics, null, 2),
     "utf8"
   );
 
   fs.writeFileSync(
-    metricsCsvPath(runToken),
+    artifacts.csvPath,
     buildMetricsCsv(metrics),
     "utf8"
   );
@@ -162,7 +204,7 @@ function writeMetricsArtifacts(runToken, metrics) {
 // Apps config (app/config/apps.json)
 // ---------------------------------------------------------------------------
 function appsConfigPath() {
-  return path.resolve(process.cwd(), "app", "config", "apps.json");
+  return normalizeFsPath(path.join(process.cwd(), "app", "config", "apps.json"));
 }
 
 function loadAppsConfig() {
@@ -190,8 +232,11 @@ function resolveAppRootAbs(app) {
   const rootDir = String(app?.rootDir || app?.root || app?.path || "").trim();
   if (!rootDir) return null;
 
-  // rootDir in config can be absolute or relative to the NodeAnalyzer cwd.
-  return path.resolve(process.cwd(), rootDir);
+  if (path.isAbsolute(rootDir)) {
+    return normalizeFsPath(rootDir);
+  }
+
+  return normalizeFsPath(path.join(process.cwd(), rootDir));
 }
 
 function resolveEntryAbs(appRootAbs, app) {
@@ -207,6 +252,10 @@ function resolveEntryAbs(appRootAbs, app) {
 
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// Metrics summary + hotspot enrichment
+// ---------------------------------------------------------------------------
 
 function summaryFromMetrics(metrics) {
   const nodes = Array.isArray(metrics?.nodes) ? metrics.nodes.length : 0;
@@ -410,9 +459,10 @@ function enrichMetricsWithHotspots(metrics, projectRootAbs) {
 }
 
 // ---------------------------------------------------------------------------
-// Analyzer implementation
+// Analyzer integration
 // ---------------------------------------------------------------------------
-// We import lazily so boot doesn't crash if the analyzer module changes.
+// We import lazily so server boot does not fail immediately if the analyzer
+// module changes during refactors.
 async function buildMetrics({ projectRootAbs, entryAbs, urlInfo, maxDirDepth }) {
   const mod = await import("../lib/buildMetricsFromEntrypoint.js");
   const fn = mod?.buildMetricsFromEntrypoint;
@@ -523,10 +573,12 @@ function buildUrlInfo(appId, app) {
 }
 
 function buildAnalyzeResponse(runToken, metrics) {
+  const artifacts = metricsArtifacts(runToken);
+
   return {
     runToken,
-    metricsUrl: metricsPublicUrl(runToken),
-    csvUrl: `/output/${metricsCsvFilename(runToken)}`,
+    metricsUrl: artifacts.jsonUrl,
+    csvUrl: artifacts.csvUrl,
     summary: summaryFromMetrics(metrics)
   };
 }
@@ -576,45 +628,5 @@ async function handleAnalyze(req, res) {
 ["/", "/analyze"].forEach((routePath) => {
   router.post(routePath, handleAnalyze);
 });
-
-
-// ---------------------------------------------------------------------------
-// Helper: Convert an absolute path to a root-relative POSIX id.
-// ---------------------------------------------------------------------------
-/**
- * Convert an absolute path to a root-relative POSIX id.
- *
- * Behavior
- * --------
- * 1. Compute the relative path from `rootAbs` → `absPath`.
- * 2. Reject paths that escape the root (".." segments).
- * 3. Normalize separators to POSIX style so the UI receives stable ids.
- *
- * This function intentionally returns `null` instead of throwing because
- * watcher events may occasionally produce paths outside the analyzed root
- * (symlinks, editor temp files, etc.).
- *
- * @param {string} rootAbs
- * @param {string} absPath
- * @returns {string|null}
- */
-export function toRelPosix(rootAbs, absPath) {
-  const rel = path.relative(rootAbs, absPath);
-  if (isInvalidRelative(rel)) return null;
-  return normalizeToPosix(rel);
-}
-
-/** Determine whether a relative path escapes the root directory. */
-function isInvalidRelative(rel) {
-  if (!rel) return true;
-  if (rel === "..") return true;
-  if (rel.startsWith(".." + path.sep)) return true;
-  return false;
-}
-
-/** Convert Windows path separators to POSIX style (stable ids across platforms). */
-function normalizeToPosix(p) {
-  return String(p || "").replace(/\\/g, "/");
-}
 
 export default router;

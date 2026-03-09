@@ -72,8 +72,6 @@
  * }
  */
 
-
-
 import fs from "node:fs";
 import path from "node:path";
 
@@ -82,11 +80,9 @@ import { parseFile } from "./parseFile.js";
 import { resolveImports } from "./resolveImports.js";
 import { GraphStore } from "./graphStore.js";
 import { applyAutoRefs } from "./autoMode.js";
-
-
 import { ensureCanonicalNodeFields, DEFAULT_LAYER_ORDER, defaultLayerY } from "./nodeClassification.js";
-
 import { finalizeGraphStats } from "./graph/graphFinalize.js";
+import { isInsideRoot } from "./fsPaths.js";
 
 
 /* ========================================================================== */
@@ -765,15 +761,7 @@ function statFileOrThrow(abs) {
 }
 
 
-/**
- * Safety boundary: ensure a path stays inside the selected project root.
- * Accepts the root itself.
- */
-function isInsideRoot(rootAbs, fileAbs) {
-  const root = path.resolve(rootAbs);
-  const file = path.resolve(fileAbs);
-  return file === root || file.startsWith(root + path.sep);
-}
+
 
 
 
