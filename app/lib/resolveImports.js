@@ -318,7 +318,7 @@ function resolveWithExtensions(baseAbs) {
 }
 
 /**
- * Guess and cache likely public/static roots inside the project.
+ * Guess likely public/static roots inside the project.
  *
  * Order matters: more conventional roots are tried first.
  *
@@ -327,8 +327,6 @@ function resolveWithExtensions(baseAbs) {
  */
 function getPublicRoots(rootAbs) {
   const key = path.resolve(rootAbs);
-  const cached = publicRootsCache.get(key);
-  if (cached) return cached;
 
   // Order matters: most common first.
   const roots = [
@@ -340,7 +338,6 @@ function getPublicRoots(rootAbs) {
     key // fallback: allow direct mapping ("/assets" → "<root>/assets")
   ].filter(existsDir);
 
-  publicRootsCache.set(key, roots);
   return roots;
 }
 

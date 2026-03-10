@@ -1,7 +1,7 @@
 
 
 /**
- * fsPaths
+ * fsPaths (lowlevel Utility)
  * ---------------------------------------------------------------------------
  * Shared filesystem path helpers used across the NodeAnalyzer backend.
  *

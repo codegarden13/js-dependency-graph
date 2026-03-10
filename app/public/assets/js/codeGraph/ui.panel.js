@@ -63,24 +63,42 @@ function buildLegendPanelViewModel({ state, nodes, links, opts }) {
   const groupColors = opts.nodeGroupColors || Object.create(null);
   const linkColors = opts.linkTypeColors || Object.create(null);
 
+  const sections = [
+    {
+      key: "groups",
+      title: "Node groups",
+      subtitle: "What kinds of nodes are visible.",
+      items: buildNodeGroupItems(state, nodes, groupColors),
+    },
+    {
+      key: "links",
+      title: "Link types",
+      subtitle: "What relationships are drawn between nodes.",
+      items: buildLinkTypeItems(state, links, linkColors),
+    },
+    {
+      key: "options",
+      title: "Options",
+      subtitle: "How the graph is reduced or emphasized.",
+      items: buildOptionItems(state),
+    },
+  ];
+
   return {
-    sections: [
-      {
-        title: "Node groups",
-        subtitle: "What kinds of nodes are visible.",
-        items: buildNodeGroupItems(state, nodes, groupColors),
-      },
-      {
-        title: "Link types",
-        subtitle: "What relationships are drawn between nodes.",
-        items: buildLinkTypeItems(state, links, linkColors),
-      },
-      {
-        title: "Options",
-        subtitle: "How the graph is reduced or emphasized.",
-        items: buildOptionItems(state),
-      },
-    ],
+    sections: sections.map((section) => ({
+      ...section,
+      itemCount: Array.isArray(section.items) ? section.items.length : 0,
+      checkedCount: Array.isArray(section.items)
+        ? section.items.filter((item) => item.checked === true).length
+        : 0,
+    })),
+    totals: {
+      sectionCount: sections.length,
+      itemCount: sections.reduce(
+        (sum, section) => sum + (Array.isArray(section.items) ? section.items.length : 0),
+        0
+      ),
+    },
     helpTitle: "Legend help",
     helpText:
       "Hover a node group, link type, or option to see what it means and how it affects the graph.",
@@ -273,27 +291,46 @@ function createLegendItem(cfg) {
 
 function renderLegendPanel(vm, safe) {
   return `
-    <div class="small text-secondary mb-3">
-      Filter what is visible in the graph. Hover or focus an entry to see what it means.
-    </div>
+    <div data-legend-layout="dense">
+      <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+        <div class="small fw-semibold">Graph legend & filters</div>
+        <div class="d-flex flex-wrap align-items-center gap-2 small">
+          <span class="badge text-bg-light border">${safe(String(vm.totals.sectionCount))} sections</span>
+          <span class="badge text-bg-light border">${safe(String(vm.totals.itemCount))} controls</span>
+        </div>
+      </div>
 
-    <div class="row g-3">
-      ${vm.sections.map((section) => renderSection(section, safe)).join("")}
-    </div>
+      <div class="mb-2">
+        <label for="legendFilterSearch" class="form-label small mb-1">Filter legend entries</label>
+        <input
+          id="legendFilterSearch"
+          type="search"
+          class="form-control form-control-sm"
+          placeholder="Search groups, links, or options"
+          autocomplete="off"
+        />
+      </div>
 
-    <div class="mt-3 border rounded p-3 bg-body-tertiary">
-      <div class="small fw-semibold mb-1" id="legendExplainTitle">${safe(vm.helpTitle)}</div>
-      <div class="small text-secondary" id="legendExplainText">${safe(vm.helpText)}</div>
+      <div class="d-flex flex-column gap-2">
+        ${vm.sections.map((section) => renderSection(section, safe)).join("")}
+      </div>
+
+      <div class="mt-2 small text-secondary" id="legendExplainText">${safe(vm.helpText)}</div>
+      <div class="d-none" id="legendExplainTitle">${safe(vm.helpTitle)}</div>
     </div>
   `;
 }
 
 function renderSection(section, safe) {
   return `
-    <div class="col-12 col-md-4">
-      <div class="border rounded p-2 h-100">
-        <div class="small fw-semibold">${safe(section.title)}</div>
-        <div class="small text-secondary mb-2">${safe(section.subtitle || "")}</div>
+    <div class="border rounded px-2 py-2 bg-body" data-legend-card="${safe(section.key || "")}">
+      <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+        <div>
+          <div class="small fw-semibold lh-sm">${safe(section.title)}</div>
+          <div class="small text-secondary lh-sm">${safe(section.checkedCount || 0)} / ${safe(section.itemCount || 0)} active</div>
+        </div>
+      </div>
+      <div class="d-flex flex-column gap-1" data-legend-section="${safe(section.key || "")}">
         ${section.items.map((item) => renderLegendItem(item, safe)).join("")}
       </div>
     </div>
@@ -307,40 +344,44 @@ function renderLegendItem(item, safe) {
 
   return `
     <label
-      class="d-flex align-items-start justify-content-between gap-2 py-1"
+      class="d-flex align-items-center justify-content-between gap-2 px-2 py-1 border rounded legend-filter-item"
       data-cg-name="${safe(name)}"
       data-legend-title="${safe(item.title || item.label)}"
-      data-legend-text="${safe(item.description || "")}"
+      data-legend-text="${safe(item.description || "")}" 
+      data-legend-search="${safe(`${item.label} ${item.title || ""} ${item.description || ""} ${item.kind}`.toLowerCase())}"
     >
-      <span class="d-flex align-items-start gap-2">
+      <span class="d-flex align-items-center gap-2 flex-grow-1 min-w-0">
         <input
           type="checkbox"
-          class="form-check-input mt-1"
+          class="form-check-input mt-0"
           data-cg-name="${safe(name)}"
           ${item.checked ? "checked" : ""}
         />
-        <span>
-          <span class="small d-block">${safe(item.label)}</span>
-          ${metaHtml}
-        </span>
+        ${badgeHtml}
+        <span class="small text-truncate flex-grow-1">${safe(item.label)}</span>
+        <span class="badge rounded-pill text-bg-light border text-uppercase" style="font-size:10px">${safe(item.kind)}</span>
       </span>
-      ${badgeHtml}
+      ${metaHtml}
     </label>
   `;
 }
 
 function renderItemMeta(item, safe) {
   if (!Number.isFinite(item.count)) return "";
-
-  const unit = item.kind === "link" ? "edges" : "nodes";
-  return `<span class="text-secondary" style="font-size:12px">${safe(String(item.count))} ${safe(unit)}</span>`;
+  return `<span class="badge rounded-pill text-bg-light border">${safe(String(item.count))}</span>`;
 }
 
 function renderColorDot(color, safe) {
   if (!color) return "";
 
   const safeColor = safe(color || "#999");
-  return `<span class="rounded-circle" style="display:inline-block;width:10px;height:10px;background:${safeColor}"></span>`;
+  return `
+    <span
+      class="rounded-circle border flex-shrink-0"
+      aria-hidden="true"
+      style="display:inline-block;width:10px;height:10px;background:${safeColor};border-color:rgba(0,0,0,0.12)!important"
+    ></span>
+  `;
 }
 
 function countNodesByGroup(list, group) {
@@ -356,15 +397,45 @@ function countNodesByGroup(list, group) {
 function countLinksByType(list, type) {
   let count = 0;
   for (const link of list || []) {
-    const linkType = link?.type ?? "use";
+    const linkType = resolveLegendLinkType(link);
     if (linkType !== type) continue;
     count += 1;
   }
   return count;
 }
 
+function resolveLegendLinkType(link) {
+  const raw = firstNonEmptyLegendString(
+    link?.type,
+    link?.edgeType,
+    link?.relation,
+    link?.rel,
+    link?.kind,
+    link?.label
+  ).toLowerCase();
+
+  if (!raw) return "use";
+  if (raw.includes("include")) return "include";
+  if (raw.includes("call")) return "call";
+  if (raw.includes("extend")) return "extends";
+  if (raw.includes("inherit")) return "extends";
+  if (raw.includes("import")) return "use";
+  if (raw.includes("use")) return "use";
+  return raw;
+}
+
+function firstNonEmptyLegendString(...values) {
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return "";
+}
+
 function bindLegendPanelEvents(root, id, deps) {
   root.onchange = (ev) => handleLegendFilterChange(ev, id, deps);
+  root.oninput = handleLegendFilterSearch;
   root.onmouseover = handleLegendFilterHover;
   root.onfocusin = handleLegendFilterHover;
   root.onmouseleave = resetLegendExplanation;
@@ -412,6 +483,34 @@ function handleLegendFilterChange(ev, id, deps) {
 
   deps.stateBySvgId.set(id, state);
   deps.dispatchFiltersChanged(id);
+}
+
+function handleLegendFilterSearch(ev) {
+  const el = ev?.target;
+  if (!(el instanceof HTMLInputElement)) return;
+  if (el.id !== "legendFilterSearch") return;
+
+  const query = String(el.value || "").trim().toLowerCase();
+  const root = document.getElementById("legendFilterPanel");
+  if (!root) return;
+
+  const items = root.querySelectorAll(".legend-filter-item");
+  for (const item of items) {
+    if (!(item instanceof HTMLElement)) continue;
+    const haystack = String(item.getAttribute("data-legend-search") || "");
+    const matches = !query || haystack.includes(query);
+    item.hidden = !matches;
+  }
+
+  const sections = root.querySelectorAll("[data-legend-section]");
+  for (const section of sections) {
+    if (!(section instanceof HTMLElement)) continue;
+    const visibleItems = Array.from(section.children).filter(
+      (child) => child instanceof HTMLElement && child.hidden !== true
+    );
+    const card = section.closest("[data-legend-card]");
+    if (card instanceof HTMLElement) card.hidden = visibleItems.length === 0;
+  }
 }
 
 function findLegendItemElement(start) {

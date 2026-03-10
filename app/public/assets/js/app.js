@@ -1,29 +1,57 @@
 /* public/assets/js/app.js (ESM)
- * NodeAnalyzer UI bootstrap (index.html companion)
+ * ============================================================================
+ * NodeAnalyzer UI bootstrap / page controller
+ * ============================================================================
  *
- * Responsibilities:
- * - Load app presets (/apps) into a compact selectable list (#appList)
- * - Auto-run analysis when selecting an app (no Analyze button)
- * - Provide `onNodeSelected` callback to the D3 graph (no window bridge)
- * - Render README + selection info panels
- * - Subscribe to SSE (/events) and mark changed nodes (color + timestamp)
+ * This module wires the browser UI together. It does not parse code itself;
+ * instead it orchestrates the backend + graph renderer:
  *
- * Notes:
- * - Requires marked + DOMPurify for README HTML rendering (optional fallback)
- * - Expects a hidden input: <input type="hidden" id="appSelect" value="">
- * - Expects: #appList, #status, #graphInfoPanel, #readmePanel, #codeStructureSvg
- * - Uses ESM imports: initcodeStructureChart(svgId, metrics, { onNodeSelected })
- * - Uses ESM imports for other helpers
+ * - loads configured apps from `/apps`
+ * - stores the current selection in hidden DOM state (`#appSelect`)
+ * - triggers `/analyze` for the selected app
+ * - fetches the produced metrics JSON
+ * - renders the main D3 graph via `initcodeStructureChart(...)`
+ * - keeps side panels (node info + README) in sync with graph selection
+ * - listens to SSE live events from `/events`
+ * - forwards fs-change events into the active graph instance
+ *
+ * Design notes
+ * ------------
+ * - No window namespace bridge is used for the main graph callback.
+ * - The selected app is intentionally stored in the DOM, not in a separate
+ *   global variable, so UI state stays inspectable and resilient to re-renders.
+ * - The graph renderer is treated like a controller object that can be replaced
+ *   after each analyze run.
+ *
+ * Expected DOM
+ * ------------
+ * - #appList
+ * - #appSelect (hidden input)
+ * - #status
+ * - #graphInfoPanel
+ * - #readmePanel
+ * - #codeStructureSvg
  */
 
 "use strict";
 
 import { initcodeStructureChart } from "./d3_codeStructure.js";
 
-
 // App-local state (no window globals)
+
+// Currently selected graph node.
+//
+// Source of truth for the side panels. The value is updated from the graph
+// renderer callback (`onNodeSelected`) and occasionally refreshed from the
+// latest rendered node instance after SSE updates.
 let selectedNode = null;
 
+// Active graph controller returned by `initcodeStructureChart(...)`.
+//
+// We keep the controller so the app module can:
+// - destroy the previous graph before a rerender
+// - mark changed nodes from SSE (`markChanged`)
+// - read the latest rendered nodes for panel refreshes
 let graphController = null;
 
 /* ======================================================================= */
@@ -931,29 +959,29 @@ async function loadApps() {
 }
 
 /* ======================================================================= */
-/* Live Change Feed (SSE) mit currentRunToken                                                 */
+/* Live change feed (SSE)                                                  */
 /* ======================================================================= */
+
 
 let currentRunToken = null;
 
-// currentRunToken ist eine Analyse-„Run-ID“ (Token), die vom Backend vergeben wird.
+// `currentRunToken` identifies the currently active analysis run.
 //
-// Woher kommt er?
-// - Das Backend sendet ihn über SSE:
-//   - Event "hello": msg.activeAnalysis.runToken
-//   - Event "analysis": msg.runToken
-// - Zusätzlich kann /analyze ebenfalls `runToken` zurückgeben (wird in runAnalysis gesetzt).
+// Why we track it
+// ---------------
+// SSE events are asynchronous and may arrive slightly late. Without a run token
+// guard, an `fs-change` event from an older analysis could mark nodes in the
+// graph that is currently visible, which would be misleading.
 //
-// Wozu dient er?
-// - Er verhindert, dass veraltete fs-change Events (von einem älteren Analyse-Lauf)
-//   den aktuell angezeigten Graphen „falsch“ als geändert markieren.
-// - Das ist wichtig, weil SSE-Events asynchron eintreffen und zwischen zwei Läufen
-//   noch Events vom vorherigen Lauf nachlaufen können.
+// Where it comes from
+// -------------------
+// - `hello` event:    `msg.activeAnalysis.runToken`
+// - `analysis` event: `msg.runToken`
 //
-// Regel:
-// - Wenn sowohl currentRunToken als auch msg.runToken vorhanden sind und NICHT gleich sind,
-//   gilt das Event als „stale“ und wird ignoriert.
-// - Wenn einer der Tokens fehlt, lassen wir das Event durch (best-effort / kompatibel).
+// Filtering rule
+// --------------
+// Ignore an `fs-change` event only when BOTH tokens exist and differ.
+// If either side is missing, keep the event for compatibility / best effort.
 
 
 
@@ -977,8 +1005,15 @@ function shouldIgnoreFsChange(msg, currentToken) {
 }
 
 
-
-
+/**
+ * Start the shared SSE connection once.
+ *
+ * Event handling responsibilities:
+ * - `hello` / `analysis`: refresh the current run token
+ * - `fs-change`: mark changed nodes in the current graph and refresh panels
+ *   if the selected node was affected
+ * - `fs-watch-error`: log watcher problems without breaking the UI
+ */
 function startLiveEvents() {
   if (sse) return;
 
@@ -1092,6 +1127,18 @@ function handleUnsupportedAnalysis(data) {
   setStatus("Unsupported target (see details).");
 }
 
+
+/**
+ * Replace the current graph with a freshly rendered one.
+ *
+ * Important behavior:
+ * - destroys any previous graph instance to stop simulations / timers
+ * - clears panels because selection belongs to the previous render
+ * - stores the new controller for SSE updates and later refreshes
+ *
+ * @param {any} metrics Analyzer metrics payload used by the D3 renderer.
+ */
+
 function renderGraph(metrics) {
   // Clean up any previous graph instance (stops simulation + clears svg)
   try { graphController?.destroy?.(); } catch { }
@@ -1105,6 +1152,84 @@ function renderGraph(metrics) {
   graphController = initcodeStructureChart("codeStructureSvg", metrics, {
     onNodeSelected
   });
+}
+
+/**
+ * Render optional secondary graph views for the currently selected app.
+ *
+ * Why this is loaded dynamically
+ * ------------------------------
+ * The main UI must keep working even when an experimental graph module is
+ * missing or not yet implemented. Therefore optional views are imported lazily
+ * and treated as best-effort enhancements.
+ */
+
+function hasElement(id) {
+  return Boolean(byId(id));
+}
+
+function getSelectedAppIdOrNull() {
+  const appId = getSelectedAppId();
+  return appId || "";
+}
+
+function pickChartRenderer(mod, preferredName, fallbackName) {
+  return mod?.[preferredName] || mod?.[fallbackName] || mod?.default || null;
+}
+
+async function renderOptionalChart({
+  elementId,
+  modulePath,
+  preferredName,
+  fallbackName,
+  warningLabel,
+  metrics,
+}) {
+  if (!hasElement(elementId)) return;
+
+  const appId = getSelectedAppIdOrNull();
+  if (!appId) return;
+
+  try {
+    const mod = await import(modulePath);
+    const renderFn = pickChartRenderer(mod, preferredName, fallbackName);
+
+    if (typeof renderFn !== "function") {
+      console.warn(`${modulePath} loaded, but no render function was exported.`);
+      return;
+    }
+
+    await renderFn(elementId, { appId, metrics });
+  } catch (e) {
+    console.warn(`${warningLabel} render skipped:`, e);
+  }
+}
+
+async function renderTimeViewChart(metrics) {
+  await renderOptionalChart({
+    elementId: "graphTimeView",
+    modulePath: "./graph_timeView.js",
+    preferredName: "initGraphTimeView",
+    fallbackName: "renderGraphTimeView",
+    warningLabel: "Time view",
+    metrics,
+  });
+}
+
+async function renderMriViewChart(metrics) {
+  await renderOptionalChart({
+    elementId: "graphMriView",
+    modulePath: "./graph_mriView.js",
+    preferredName: "initGraphMriView",
+    fallbackName: "renderGraphMriView",
+    warningLabel: "MRI view",
+    metrics,
+  });
+}
+
+async function renderSupplementaryCharts(metrics) {
+  await renderTimeViewChart(metrics);
+  await renderMriViewChart(metrics);
 }
 
 function pickNodes(metrics) {
@@ -1199,6 +1324,23 @@ function handleAnalyzeError(e) {
   setStatus("Analysis failed.");
 }
 
+
+/**
+ * Run analysis for the currently selected app and redraw the UI.
+ *
+ * Flow:
+ * 1) guard against overlapping runs
+ * 2) read selected app id from DOM state
+ * 3) POST `/analyze`
+ * 4) handle unsupported targets explicitly
+ * 5) fetch the produced metrics JSON
+ * 6) rerender graph + summary
+ *
+ * Concurrency note:
+ * Multiple rapid triggers (e.g. repeated app clicks or restart follow-ups)
+ * are coalesced through `analyzeInFlight` / `analyzePending` so we never run
+ * more than one analyze request at the same time.
+ */
 async function runAnalysis() {
   if (!tryBeginAnalysis()) return;
 
@@ -1215,12 +1357,13 @@ async function runAnalysis() {
       return;
     }
 
-    // IMPORTANT:
-    // `data.runToken` belongs to the metrics cache endpoint.
-    // Live SSE events use the runToken managed by liveChangeFeed.js.
-    // Therefore we must NOT overwrite `currentRunToken` here.
+    // Important:
+    // `data.runToken` belongs to the analyze/metrics flow, not to the active
+    // SSE stream state. The live event token is updated only from SSE events,
+    // so we intentionally do NOT overwrite `currentRunToken` here.
     const metrics = await fetchJson(data.metricsUrl);
     renderGraph(metrics);
+    await renderSupplementaryCharts(metrics);
 
     // Best-effort summary update for the current app accordion header.
     updateCurrentAppSummary(metrics);
@@ -1237,6 +1380,15 @@ async function runAnalysis() {
 /* Bootstrap                                                                */
 /* ======================================================================= */
 
+
+/**
+ * Bootstrap the browser UI once the document is ready.
+ *
+ * Order matters:
+ * 1) verify side panels exist
+ * 2) start SSE early so live events are available
+ * 3) load apps, which may auto-trigger the first analyze run
+ */
 function init() {
   ensurePanelsExist();
   startLiveEvents();

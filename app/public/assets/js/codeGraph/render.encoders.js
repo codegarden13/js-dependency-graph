@@ -14,27 +14,27 @@
 const GRAPH_ENCODING = {
   fill: {
     nodeGroupColors: {
-      root: "#111827",
-      dir: "#6c8cff",
-      code: "#adb5bd",
-      doc: "#2ec4b6",
-      data: "#ff9933",
-      image: "#9d4edd"
+      root: "var(--cg-node-fill-root, #111827)",
+      dir: "var(--cg-node-fill-dir, #6c8cff)",
+      code: "var(--cg-node-fill-code, #adb5bd)",
+      doc: "var(--cg-node-fill-doc, #2ec4b6)",
+      data: "var(--cg-node-fill-data, #ff9933)",
+      image: "var(--cg-node-fill-image, #9d4edd)"
     },
     nodeKindColors: {
-      controller: "#ff6b6b",
-      service: "#4d96ff",
-      module: "#ff9933",
-      repository: "#ffd166",
-      config: "#f72585",
-      core: "#4361ee",
-      helper: "#9d4edd",
-      function: "#22223b",
-      dir: "#6c8cff",
-      asset: "#2ec4b6",
-      file: "#adb5bd"
+      controller: "var(--cg-node-kind-controller, #ff6b6b)",
+      service: "var(--cg-node-kind-service, #4d96ff)",
+      module: "var(--cg-node-kind-module, #ff9933)",
+      repository: "var(--cg-node-kind-repository, #ffd166)",
+      config: "var(--cg-node-kind-config, #f72585)",
+      core: "var(--cg-node-kind-core, #4361ee)",
+      helper: "var(--cg-node-kind-helper, #9d4edd)",
+      function: "var(--cg-node-kind-function, #22223b)",
+      dir: "var(--cg-node-kind-dir, #6c8cff)",
+      asset: "var(--cg-node-kind-asset, #2ec4b6)",
+      file: "var(--cg-node-kind-file, #adb5bd)"
     },
-    fallback: "#adb5bd"
+    fallback: "var(--cg-node-fill-fallback, #adb5bd)"
   },
   radius: {
     function: {
@@ -50,18 +50,33 @@ const GRAPH_ENCODING = {
     }
   },
   stroke: {
-    defaultColor: "rgba(0,0,0,0.08)",
-    changedColor: "#ff3b30",
-    exportedColor: "#22c55e",
-    importedColor: "#3b82f6",
-    sharedColor: "#14b8a6",
+    defaultColor: "var(--cg-node-stroke-default, rgba(0,0,0,0.08))",
+    changedColor: "var(--cg-node-stroke-changed, #ff3b30)",
+    exportedColor: "var(--cg-node-stroke-exported, #22c55e)",
+    importedColor: "var(--cg-node-stroke-imported, #3b82f6)",
+    sharedColor: "var(--cg-node-stroke-shared, #14b8a6)",
     changedWidth: 3,
     exportedWidth: 3,
     importedWidth: 3,
     sharedWidth: 4,
     defaultWidth: 1,
     couplingMin: 1,
-    couplingMax: 4
+    couplingMax: 4,
+    ringMin: 1,
+    ringMax: 12,
+    couplingReference: 16
+  },
+  edge: {
+    defaultColor: "var(--cg-edge-default, rgba(100,116,139,0.22))",
+    changedColor: "var(--cg-edge-changed, rgba(255,59,48,0.85))",
+    callColor: "var(--cg-edge-call, rgba(99,102,241,0.30))",
+    useColor: "var(--cg-edge-use, rgba(168,85,247,0.30))",
+    includeColor: "var(--cg-edge-include, rgba(245,158,11,0.34))",
+    extendsColor: "var(--cg-edge-extends, rgba(6,214,160,0.34))",
+    defaultWidth: 1,
+    minWidth: 1,
+    maxWidth: 4,
+    weightReference: 12
   }
 };
 
@@ -100,17 +115,61 @@ function firstTruthy(...vals) {
   return null;
 }
 
+/** Read the first non-empty trimmed string from a candidate list. */
+function firstNonEmptyString(...values) {
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return "";
+}
+
+/** Read a case-insensitive normalized token. */
+function normalizeToken(...values) {
+  return firstNonEmptyString(...values).toLowerCase();
+}
+
+const CSS_COLOR_CACHE = new Map();
+const NODE_COUPLING_CACHE = new WeakMap();
+const NODE_CHILD_FUNCTIONS_CACHE = new WeakMap();
+const EDGE_TYPE_CACHE = new WeakMap();
+const EDGE_WEIGHT_CACHE = new WeakMap();
+
+function resolveCssColor(value) {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("var(")) return trimmed;
+
+  const cached = CSS_COLOR_CACHE.get(trimmed);
+  if (cached) return cached;
+
+  if (typeof window === "undefined" || typeof document === "undefined") return trimmed;
+
+  const match = trimmed.match(/^var\(\s*(--[^,\s)]+)\s*,\s*([^)]*)\)$/);
+  if (!match) return trimmed;
+
+  const [, varName, fallback] = match;
+  const cssValue = window.getComputedStyle(document.documentElement)
+    .getPropertyValue(varName)
+    .trim();
+
+  const resolved = cssValue || String(fallback || "").trim();
+  CSS_COLOR_CACHE.set(trimmed, resolved);
+  return resolved;
+}
+
 /** Pick the semantic base color for a node. */
 function getBaseNodeColor(d) {
   const group = readTrimmedString(d, "group");
   const kind = readTrimmedString(d, "kind");
   const type = readTrimmedString(d, "type");
-  return firstTruthy(
+  return resolveCssColor(firstTruthy(
     lookupOrNull(group, GRAPH_ENCODING.fill.nodeGroupColors),
     lookupOrNull(kind, GRAPH_ENCODING.fill.nodeKindColors),
     lookupOrNull(type, GRAPH_ENCODING.fill.nodeKindColors),
     GRAPH_ENCODING.fill.fallback
-  );
+  ));
 }
 
 /** Convert a numeric-ish value to a safe integer. */
@@ -120,11 +179,19 @@ export function toSafeInt(v) {
   return Math.max(0, Math.floor(n));
 }
 
-/** Compute the visible function-ring width from inbound calls. */
+/** Compute the visible function-ring width from real call coupling data. */
 export function getFunctionRingWidth(d) {
-  const width = toSafeInt(d?._inCalls);
-  if (!width) return 0;
-  return clamp(width, 1, 12);
+  if (!isFunctionNode(d)) return 0;
+
+  const { inboundCalls, outboundCalls } = readNodeCouplingMetrics(d);
+  const callCoupling = inboundCalls + outboundCalls;
+  if (!callCoupling) return 0;
+
+  const spread01 = normalizeCoupling01(callCoupling);
+  return Math.round(
+    GRAPH_ENCODING.stroke.ringMin
+      + (GRAPH_ENCODING.stroke.ringMax - GRAPH_ENCODING.stroke.ringMin) * spread01
+  );
 }
 
 /** Determine whether a node is an unused function. */
@@ -281,8 +348,15 @@ function readContainerRawComplexity(d) {
 
 /** Read child function nodes for a module-like parent node. */
 function getChildFunctionNodes(d) {
+  if (!d || typeof d !== "object") return [];
+
+  const cached = NODE_CHILD_FUNCTIONS_CACHE.get(d);
+  if (cached) return cached;
+
   const items = Array.isArray(d?.children) ? d.children : [];
-  return items.filter((child) => isFunctionNode(child));
+  const childFunctions = items.filter((child) => isFunctionNode(child));
+  NODE_CHILD_FUNCTIONS_CACHE.set(d, childFunctions);
+  return childFunctions;
 }
 
 /** Determine whether a node behaves like a module/file container. */
@@ -341,164 +415,192 @@ function firstFiniteNumber(...values) {
   return null;
 }
 
-/** Read raw nested-complexity related data from a node. */
-function readRawNestedComplexity(d) {
-  return Math.max(0, firstFiniteNumber(
-    d?._nestedComplexity,
-    d?.nestedComplexity,
-    d?.maxNestingDepth,
-    d?.nestingDepth,
-    d?.deepestNesting,
-    d?.indentationComplexity,
-    0
+/** Sum all finite positive numbers from a candidate list. */
+function sumFiniteNumbers(...values) {
+  let total = 0;
+
+  for (const value of values) {
+    const n = Number(value);
+    if (Number.isFinite(n) && n > 0) total += n;
+  }
+
+  return total;
+}
+
+/** Normalize coupling volume into a stable 0..1 range. */
+function normalizeCoupling01(rawCoupling) {
+  const safe = Math.max(0, Number(rawCoupling) || 0);
+  const ref = GRAPH_ENCODING.stroke.couplingReference;
+  return clamp(Math.log1p(safe) / Math.log1p(ref), 0, 1);
+}
+
+/** Normalize raw edge weight into a stable 0..1 range. */
+function normalizeEdgeWeight01(rawWeight) {
+  const safe = Math.max(0, Number(rawWeight) || 0);
+  const ref = GRAPH_ENCODING.edge.weightReference;
+  return clamp(Math.log1p(safe) / Math.log1p(ref), 0, 1);
+}
+
+function getEdgeSemanticType(edge) {
+  if (edge && typeof edge === "object") {
+    const cached = EDGE_TYPE_CACHE.get(edge);
+    if (cached) return cached;
+  }
+
+  const rawType = normalizeToken(
+    edge?.edgeType,
+    edge?.relation,
+    edge?.rel,
+    edge?.kind,
+    edge?.type,
+    edge?.label
+  );
+
+  let normalizedType = "default";
+
+  if (!rawType) {
+    normalizedType = "default";
+  } else if (rawType.includes("include")) {
+    normalizedType = "include";
+  } else if (rawType.includes("call")) {
+    normalizedType = "call";
+  } else if (rawType.includes("extend")) {
+    normalizedType = "extends";
+  } else if (rawType.includes("inherit")) {
+    normalizedType = "extends";
+  } else if (rawType.includes("import")) {
+    normalizedType = "use";
+  } else if (rawType.includes("use")) {
+    normalizedType = "use";
+  }
+
+  if (edge && typeof edge === "object") {
+    EDGE_TYPE_CACHE.set(edge, normalizedType);
+  }
+
+  return normalizedType;
+}
+
+/** Read a numeric edge weight from commonly used graph fields. */
+function readEdgeWeight(edge) {
+  if (edge && typeof edge === "object") {
+    const cached = EDGE_WEIGHT_CACHE.get(edge);
+    if (cached != null) return cached;
+  }
+
+  const weight = Math.max(0, firstFiniteNumber(
+    edge?._weight,
+    edge?.weight,
+    edge?.count,
+    edge?.value,
+    edge?.strength,
+    edge?.calls,
+    edge?.uses,
+    1
   ) || 0);
-}
 
-/**
- * Approximate a CodeScene-like complexity score.
- *
- * CodeScene does not rely on cyclomatic complexity alone. Their public docs
- * emphasize a combination of method size, cyclomatic complexity, and deeply
- * nested logic. We mirror that intention here with a weighted local score.
- */
-function computeCodeSceneLikeFunctionScore01(d) {
-  const cyclomatic01 = normalizeRawComplexity01(readRawComplexity(d));
-  const nesting01 = clamp(Math.log1p(readRawNestedComplexity(d)) / Math.log1p(8), 0, 1);
-  const lines01 = computeEffectiveLineScore01(d);
-
-  return clamp(
-    (cyclomatic01 * 0.45) +
-    (nesting01 * 0.40) +
-    (lines01 * 0.15),
-    0,
-    1
-  );
-}
-
-function computeEffectiveComplexity01(d) {
-  const localDeclaredScore = readComplexityScore01(d);
-  const localScore = (localDeclaredScore != null)
-    ? localDeclaredScore
-    : computeCodeSceneLikeFunctionScore01(d);
-
-  if (!isModuleLikeNode(d)) {
-    return localScore;
+  if (edge && typeof edge === "object") {
+    EDGE_WEIGHT_CACHE.set(edge, weight);
   }
 
-  const childFunctions = getChildFunctionNodes(d);
-  if (!childFunctions.length) {
-    return localScore;
-  }
-
-  let childTotal = 0;
-  let childLines = 0;
-
-  for (const fn of childFunctions) {
-    childTotal += computeCodeSceneLikeFunctionScore01(fn);
-    childLines += readRawLineCount(fn);
-  }
-
-  const childMean = childTotal / childFunctions.length;
-  const localLines = readRawLineCount(d);
-  const sizeWeight = clamp(
-    childLines / Math.max(1, localLines + childLines),
-    0.35,
-    0.85
-  );
-
-  return clamp(
-    (localScore * (1 - sizeWeight)) + (childMean * sizeWeight),
-    0,
-    1
-  );
+  return weight;
 }
 
-function computeRadiusScore01(d) {
-  const complexity01 = computeEffectiveComplexity01(d);
-  const lineScore01 = computeEffectiveLineScore01(d);
-
-  if (isFunctionNode(d)) {
-    return clamp(
-      (complexity01 * 0.85) + (lineScore01 * 0.15),
-      0,
-      1
-    );
+/** Read canonical inbound/outbound dependency metrics from the graph model. */
+function readNodeCouplingMetrics(d) {
+  if (!d || typeof d !== "object") {
+    return {
+      inboundCalls: 0,
+      outboundCalls: 0,
+      inboundUses: 0,
+      outboundUses: 0,
+      inboundIncludes: 0,
+      outboundIncludes: 0,
+      inboundEdges: 0,
+      outboundEdges: 0,
+      inboundTotal: 0,
+      outboundTotal: 0
+    };
   }
 
-  return clamp(
-    (complexity01 * 0.70) + (lineScore01 * 0.30),
-    0,
-    1
-  );
+  const cached = NODE_COUPLING_CACHE.get(d);
+  if (cached) return cached;
+
+  const inboundCalls = sumFiniteNumbers(d?._inCalls, d?.inCalls, d?.callsIn);
+  const outboundCalls = sumFiniteNumbers(d?._outCalls, d?.outCalls, d?.callsOut);
+  const inboundUses = sumFiniteNumbers(d?._inUses, d?.inUses, d?.usesIn);
+  const outboundUses = sumFiniteNumbers(d?._outUses, d?.outUses, d?.usesOut);
+  const inboundIncludes = sumFiniteNumbers(d?._inIncludes, d?.inIncludes, d?.includesIn);
+  const outboundIncludes = sumFiniteNumbers(d?._outIncludes, d?.outIncludes, d?.includesOut);
+  const inboundEdges = sumFiniteNumbers(d?._inbound, d?.inbound, d?.fanIn, d?._fanIn);
+  const outboundEdges = sumFiniteNumbers(d?._outbound, d?.outbound, d?.fanOut, d?._fanOut);
+
+  const metrics = {
+    inboundCalls,
+    outboundCalls,
+    inboundUses,
+    outboundUses,
+    inboundIncludes,
+    outboundIncludes,
+    inboundEdges,
+    outboundEdges,
+    inboundTotal: inboundCalls + inboundUses + inboundIncludes + inboundEdges,
+    outboundTotal: outboundCalls + outboundUses + outboundIncludes + outboundEdges
+  };
+
+  NODE_COUPLING_CACHE.set(d, metrics);
+  return metrics;
 }
 
-/** Read a safe import count from a node. */
+/** Read the effective inbound dependency count from the graph model. */
 function readImportCount(d) {
-  return Math.max(0, firstFiniteNumber(
-    d?._importCount,
-    d?.importCount,
-    d?.imports,
-    d?._imports,
-    d?.fanIn,
-    d?._fanIn,
-    0
-  ) || 0);
+  const metrics = readNodeCouplingMetrics(d);
+  return metrics.inboundTotal;
 }
 
-/** Read a safe export count from a node. */
+/** Read the effective outbound dependency count from the graph model. */
 function readExportCount(d) {
-  if (d?.exported === true) return 1;
-
-  return Math.max(0, firstFiniteNumber(
-    d?._exportCount,
-    d?.exportCount,
-    d?.exports,
-    d?._exports,
-    d?.fanOut,
-    d?._fanOut,
-    0
-  ) || 0);
+  const metrics = readNodeCouplingMetrics(d);
+  const exportedBias = d?.exported === true ? 1 : 0;
+  return metrics.outboundTotal + exportedBias;
 }
 
 /** Resolve the API/dependency role encoded by the node border. */
 function getNodeBorderRole(d) {
   const imports = readImportCount(d);
   const exports = readExportCount(d);
+  const isExplicitExport = d?.exported === true;
 
-  if (imports > 0 && exports > 0) return "shared";
-  if (exports > 0) return "exported";
+  if (imports > 0 && (exports > 0 || isExplicitExport)) return "shared";
+  if (exports > 0 || isExplicitExport) return "exported";
   if (imports > 0) return "imported";
   return "default";
 }
 
-/** Compute a coupling-based stroke width bonus from import/export volume. */
+/** Compute a coupling-based stroke width bonus from real dependency volume. */
 function computeNodeCouplingWidth(d) {
-  const coupling = readImportCount(d) + readExportCount(d);
+  const metrics = readNodeCouplingMetrics(d);
+  const coupling = metrics.inboundTotal + metrics.outboundTotal;
   if (!coupling) return GRAPH_ENCODING.stroke.defaultWidth;
 
-  const spread = clamp(
-    Math.log1p(coupling) / Math.log1p(12),
-    0,
-    1
-  );
-
+  const spread01 = normalizeCoupling01(coupling);
   return GRAPH_ENCODING.stroke.couplingMin
-    + (GRAPH_ENCODING.stroke.couplingMax - GRAPH_ENCODING.stroke.couplingMin) * spread;
+    + (GRAPH_ENCODING.stroke.couplingMax - GRAPH_ENCODING.stroke.couplingMin) * spread01;
 }
 
 /** Compute the node stroke color. */
 export function computeNodeStroke(d) {
-  if (d?._changed) return GRAPH_ENCODING.stroke.changedColor;
+  if (d?._changed) return resolveCssColor(GRAPH_ENCODING.stroke.changedColor);
 
   switch (getNodeBorderRole(d)) {
     case "shared":
-      return GRAPH_ENCODING.stroke.sharedColor;
+      return resolveCssColor(GRAPH_ENCODING.stroke.sharedColor);
     case "exported":
-      return GRAPH_ENCODING.stroke.exportedColor;
+      return resolveCssColor(GRAPH_ENCODING.stroke.exportedColor);
     case "imported":
-      return GRAPH_ENCODING.stroke.importedColor;
+      return resolveCssColor(GRAPH_ENCODING.stroke.importedColor);
     default:
-      return GRAPH_ENCODING.stroke.defaultColor;
+      return resolveCssColor(GRAPH_ENCODING.stroke.defaultColor);
   }
 }
 
@@ -520,6 +622,35 @@ export function computeNodeStrokeWidth(d) {
   }
 }
 
+export function computeEdgeColor(edge) {
+  if (edge?._changed) return resolveCssColor(GRAPH_ENCODING.edge.changedColor);
+
+  switch (getEdgeSemanticType(edge)) {
+    case "call":
+      return resolveCssColor(GRAPH_ENCODING.edge.callColor);
+    case "use":
+      return resolveCssColor(GRAPH_ENCODING.edge.useColor);
+    case "include":
+      return resolveCssColor(GRAPH_ENCODING.edge.includeColor);
+    case "extends":
+      return resolveCssColor(GRAPH_ENCODING.edge.extendsColor);
+    default:
+      return resolveCssColor(GRAPH_ENCODING.edge.defaultColor);
+  }
+}
+
+/** Compute the edge stroke width from its numeric weight. */
+export function computeEdgeWidth(edge) {
+  if (edge?._changed) return GRAPH_ENCODING.edge.maxWidth;
+
+  const weight = readEdgeWeight(edge);
+  if (!weight) return GRAPH_ENCODING.edge.defaultWidth;
+
+  const spread01 = normalizeEdgeWeight01(weight);
+  return GRAPH_ENCODING.edge.minWidth
+    + (GRAPH_ENCODING.edge.maxWidth - GRAPH_ENCODING.edge.minWidth) * spread01;
+}
+
 /** Assemble the node encoder bundle used by render and repaint. */
 export function makeEncoders(nodes) {
   void nodes;
@@ -528,6 +659,9 @@ export function makeEncoders(nodes) {
     getNodeColor: computeNodeColor,
     getRadius: computeNodeRadius,
     getNodeStroke: computeNodeStroke,
-    getNodeStrokeWidth: computeNodeStrokeWidth
+    getNodeStrokeWidth: computeNodeStrokeWidth,
+    getFunctionRingWidth,
+    getEdgeColor: computeEdgeColor,
+    getEdgeWidth: computeEdgeWidth
   };
 }

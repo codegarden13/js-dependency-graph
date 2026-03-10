@@ -4,10 +4,10 @@
  * Backend-Graph-Finalisierung: berechnet abgeleitete Statistiken einmalig,
  * damit die UI nicht bei jedem Rendern teure Passes machen muss.
  *
- * Mutiert Nodes in-place (adds _inbound/_outbound/_inCalls/.../_importance/_radiusHint/_callers/_callees).
+ * Mutiert Nodes in-place (adds _inbound/_outbound/_inCalls/.../_importance/_radiusHint/_depth/_callers/_callees).
  *
  * Export:
- * - finalizeGraphStats(nodes, links)
+ * - finalizeGraphStats(nodes, links, entryId)
  */
 
 /**
@@ -18,8 +18,9 @@
  *
  * @param {any[]} nodes
  * @param {any[]} links
+ * @param {string} [entryId] Entry/root node id used for BFS depth calculation.
  */
-export function finalizeGraphStats(nodes, links) {
+export function finalizeGraphStats(nodes, links, entryId) {
   if (!Array.isArray(nodes) || !Array.isArray(links)) return;
 
   const byId = indexNodesById(nodes);
@@ -39,6 +40,7 @@ export function finalizeGraphStats(nodes, links) {
   });
 
   applyImportanceAndRadius(nodes);
+  applyDepth(nodes, links, entryId);
 }
 
 /* ========================================================================== */
@@ -114,6 +116,7 @@ function initDerivedStats(n) {
 
   ensureFinite(n, "_importance", 0);
   ensureFinite(n, "_radiusHint", 0);
+  ensureFinite(n, "_depth", -1);
 
   ensureArray(n, "_callers");
   ensureArray(n, "_callees");
@@ -208,6 +211,84 @@ function safeLogImportance(raw) {
 function safeRadiusFromImportance(importance) {
   const r = 5 + 6 * Number(importance || 0);
   return Number.isFinite(r) ? r : 8;
+}
+
+function shouldCountForDepth(ty) {
+  const type = normalizeId(ty);
+  return type === "use" || type === "include";
+}
+
+function buildForwardAdjacency(nodes, links) {
+  /** @type {Map<string, string[]>} */
+  const adj = new Map();
+
+  forEachNodeObject(nodes, (n) => {
+    const id = normalizeId(n?.id);
+    if (!id) return;
+    adj.set(id, []);
+  });
+
+  forEachValidLink(links, ({ sId, tId, ty }) => {
+    if (!shouldCountForDepth(ty)) return;
+    const out = adj.get(sId);
+    if (!out) return;
+    out.push(tId);
+  });
+
+  return adj;
+}
+
+function indexNodeObjects(nodes) {
+  /** @type {Map<string, any>} */
+  const byId = new Map();
+  forEachNodeObject(nodes, (n) => {
+    const id = normalizeId(n?.id);
+    if (!id) return;
+    byId.set(id, n);
+  });
+  return byId;
+}
+
+function resetDepth(nodes) {
+  forEachNodeObject(nodes, (n) => {
+    n._depth = -1;
+  });
+}
+
+function applyDepth(nodes, links, entryId) {
+  resetDepth(nodes);
+
+  const startId = normalizeId(entryId);
+  if (!startId) return;
+
+  const adj = buildForwardAdjacency(nodes, links);
+  const byId = indexNodeObjects(nodes);
+  if (!adj.has(startId) || !byId.has(startId)) return;
+
+  const queue = [startId];
+  const seen = new Set([startId]);
+
+  byId.get(startId)._depth = 0;
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    const nextIds = adj.get(current) || [];
+
+    const currentNode = byId.get(current);
+    const currentDepth = Number.isFinite(currentNode?._depth) ? currentNode._depth : -1;
+
+    for (const nextId of nextIds) {
+      if (seen.has(nextId)) continue;
+      seen.add(nextId);
+
+      const nextNode = byId.get(nextId);
+      if (nextNode && typeof nextNode === "object") {
+        nextNode._depth = currentDepth + 1;
+      }
+
+      queue.push(nextId);
+    }
+  }
 }
 
 function applyImportanceAndRadius(nodes) {

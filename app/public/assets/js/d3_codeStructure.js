@@ -86,6 +86,42 @@ const EXPORTED_FUNCTION_COLOR = "var(--graph-exported-function-ring)";
 const clusterColor = d3.scaleOrdinal(d3.schemeSet3);
 
 /**
+ * Read the first non-empty string from a candidate list.
+ * Keeps link type handling aligned with legend/filter normalization.
+ */
+function firstNonEmptyString(...values) {
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return "";
+}
+
+/**
+ * Normalize raw edge/link type strings to the canonical renderer tokens.
+ */
+function readRenderedLinkType(link) {
+  const rawType = firstNonEmptyString(
+    link?.type,
+    link?.edgeType,
+    link?.relation,
+    link?.rel,
+    link?.kind,
+    link?.label
+  ).toLowerCase();
+
+  if (!rawType) return "use";
+  if (rawType.includes("include")) return "include";
+  if (rawType.includes("call")) return "call";
+  if (rawType.includes("extend")) return "extends";
+  if (rawType.includes("inherit")) return "extends";
+  if (rawType.includes("import")) return "use";
+  if (rawType.includes("use")) return "use";
+  return rawType;
+}
+
+/**
  * Show a browser alert once per page-load for a given key.
  * Prevents re-run spam when the graph is re-rendered.
  * @param {string} key Deduplication key.
@@ -340,17 +376,27 @@ export function initcodeStructureChart(svgId, metrics, opts = {}) {
 
 
 
-
   /**
    * Render link lines for the normalized edge set.
    */
-  function renderLinks(linkGroup, links) {
+  function renderLinks(linkGroup, links, enc) {
+    const getEdgeColor = (typeof enc?.getEdgeColor === "function")
+      ? enc.getEdgeColor
+      : ((d) => LINK_TYPE_COLORS[readRenderedLinkType(d)] || LINK_TYPE_COLORS.default);
+
+    const getEdgeWidth = (typeof enc?.getEdgeWidth === "function")
+      ? enc.getEdgeWidth
+      : (() => 1.2);
+
     return linkGroup.selectAll("line")
       .data(links)
       .enter()
       .append("line")
-      .attr("class", (d) => `link ${String(d?.type || "default")}`)
-      .attr("marker-end", (d) => (String(d?.type || "") === "include" ? null : "url(#arrowhead)"));
+      .attr("class", (d) => `link ${readRenderedLinkType(d)}`)
+      .attr("data-link-type", (d) => readRenderedLinkType(d))
+      .attr("stroke", (d) => getEdgeColor(d))
+      .attr("stroke-width", (d) => getEdgeWidth(d))
+      .attr("marker-end", (d) => (readRenderedLinkType(d) === "include" ? null : "url(#arrowhead)"));
   }
 
   /**
@@ -772,7 +818,7 @@ export function initcodeStructureChart(svgId, metrics, opts = {}) {
   // -------------------------------------------------------------------
   // 4) Render
   // -------------------------------------------------------------------
-  const linkSel = renderLinks(layers.linkGroup, links);
+  const linkSel = renderLinks(layers.linkGroup, links, enc);
 
   const { nodeShapeSel, nodeBodySel, fnRingSel, unusedBadgeSel } =
     renderNodes(layers.nodeShapeGroup, nodes, enc);

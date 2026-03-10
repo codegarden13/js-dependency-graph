@@ -43,6 +43,13 @@ body {
   overflow: auto;
 }
 
+/* The legend/filter column should use the full available column height.
+   It must not inherit the generic panelScroll clamp used by README/selection panels. */
+.legendPanelBody {
+  max-height: none;
+  overflow: visible;
+}
+
 .panelScroll pre,
 .panelScroll code,
 .panel-scroll pre,

@@ -152,8 +152,18 @@ export function escapeHtml(s) {
   );
 }
 
+
 function hasOwn(obj, key) {
   return Boolean(obj) && Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+function firstNonEmptyString(...values) {
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return "";
 }
 
 export function dispatchFiltersChanged(svgId) {
@@ -466,13 +476,31 @@ export function attachLegendFilterWiring(svgId, nodes, links, sels) {
   }
 
   function readLinkFilterType(l) {
-    return String(l?.type || "use");
+    const rawType = firstNonEmptyString(
+      l?.type,
+      l?.edgeType,
+      l?.relation,
+      l?.rel,
+      l?.kind,
+      l?.label
+    ).toLowerCase();
+
+    if (!rawType) return "use";
+    if (rawType.includes("include")) return "include";
+    if (rawType.includes("call")) return "call";
+    if (rawType.includes("extend")) return "extends";
+    if (rawType.includes("inherit")) return "extends";
+    if (rawType.includes("import")) return "use";
+    if (rawType.includes("use")) return "use";
+    return rawType;
   }
 
   function isHiddenByLinkTypeFilter(l, st) {
     const ty = readLinkFilterType(l);
-    if (!hasOwn(st.visibleLinkTypes, ty)) return false;
-    return st.visibleLinkTypes[ty] === false;
+    const visible = st?.visibleLinkTypes;
+    if (!visible || typeof visible !== "object") return false;
+    if (!hasOwn(visible, ty)) return false;
+    return visible[ty] === false;
   }
 
   function isHiddenLink(l, hidden, st) {
@@ -499,8 +527,22 @@ export function attachLegendFilterWiring(svgId, nodes, links, sels) {
   }
 
   function applyLinkVisibility(linkSel, hidden, st) {
-    linkSel.style("display", (l) => (isHiddenLink(l, hidden, st) ? "none" : null));
-  }
+  let total = 0;
+  let hiddenCount = 0;
+  const byType = Object.create(null);
+
+  linkSel.each((l) => {
+    total += 1;
+    const ty = readLinkFilterType(l);
+    byType[ty] = (byType[ty] || 0) + 1;
+    if (isHiddenLink(l, hidden, st)) hiddenCount += 1;
+  });
+
+
+
+
+  linkSel.style("display", (l) => (isHiddenLink(l, hidden, st) ? "none" : null));
+}
 
   // Recompute and apply all visibility rules for the current UI state.
   const apply = (state) => {

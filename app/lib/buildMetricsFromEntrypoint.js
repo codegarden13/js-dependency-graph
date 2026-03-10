@@ -236,6 +236,16 @@ export async function buildMetricsFromEntrypoint({
   markUnusedFunctions(store.nodes);
   enforceCanonicalFields(store.nodes);
 
+  /* ---------------------------------------------------------------------- */
+  /* 5.1) WRITE CODE METRICS CSV                                            */
+  /* ---------------------------------------------------------------------- */
+
+  writeCodeMetricsCsv({
+    nodes: store.nodes,
+    links: store.links,
+    appId: String(urlInfo?.appId || "app")
+  });
+
   return {
     meta: {
       entry: toRelId(entryNorm),
@@ -382,15 +392,12 @@ function buildFunctionNode(fileId, fn) {
   };
 }
 
-/** Add function nodes for a parsed file (and containment edges). */
-function addFunctionNodes({ parsed, fileId, addNode, addLink }) {
+/** Add function nodes for a parsed file. Containment stays on the node model only. */
+function addFunctionNodes({ parsed, fileId, addNode }) {
   forEachParsedFunction(parsed, (fn) => {
     const node = buildFunctionNode(fileId, fn);
     if (!node) return;
-
     addNode(node);
-    // Containment edge: file -> function
-    addLink(fileId, node.id, "include");
   });
 }
 
@@ -573,18 +580,40 @@ function strictSanityCheck(store) {
  * client.
  */
 function attachFunctionChildren(nodes) {
+  const fileNodes = collectFileNodesForChildren(nodes);
+  const functionsByFile = groupFunctionChildrenByFile(nodes);
+
+  assignFunctionChildrenToFiles(fileNodes, functionsByFile);
+}
+
+/**
+ * Collect all file nodes that can receive a `children` array.
+ *
+ * We initialize `children` eagerly so the frontend can rely on the field
+ * being present even when a file currently has no parsed functions.
+ */
+function collectFileNodesForChildren(nodes) {
   const fileNodes = new Map();
+
+  for (const node of nodes) {
+    if (!isObjectNode(node)) continue;
+    if (node.kind !== "file") continue;
+
+    node.children = [];
+    fileNodes.set(getNodeFileId(node), node);
+  }
+
+  return fileNodes;
+}
+
+/**
+ * Group all function nodes by their owning file id.
+ */
+function groupFunctionChildrenByFile(nodes) {
   const functionsByFile = new Map();
 
   for (const node of nodes) {
-    if (!node || typeof node !== "object") continue;
-
-    if (node.kind === "file") {
-      node.children = [];
-      fileNodes.set(String(node.file || node.id || ""), node);
-      continue;
-    }
-
+    if (!isObjectNode(node)) continue;
     if (node.kind !== "function") continue;
 
     const fileId = String(node.file || "").trim();
@@ -595,9 +624,30 @@ function attachFunctionChildren(nodes) {
     functionsByFile.set(fileId, bucket);
   }
 
+  return functionsByFile;
+}
+
+/**
+ * Attach grouped function nodes back onto their owning file nodes.
+ */
+function assignFunctionChildrenToFiles(fileNodes, functionsByFile) {
   for (const [fileId, fileNode] of fileNodes) {
     fileNode.children = functionsByFile.get(fileId) || [];
   }
+}
+
+/**
+ * Guard helper for node-like values used during graph post-processing.
+ */
+function isObjectNode(node) {
+  return Boolean(node) && typeof node === "object";
+}
+
+/**
+ * Canonical file id lookup for file nodes.
+ */
+function getNodeFileId(node) {
+  return String(node.file || node.id || "");
 }
 
 /** Mark unused functions (best-effort heuristic). */
@@ -702,7 +752,7 @@ function bfsTraverse({
 
     addFileNode({ fileId, parsed, addNode });
 
-    addFunctionNodes({ parsed, fileId, addNode, addLink });
+    addFunctionNodes({ parsed, fileId, addNode });
 
     applyAutoRefs({
       projectRootAbs,
@@ -789,4 +839,251 @@ function assertInsideRootOrThrow(rootAbs, fileAbs) {
     const file = path.resolve(fileAbs);
     throw new Error(`entryAbs is outside projectRoot. entry=${file} root=${root}`);
   }
+}
+// CSV code metrics helpers
+function writeCodeMetricsCsv({ nodes, links, appId }) {
+  try {
+    const timestampIso = new Date().toISOString();
+    const filePrefix = `${appId}-${timestampIso.replace(/[:.]/g, "-")}`;
+
+    const analyzerRoot = path.resolve(import.meta.dirname, "..", "..");
+    const outputDir = path.join(analyzerRoot, "public/output");
+    const csvPath = path.join(outputDir, `${filePrefix}-code-metrics.csv`);
+
+    const rows = buildCodeMetricsRows({ nodes, links, timestampIso });
+    const csvText = buildCodeMetricsCsvText(rows);
+
+    fs.mkdirSync(outputDir, { recursive: true });
+    fs.writeFileSync(csvPath, csvText, "utf8");
+  } catch (err) {
+    // Non-fatal: metrics export must never break graph generation
+    console.warn("code metrics CSV write failed:", err?.message || err);
+  }
+}
+
+function buildCodeMetricsRows({ nodes, links, timestampIso }) {
+  const fileNodes = nodes.filter((n) => n?.kind === "file");
+  const functionNodes = nodes.filter((n) => n?.kind === "function");
+  const functionsByFile = groupFunctionsByFile(functionNodes);
+
+  const rows = [];
+
+  for (const fileNode of fileNodes) {
+    const fileId = String(fileNode.id || "");
+    const functions = functionsByFile.get(fileId) || [];
+    const functionIds = new Set(functions.map((fn) => String(fn.id || "")).filter(Boolean));
+
+    const complexity = summarizeFunctionComplexity(functions);
+    const linkStats = summarizeFileLinkStats(links, functionIds);
+
+    rows.push({
+      timestamp: timestampIso,
+      module: fileId,
+      loc: Number(fileNode.lines || 0),
+      functionCount: functions.length,
+      avgCc: complexity.avgCc,
+      minCc: complexity.minCc,
+      maxCc: complexity.maxCc,
+      unusedFunctionCount: complexity.unusedFunctionCount,
+      fanIn: linkStats.fanIn,
+      fanOut: linkStats.fanOut,
+      useCount: linkStats.useCount,
+      callCount: linkStats.callCount,
+      includeCount: linkStats.includeCount
+    });
+  }
+
+  return rows;
+}
+
+function groupFunctionsByFile(functionNodes) {
+  const functionsByFile = new Map();
+
+  for (const fn of functionNodes) {
+    const fileId = String(fn?.file || "");
+    if (!fileId) continue;
+
+    const bucket = functionsByFile.get(fileId) || [];
+    bucket.push(fn);
+    functionsByFile.set(fileId, bucket);
+  }
+
+  return functionsByFile;
+}
+
+function summarizeFunctionComplexity(functions) {
+  let minCc = Number.POSITIVE_INFINITY;
+  let maxCc = 0;
+  let ccTotal = 0;
+  let unusedFunctionCount = 0;
+
+  for (const fn of functions) {
+    const cc = Number(fn?.complexity || fn?.cc || 0);
+    if (Number.isFinite(cc)) {
+      minCc = Math.min(minCc, cc);
+      maxCc = Math.max(maxCc, cc);
+      ccTotal += cc;
+    }
+
+    if (fn?._unused === true) {
+      unusedFunctionCount++;
+    }
+  }
+
+  if (!functions.length) {
+    minCc = 0;
+    maxCc = 0;
+  } else if (!Number.isFinite(minCc)) {
+    minCc = 0;
+  }
+
+  return {
+    avgCc: functions.length ? (ccTotal / functions.length) : 0,
+    minCc,
+    maxCc,
+    unusedFunctionCount
+  };
+}
+
+/**
+ * Summarize all graph links that touch at least one function of the current file.
+ *
+ * Counted dimensions
+ * ------------------
+ * - useCount / callCount / includeCount:
+ *   number of link types touching one of the file's functions
+ *
+ * - fanIn:
+ *   links whose target is one of the file's functions
+ *
+ * - fanOut:
+ *   links whose source is one of the file's functions
+ *
+ * Important
+ * ---------
+ * We only look at links that touch at least one function node of this file.
+ * Links unrelated to the file are ignored.
+ */
+function summarizeFileLinkStats(links, functionIds) {
+  const stats = createEmptyLinkStats();
+
+  for (const link of links) {
+    const normalized = normalizeLinkEndpoints(link);
+
+    if (!linkTouchesFunctionSet(normalized, functionIds)) {
+      continue;
+    }
+
+    incrementLinkTypeCount(stats, normalized.type);
+    incrementFanDirectionCounts(stats, normalized, functionIds);
+  }
+
+  return stats;
+}
+
+/**
+ * Create a stable empty stats object.
+ */
+function createEmptyLinkStats() {
+  return {
+    useCount: 0,
+    callCount: 0,
+    includeCount: 0,
+    fanIn: 0,
+    fanOut: 0
+  };
+}
+
+/**
+ * Normalize one link into plain string fields so downstream logic
+ * does not need to deal with null/undefined values.
+ */
+function normalizeLinkEndpoints(link) {
+  return {
+    source: String(link?.source || ""),
+    target: String(link?.target || ""),
+    type: String(link?.type || "")
+  };
+}
+
+/**
+ * A link is relevant if either endpoint belongs to one of the file's functions.
+ */
+function linkTouchesFunctionSet(link, functionIds) {
+  return functionIds.has(link.source) || functionIds.has(link.target);
+}
+
+/**
+ * Count the semantic link type.
+ */
+function incrementLinkTypeCount(stats, linkType) {
+  if (linkType === "use") {
+    stats.useCount++;
+    return;
+  }
+
+  if (linkType === "call") {
+    stats.callCount++;
+    return;
+  }
+
+  if (linkType === "include") {
+    stats.includeCount++;
+  }
+}
+
+/**
+ * Count directional coupling relative to the file's function set.
+ *
+ * fanIn  = link points into one of the file's functions
+ * fanOut = link starts from one of the file's functions
+ */
+function incrementFanDirectionCounts(stats, link, functionIds) {
+  if (functionIds.has(link.target)) {
+    stats.fanIn++;
+  }
+
+  if (functionIds.has(link.source)) {
+    stats.fanOut++;
+  }
+}
+
+function buildCodeMetricsCsvText(rows) {
+  const header = [
+    "timestamp",
+    "module",
+    "loc",
+    "functionCount",
+    "avgCc",
+    "minCc",
+    "maxCc",
+    "unusedFunctionCount",
+    "fanIn",
+    "fanOut",
+    "useCount",
+    "callCount",
+    "includeCount"
+  ];
+
+  const csvLines = [header.join(",")];
+
+  for (const row of rows) {
+    csvLines.push([
+      row.timestamp,
+      row.module,
+      row.loc,
+      row.functionCount,
+      row.avgCc,
+      row.minCc,
+      row.maxCc,
+      row.unusedFunctionCount,
+      row.fanIn,
+      row.fanOut,
+      row.useCount,
+      row.callCount,
+      row.includeCount
+    ].join(","));
+  }
+
+  return csvLines.join("\n");
 }

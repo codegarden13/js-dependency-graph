@@ -25,6 +25,8 @@ import readmeRoute from "./routes/readme.js";
 import helpRoute from "./routes/help.js";
 import { attachSseEndpoint } from "./lib/liveChangeFeed.js";
 
+import outputRoutes from "./routes/output.js";
+
 const app = express();
 const sseRouter = express.Router();
 
@@ -33,6 +35,7 @@ const { PORT, PROJECT_ROOT, PUBLIC_ROOT, OUTPUT_ROOT } = getServerConfig({
 });
 
 app.use(express.json());
+app.use("/api", outputRoutes);
 
 // Static UI + assets
 app.use(express.static(PUBLIC_ROOT));

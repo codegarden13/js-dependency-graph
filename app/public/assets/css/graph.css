@@ -1,115 +1,10 @@
 /* --------------------------------------------------------------------------
-   Graph edge styling (edge types)
-   --------------------------------------------------------------------------
-   Renderer attaches classes like:
-   - "link" on every edge
-   - "include" / "use" / "call" / "extends" / "default" for edge type
-
-   Goals:
-   - include  = very light / structural
-   - use      = normal / dependency
-   - call     = prominent / runtime flow
-   - extends  = moderate / inheritance
-*/
-
-/* Base edge appearance (use currentColor so marker arrows can inherit) */
-#codeStructureSvg .link,
-#codeStructureSvg .edge,
-#codeStructureSvg line.link,
-#codeStructureSvg path.link,
-#codeStructureSvg line.edge,
-#codeStructureSvg path.edge {
-  color: rgba(0, 0, 0, 0.35);
-  stroke: currentColor;
-  stroke-width: 1.2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  fill: none;
-  vector-effect: non-scaling-stroke; /* keep widths stable when zooming */
-  opacity: 0.85;
-}
-
-/* INCLUDE (folder/file containment): extremely subtle */
-#codeStructureSvg .link.include,
-#codeStructureSvg .edge.include,
-#codeStructureSvg line.include,
-#codeStructureSvg path.include {
-  color: rgba(0, 0, 0, 0.12);
-  stroke-width: 0.9;
-  stroke-dasharray: 2 4;
-  opacity: 0.55;
-}
-
-/* USE (imports/dependencies): readable default */
-#codeStructureSvg .link.use,
-#codeStructureSvg .edge.use,
-#codeStructureSvg line.use,
-#codeStructureSvg path.use {
-  color: rgba(77, 150, 255, 0.60);
-  stroke-width: 1.4;
-  opacity: 0.92;
-}
-
-/* EXTENDS (inheritance): moderate */
-#codeStructureSvg .link.extends,
-#codeStructureSvg .edge.extends,
-#codeStructureSvg line.extends,
-#codeStructureSvg path.extends {
-  color: rgba(6, 214, 160, 0.60);
-  stroke-width: 1.4;
-  opacity: 0.92;
-}
-
-/* CALL (function calls): most prominent */
-#codeStructureSvg .link.call,
-#codeStructureSvg .edge.call,
-#codeStructureSvg line.call,
-#codeStructureSvg path.call {
-  color: rgba(131, 56, 236, 0.70);
-  stroke-width: 1.8;
-  opacity: 0.95;
-}
-
-/* Unknown / default type */
-#codeStructureSvg .link.default,
-#codeStructureSvg .edge.default,
-#codeStructureSvg line.default,
-#codeStructureSvg path.default {
-  color: rgba(0, 0, 0, 0.28);
-}
-
-/* Hover/selection boosts readability without changing layout */
-#codeStructureSvg .link:hover,
-#codeStructureSvg .edge:hover,
-#codeStructureSvg .isHovered,
-#codeStructureSvg .isHover {
-  opacity: 1;
-  stroke-width: 2.2;
-}
-
-#codeStructureSvg .isSelected,
-#codeStructureSvg .selected {
-  opacity: 1;
-  stroke-width: 2.8;
-}
-
-/* Arrow markers: inherit stroke color (renderer sets marker fill to currentColor) */
-#codeStructureSvg marker path {
-  fill: currentColor;
-}
-
-
-/* --------------------------------------------------------------------------
-   Graph hotspot styling
-   --------------------------------------------------------------------------
-   Goals:
-   - visual emphasis for hotspot nodes
-   - top-hotspot badge visibility via class only
-   - keep color ownership primarily in the repaint pipeline
-   - keep CSS responsible for sizing, opacity, transitions, and typography
-*/
-
+   CodeGraph theme tokens
+   -------------------------------------------------------------------------- */
 :root {
+  /* ---------------------------------------------------------------------- */
+  /* Graph hotspot tokens                                                    */
+  /* ---------------------------------------------------------------------- */
   --graph-hotspot-fill: #ff1493;
   --graph-hotspot-outline: #f0ffff;
   --graph-hotspot-badge-text: #ffffff;
@@ -120,11 +15,187 @@
   --graph-hotspot-badge-stroke-width: 1.5px;
   --graph-hotspot-badge-opacity: 1;
   --graph-hotspot-halo-opacity: 0.95;
- 
   --graph-exported-function-ring: #16a34a;
 
+  /* ---------------------------------------------------------------------- */
+  /* Node fill tokens                                                        */
+  /* ---------------------------------------------------------------------- */
+  --cg-node-fill-root: #111827;
+  --cg-node-fill-dir: #6c8cff;
+  --cg-node-fill-code: #adb5bd;
+  --cg-node-fill-doc: #2ec4b6;
+  --cg-node-fill-data: #ff9933;
+  --cg-node-fill-image: #9d4edd;
+  --cg-node-fill-fallback: #adb5bd;
+
+  /* ---------------------------------------------------------------------- */
+  /* Node kind tokens                                                        */
+  /* ---------------------------------------------------------------------- */
+  --cg-node-kind-controller: #ff6b6b;
+  --cg-node-kind-service: #4d96ff;
+  --cg-node-kind-module: #ff9933;
+  --cg-node-kind-repository: #ffd166;
+  --cg-node-kind-config: #f72585;
+  --cg-node-kind-core: #4361ee;
+  --cg-node-kind-helper: #9d4edd;
+  --cg-node-kind-function: #22223b;
+  --cg-node-kind-dir: #6c8cff;
+  --cg-node-kind-asset: #2ec4b6;
+  --cg-node-kind-file: #adb5bd;
+
+  /* ---------------------------------------------------------------------- */
+  /* Node stroke tokens                                                      */
+  /* ---------------------------------------------------------------------- */
+  --cg-node-stroke-default: rgba(0, 0, 0, 0.08);
+  --cg-node-stroke-changed: #ff3b30;
+  --cg-node-stroke-exported: #22c55e;
+  --cg-node-stroke-imported: #3b82f6;
+  --cg-node-stroke-shared: #14b8a6;
+
+  /* ---------------------------------------------------------------------- */
+  /* Edge color tokens                                                       */
+  /* ---------------------------------------------------------------------- */
+  --cg-edge-default: rgba(100, 116, 139, 0.22);
+  --cg-edge-changed: rgba(255, 59, 48, 0.85);
+  --cg-edge-call: rgba(99, 102, 241, 0.3);
+  --cg-edge-import: rgba(59, 130, 246, 0.34);
+  --cg-edge-export: rgba(34, 197, 94, 0.34);
+  --cg-edge-include: rgba(245, 158, 11, 0.34);
+  --cg-edge-use: rgba(168, 85, 247, 0.3);
+
+  /* ---------------------------------------------------------------------- */
+  /* Edge width / opacity tokens                                             */
+  /* ---------------------------------------------------------------------- */
+  --cg-edge-base-color: rgba(0, 0, 0, 0.35);
+  --cg-edge-base-width: 1.2;
+  --cg-edge-base-opacity: 0.85;
+
+  --cg-edge-include-color: rgba(0, 0, 0, 0.12);
+  --cg-edge-include-width: 0.9;
+  --cg-edge-include-opacity: 0.55;
+  --cg-edge-include-dash: 2 4;
+
+  --cg-edge-use-width: 1.4;
+  --cg-edge-use-opacity: 0.92;
+
+  --cg-edge-extends-width: 1.4;
+  --cg-edge-extends-opacity: 0.92;
+
+  --cg-edge-call-width: 1.8;
+  --cg-edge-call-opacity: 0.95;
+
+  --cg-edge-hover-width: 2.2;
+  --cg-edge-selected-width: 2.8;
+
+  /* ---------------------------------------------------------------------- */
+  /* Motion tokens                                                           */
+  /* ---------------------------------------------------------------------- */
+  --cg-transition-fast: 120ms ease;
 }
 
+/* --------------------------------------------------------------------------
+   Graph edge styling
+   --------------------------------------------------------------------------
+   Renderer attaches classes like:
+   - "link" on every edge
+   - "include" / "use" / "call" / "extends" / "default" for edge type
+
+   Goals:
+   - include = very light / structural
+   - use     = normal / dependency
+   - call    = prominent / runtime flow
+   - extends = moderate / inheritance
+*/
+
+/* Base edge appearance */
+#codeStructureSvg .link,
+#codeStructureSvg .edge,
+#codeStructureSvg line.link,
+#codeStructureSvg path.link,
+#codeStructureSvg line.edge,
+#codeStructureSvg path.edge {
+  color: var(--cg-edge-base-color);
+  stroke: currentColor;
+  stroke-width: var(--cg-edge-base-width);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+  vector-effect: non-scaling-stroke;
+  opacity: var(--cg-edge-base-opacity);
+}
+
+/* Include / structural edges */
+#codeStructureSvg .link.include,
+#codeStructureSvg .edge.include,
+#codeStructureSvg line.include,
+#codeStructureSvg path.include {
+  color: var(--cg-edge-include-color);
+  stroke-width: var(--cg-edge-include-width);
+  stroke-dasharray: var(--cg-edge-include-dash);
+  opacity: var(--cg-edge-include-opacity);
+}
+
+/* Use / dependency edges */
+#codeStructureSvg .link.use,
+#codeStructureSvg .edge.use,
+#codeStructureSvg line.use,
+#codeStructureSvg path.use {
+  color: var(--cg-edge-import);
+  stroke-width: var(--cg-edge-use-width);
+  opacity: var(--cg-edge-use-opacity);
+}
+
+/* Inheritance edges */
+#codeStructureSvg .link.extends,
+#codeStructureSvg .edge.extends,
+#codeStructureSvg line.extends,
+#codeStructureSvg path.extends {
+  color: rgba(6, 214, 160, 0.6);
+  stroke-width: var(--cg-edge-extends-width);
+  opacity: var(--cg-edge-extends-opacity);
+}
+
+/* Function call edges */
+#codeStructureSvg .link.call,
+#codeStructureSvg .edge.call,
+#codeStructureSvg line.call,
+#codeStructureSvg path.call {
+  color: rgba(131, 56, 236, 0.7);
+  stroke-width: var(--cg-edge-call-width);
+  opacity: var(--cg-edge-call-opacity);
+}
+
+/* Unknown / default type */
+#codeStructureSvg .link.default,
+#codeStructureSvg .edge.default,
+#codeStructureSvg line.default,
+#codeStructureSvg path.default {
+  color: rgba(0, 0, 0, 0.28);
+}
+
+/* Hover / selection */
+#codeStructureSvg .link:hover,
+#codeStructureSvg .edge:hover,
+#codeStructureSvg .isHovered,
+#codeStructureSvg .isHover {
+  opacity: 1;
+  stroke-width: var(--cg-edge-hover-width);
+}
+
+#codeStructureSvg .isSelected,
+#codeStructureSvg .selected {
+  opacity: 1;
+  stroke-width: var(--cg-edge-selected-width);
+}
+
+/* Arrow markers inherit edge color */
+#codeStructureSvg marker path {
+  fill: currentColor;
+}
+
+/* --------------------------------------------------------------------------
+   Graph node styling
+   -------------------------------------------------------------------------- */
 #codeStructureSvg .codegraph-node {
   isolation: isolate;
 }
@@ -136,13 +207,16 @@
 #codeStructureSvg .codegraph-node .node-badge-bg,
 #codeStructureSvg .codegraph-node .node-badge-text {
   transition:
-    fill 120ms ease,
-    stroke 120ms ease,
-    stroke-width 120ms ease,
-    opacity 120ms ease,
-    transform 120ms ease;
+    fill var(--cg-transition-fast),
+    stroke var(--cg-transition-fast),
+    stroke-width var(--cg-transition-fast),
+    opacity var(--cg-transition-fast),
+    transform var(--cg-transition-fast);
 }
 
+/* --------------------------------------------------------------------------
+   Graph hotspot styling
+   -------------------------------------------------------------------------- */
 #codeStructureSvg .codegraph-node.is-hotspot .node-body {
   stroke-width: var(--graph-hotspot-node-stroke-width);
 }
@@ -181,4 +255,14 @@
   font-weight: 700;
   text-anchor: middle;
   dominant-baseline: middle;
+}
+
+
+/*temp Check*/
+#codeStructureSvg .link.include,
+#codeStructureSvg line.include {
+  color: rgba(255, 0, 0, 0.95);
+  stroke-width: 3px;
+  stroke-dasharray: none;
+  opacity: 1;
 }

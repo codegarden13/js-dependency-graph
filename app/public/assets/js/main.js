@@ -7,5 +7,8 @@
 // - No window namespace “bridge” is used.
 // ---------------------------------------------------------------------------
 
+console.clear();
+console.log("main.js: NodeAnalyzer UI booting…");
 import "./d3_codeStructure.js";
+import "./graph_timeView.js";
 import "./app.js";

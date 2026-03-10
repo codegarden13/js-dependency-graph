@@ -46,8 +46,17 @@ function ensureOutputDir() {
   return dir;
 }
 
-function metricsBaseName(runToken) {
-  return `code-structure-${normalizeId(runToken)}`;
+function buildArtifactPrefix(appId, timestampIso) {
+  const safeAppId = normalizeId(appId) || "app";
+  const safeTimestamp = String(timestampIso || new Date().toISOString())
+    .replace(/[:.]/g, "-")
+    .trim();
+
+  return `${safeAppId}-${safeTimestamp}`;
+}
+
+function metricsBaseName(appId, timestampIso) {
+  return `${buildArtifactPrefix(appId, timestampIso)}-code-metrics`;
 }
 
 /**
@@ -56,8 +65,8 @@ function metricsBaseName(runToken) {
  * Keeping the derived names/paths/urls in one place prevents tiny helper
  * functions from drifting apart over time.
  */
-function metricsArtifacts(runToken) {
-  const baseName = metricsBaseName(runToken);
+function metricsArtifacts(appId, timestampIso) {
+  const baseName = metricsBaseName(appId, timestampIso);
   const jsonFilename = `${baseName}.json`;
   const csvFilename = `${baseName}.csv`;
 
@@ -72,24 +81,24 @@ function metricsArtifacts(runToken) {
   };
 }
 
-function metricsJsonFilename(runToken) {
-  return metricsArtifacts(runToken).jsonFilename;
+function metricsJsonFilename(appId, timestampIso) {
+  return metricsArtifacts(appId, timestampIso).jsonFilename;
 }
 
-function metricsCsvFilename(runToken) {
-  return metricsArtifacts(runToken).csvFilename;
+function metricsCsvFilename(appId, timestampIso) {
+  return metricsArtifacts(appId, timestampIso).csvFilename;
 }
 
-function metricsJsonPath(runToken) {
-  return metricsArtifacts(runToken).jsonPath;
+function metricsJsonPath(appId, timestampIso) {
+  return metricsArtifacts(appId, timestampIso).jsonPath;
 }
 
-function metricsCsvPath(runToken) {
-  return metricsArtifacts(runToken).csvPath;
+function metricsCsvPath(appId, timestampIso) {
+  return metricsArtifacts(appId, timestampIso).csvPath;
 }
 
-function metricsPublicUrl(runToken) {
-  return metricsArtifacts(runToken).jsonUrl;
+function metricsPublicUrl(appId, timestampIso) {
+  return metricsArtifacts(appId, timestampIso).jsonUrl;
 }
 
 // ---------------------------------------------------------------------------
@@ -182,10 +191,10 @@ function buildMetricsCsv(metrics) {
   return [headers.join(","), ...body].join("\n");
 }
 
-function writeMetricsArtifacts(runToken, metrics) {
+function writeMetricsArtifacts(appId, timestampIso, metrics) {
   ensureOutputDir();
 
-  const artifacts = metricsArtifacts(runToken);
+  const artifacts = metricsArtifacts(appId, timestampIso);
 
   fs.writeFileSync(
     artifacts.jsonPath,
@@ -572,8 +581,8 @@ function buildUrlInfo(appId, app) {
   };
 }
 
-function buildAnalyzeResponse(runToken, metrics) {
-  const artifacts = metricsArtifacts(runToken);
+function buildAnalyzeResponse(runToken, appId, timestampIso, metrics) {
+  const artifacts = metricsArtifacts(appId, timestampIso);
 
   return {
     runToken,
@@ -600,6 +609,7 @@ async function handleAnalyze(req, res) {
     const maxDirDepth = parseMaxDirDepth(req.body);
     const urlInfo = buildUrlInfo(appId, app);
     const runToken = newRunToken();
+    const timestampIso = new Date().toISOString();
 
     const metrics = enrichMetricsWithHotspots(
       await buildMetrics({
@@ -611,7 +621,7 @@ async function handleAnalyze(req, res) {
       rootResult.appRootAbs
     );
 
-    writeMetricsArtifacts(runToken, metrics);
+    writeMetricsArtifacts(appId, timestampIso, metrics);
 
     await activateAnalysis({
       appId,
@@ -619,7 +629,7 @@ async function handleAnalyze(req, res) {
       entryRel: String(app?.entry || "").trim() || null
     });
 
-    return res.json(buildAnalyzeResponse(runToken, metrics));
+    return res.json(buildAnalyzeResponse(runToken, appId, timestampIso, metrics));
   } catch (e) {
     return sendServerError(res, e);
   }

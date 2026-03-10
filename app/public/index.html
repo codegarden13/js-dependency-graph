@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="utf-8" />
-  
+
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>NodeAnalyzer</title>
 
@@ -12,9 +12,7 @@
 
   <!-- app -->
   <link href="/assets/css/style.css" rel="stylesheet" />
-   <link href="/assets/css/graph.css" rel="stylesheet" />
-
-
+  <link href="/assets/css/graph.css" rel="stylesheet" />
 </head>
 
 <body class="p-3 p-lg-4">
@@ -29,34 +27,53 @@
     </div>
 
     <div class="row g-3 g-lg-4 align-items-start">
-      <!-- LEFT: graph -->
-      <main class="col-12 col-lg-7 col-xl-8">
-        <div class="card shadow-sm">
-          <div class="card-header py-2 d-flex align-items-center justify-content-between">
-            <span class="small fw-semibold" id="graphInfoHeader">Graph</span>
-            <span class="small text-secondary">Click a node to inspect</span>
+      <!-- LEFT: readme + selection -->
+      <aside class="col-12 col-xl-3 order-3 order-xl-1">
+        <div class="d-flex flex-column gap-3">
+          <div class="border rounded shadow-sm bg-body overflow-hidden">
+            <div class="px-3 py-2 border-bottom bg-body-tertiary d-flex align-items-center justify-content-between gap-2">
+              <div>
+                <div class="small fw-semibold">README</div>
+                <div class="small text-secondary" id="readmeSummary">none</div>
+              </div>
+            </div>
+            <div class="p-3 panelScroll" id="readmePanel"></div>
           </div>
-          <div class="card-body p-2">
-            <svg id="codeStructureSvg" width="1200" height="800"></svg>
+
+          <div class="border rounded shadow-sm bg-body overflow-hidden">
+            <div class="px-3 py-2 border-bottom bg-body-tertiary d-flex align-items-center justify-content-between gap-2">
+              <div>
+                <div class="small fw-semibold">Selection</div>
+                <div class="small text-secondary" id="selectionSummary">none</div>
+              </div>
+            </div>
+            <div class="p-3 panelScroll" id="graphInfoPanel"></div>
+          </div>
+
+          <div class="border rounded shadow-sm bg-body overflow-hidden">
+            <div class="px-3 py-2 border-bottom bg-body-tertiary d-flex align-items-center justify-content-between gap-2">
+              <div>
+                <div class="small fw-semibold">Recommendations</div>
+                <span class="badge bg-secondary ms-2" id="recoCountBadge">0</span>
+              </div>
+            </div>
+            <div class="p-3 panelScroll" id="recommendationsPanel"></div>
           </div>
         </div>
-      </main>
+      </aside>
 
-      <!-- RIGHT: apps + panels -->
-      <aside class="col-12 col-lg-5 col-xl-4">
-        <div class="accordion" id="rightAccordion">
-
-          <!-- Current app -->
+      <!-- CENTER: app picker + graph -->
+      <main class="col-12 col-lg-8 col-xl-6 order-1 order-xl-2">
+        <div class="accordion mb-3" id="leftTopAccordion">
           <div class="accordion-item">
             <h2 class="accordion-header" id="accAppsHdr">
               <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse"
                 data-bs-target="#accApps" aria-expanded="false" aria-controls="accApps">
-               
                 <span class="small fw-semibold" id="currentAppSummary">Current app</span>
               </button>
             </h2>
             <div id="accApps" class="accordion-collapse collapse" aria-labelledby="accAppsHdr"
-              data-bs-parent="#rightAccordion">
+              data-bs-parent="#leftTopAccordion">
               <div class="accordion-body p-2">
                 <div id="appList" class="appsList appsScroll" role="list">
                   <div class="text-secondary small px-2 py-2">Loading…</div>
@@ -64,86 +81,135 @@
 
                 <!-- Hidden state used by runAnalysis() -->
                 <input type="hidden" id="appSelect" value="" />
-
-
               </div>
             </div>
           </div>
+        </div>
 
-          <!-- Legend & Filter -->
-          <div class="accordion-item">
-            <h2 class="accordion-header" id="accLegendHdr">
-              <button class="accordion-button py-2" type="button" data-bs-toggle="collapse" data-bs-target="#accLegend"
-                aria-expanded="true" aria-controls="accLegend">
-                <span class="small fw-semibold">Legend &amp; Filter</span>
-                <span class="small text-secondary ms-2" id="filterSummary">architecture</span>
-              </button>
-            </h2>
+         <!-- graphs -->
 
-            <div id="accLegend" class="accordion-collapse collapse show" aria-labelledby="accLegendHdr"
-              data-bs-parent="#rightAccordion">
-              <div class="accordion-body panelScroll">
-                <div class="mb-3">
-                  <label for="graphTextFilterMode" class="form-label small fw-semibold mb-1">Text filter</label>
-                  <select id="graphTextFilterMode" class="form-select form-select-sm" aria-label="Text filter mode">
-                    <option value="comments_readme">Kommentare und readme</option>
-                    <option value="functions">Funktionsnamen und Funktionsinhalte</option>
-                  </select>
-                  <div class="form-text small">Bereitet textbasierte Filter für unterschiedliche Analysemodi vor.</div>
-                </div>
+        <div class="card shadow-sm">
+          <div class="card-header py-2 d-flex align-items-center justify-content-between">
+            <span class="small fw-semibold" id="graphInfoHeader">Graph</span>
+            <span class="small text-secondary">Click a node to inspect</span>
+          </div>
 
-                <div id="legendFilterPanel"></div>
+          <div class="card-header py-0 border-top-0 bg-body">
+            <ul class="nav nav-tabs card-header-tabs" id="graphTabs" role="tablist">
+              <li class="nav-item" role="presentation">
+                <button
+                  class="nav-link active small"
+                  id="graph-main-tab"
+                  data-bs-toggle="tab"
+                  data-bs-target="#graph-main-pane"
+                  type="button"
+                  role="tab"
+                  aria-controls="graph-main-pane"
+                  aria-selected="true"
+                >
+                  Standard graph
+                </button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button
+                  class="nav-link small"
+                  id="graph-MRI-tab"
+                  data-bs-toggle="tab"
+                  data-bs-target="#graph-MRI-pane"
+                  type="button"
+                  role="tab"
+                  aria-controls="graph-MRI-pane"
+                  aria-selected="false"
+                >
+                  MRI
+                </button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button
+                  class="nav-link small"
+                  id="graph-time-tab"
+                  data-bs-toggle="tab"
+                  data-bs-target="#graph-time-pane"
+                  type="button"
+                  role="tab"
+                  aria-controls="graph-time-pane"
+                  aria-selected="false"
+                >
+                  Time view
+                </button>
+              </li>
+            </ul>
+          </div>
+
+          <div class="card-body p-2">
+            <div class="tab-content" id="graphTabsContent">
+              <div
+                class="tab-pane fade show active"
+                id="graph-main-pane"
+                role="tabpanel"
+                aria-labelledby="graph-main-tab"
+                tabindex="0"
+              >
+                <svg id="codeStructureSvg" width="1200" height="800"></svg>
+              </div>
+
+              <div
+                class="tab-pane fade"
+                id="graph-MRI-pane"
+                role="tabpanel"
+                aria-labelledby="graph-MRI-tab"
+                tabindex="0"
+              >
+                <svg id="graphMriView" width="1200" height="800"></svg>
+              </div>
+
+              <div
+                class="tab-pane fade"
+                id="graph-alt-pane"
+                role="tabpanel"
+                aria-labelledby="graph-alt-tab"
+                tabindex="0"
+              >
+                <svg id="codeStructureAltSvg" width="1200" height="800"></svg>
+              </div>
+              <div
+                class="tab-pane fade"
+                id="graph-time-pane"
+                role="tabpanel"
+                aria-labelledby="graph-time-tab"
+                tabindex="0"
+              >
+                <svg id="graphTimeView" width="1200" height="800"></svg>
               </div>
             </div>
           </div>
+        </div>
+      </main>
 
-          <!-- Selection -->
-          <div class="accordion-item">
-            <h2 class="accordion-header" id="accSelectionHdr">
-              <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse"
-                data-bs-target="#accSelection" aria-expanded="false" aria-controls="accSelection">
-                <span class="small fw-semibold">Selection</span>
-                <span class="small text-secondary ms-2" id="selectionSummary">none</span>
-              </button>
-            </h2>
-            <div id="accSelection" class="accordion-collapse collapse" aria-labelledby="accSelectionHdr"
-              data-bs-parent="#rightAccordion">
-              <div class="accordion-body panelScroll" id="graphInfoPanel"></div>
+      <!-- RIGHT: legend + recommendations -->
+      <aside class="col-12 col-lg-4 col-xl-3 order-2 order-xl-3">
+        <div class="d-flex flex-column gap-3">
+          <div class="border rounded shadow-sm bg-body overflow-hidden">
+            <div class="px-3 py-2 border-bottom bg-body-tertiary d-flex align-items-center justify-content-between gap-2">
+              <div>
+                <div class="small fw-semibold">Legend &amp; Filter</div>
+                <div class="small text-secondary" id="filterSummary">architecture</div>
+              </div>
+            </div>
+
+            <div class="p-3">
+              <div class="mb-3">
+                <label for="graphTextFilterMode" class="form-label small fw-semibold mb-1">Text filter</label>
+                <select id="graphTextFilterMode" class="form-select form-select-sm" aria-label="Text filter mode">
+                  <option value="comments_readme">Kommentare und readme</option>
+                  <option value="functions">Funktionsnamen und Funktionsinhalte</option>
+                </select>
+                <div class="form-text small">Bereitet textbasierte Filter für unterschiedliche Analysemodi vor.</div>
+              </div>
+
+              <div id="legendFilterPanel"></div>
             </div>
           </div>
-
-          <!-- README -->
-          <div class="accordion-item">
-            <h2 class="accordion-header" id="accReadmeHdr">
-              <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse"
-                data-bs-target="#accReadme" aria-expanded="false" aria-controls="accReadme">
-                <span class="small fw-semibold">README</span>
-                <span class="small text-secondary ms-2" id="readmeSummary">none</span>
-              </button>
-            </h2>
-            <div id="accReadme" class="accordion-collapse collapse" aria-labelledby="accReadmeHdr"
-              data-bs-parent="#rightAccordion">
-              <div class="accordion-body panelScroll" id="readmePanel"></div>
-            </div>
-          </div>
-
-          <!-- Recommendations -->
-          <div class="accordion-item">
-            <h2 class="accordion-header" id="accRecoHdr">
-              <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse"
-                data-bs-target="#accReco" aria-expanded="false" aria-controls="accReco">
-                <span class="small fw-semibold">Recommendations</span>
-                <span class="badge bg-secondary ms-2" id="recoCountBadge">0</span>
-              </button>
-            </h2>
-            <div id="accReco" class="accordion-collapse collapse" aria-labelledby="accRecoHdr"
-              data-bs-parent="#rightAccordion">
-              <div class="accordion-body panelScroll" id="recommendationsPanel"></div>
-            </div>
-          </div>
-
-
-
         </div>
       </aside>
     </div>
@@ -172,7 +238,6 @@
       });
     })();
   </script>
-
 
   <div id="helpPanel" class="help-panel d-none" role="dialog" aria-label="Help">
     <div class="help-panel__header" id="helpPanelHeader">

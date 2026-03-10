@@ -4,6 +4,7 @@ Interactive Architecture & Dependency Visualization for Complex JavaScript & Typ
 
 <video src="assets/NodeTimeline.mp4" controls width="700" title="NodeAnalyzer Timeline (startup)"></video>
 
+
 ## Why
 
 Large and long-lived codebases tend to lose architectural transparency over time.  
@@ -30,8 +31,8 @@ NodeAnalyzer helps technical leaders and teams:
 
 ## Devteam Leader / You ?
 **Scenario:** Everyone wants a (Live) dashboard about the current status of the teams projects - including structure, done and missing documentation and more.
-If someone from the team changes something in the common (remote) project, it gets visible:
-![visible remote change](assets/NodeAnalyzer_Sc03.png)
+If someone from the team changes something in the common (remote) project, it gets visible for everybody.
+To see urgent ToDos, take this livechart: ![chart MRI](assets/graph_MRI.png)
 
 ## CTO / Tech Lead Perspective
 
