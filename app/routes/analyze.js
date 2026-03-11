@@ -18,16 +18,51 @@ const router = express.Router();
 // Generic helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Create a short opaque run token for one analysis execution.
+ *
+ * Why this exists
+ * ---------------
+ * The analyze endpoint returns a lightweight identifier that can be logged,
+ * correlated across artifacts, and surfaced to the client without exposing
+ * filesystem details.
+ *
+ * @returns {string}
+ *   Random hexadecimal token suitable for response payloads and logs.
+ */
 function newRunToken() {
   // Short, URL-safe run id.
   return crypto.randomBytes(12).toString("hex");
 }
 
+/**
+ * Read and parse a JSON file synchronously.
+ *
+ * Why this exists
+ * ---------------
+ * Route bootstrap data is small and local. A synchronous read keeps the helper
+ * simple and makes configuration failures immediate and explicit.
+ *
+ * @param {string} fileAbs
+ *   Absolute path to the JSON file.
+ * @returns {unknown}
+ *   Parsed JSON payload.
+ * @throws {Error}
+ *   Propagates filesystem and JSON parse failures.
+ */
 function safeJsonRead(fileAbs) {
   const txt = fs.readFileSync(fileAbs, "utf8");
   return JSON.parse(txt);
 }
 
+/**
+ * Normalize a loose identifier input to a trimmed string.
+ *
+ * @param {unknown} v
+ *   Candidate identifier value.
+ * @returns {string}
+ *   Trimmed string representation, or an empty string for missing input.
+ */
 function normalizeId(v) {
   return String(v || "").trim();
 }
@@ -36,16 +71,71 @@ function normalizeId(v) {
 // Metrics artifact paths
 // ---------------------------------------------------------------------------
 
+/**
+ * Persist JSON and CSV metrics artifacts for one analysis run.
+ *
+ * @param {string} appId
+ *   Requested application identifier.
+ * @param {string} timestampIso
+ *   Run timestamp in ISO form.
+ * @param {Record<string, unknown>} metrics
+ *   Metrics payload to persist.
+ */
+function writeMetricsArtifacts(appId, timestampIso, metrics) {
+  ensureOutputDir();
+
+  const artifacts = metricsArtifacts(appId, timestampIso);
+
+  fs.writeFileSync(
+    artifacts.jsonPath,
+    JSON.stringify(metrics, null, 2),
+    "utf8"
+  );
+
+  fs.writeFileSync(
+    artifacts.csvPath,
+    buildMetricsCsv(metrics),
+    "utf8"
+  );
+}
+
+/**
+ * Resolve the absolute output directory for generated analysis artifacts.
+ *
+ * @returns {string}
+ *   Normalized absolute path to `app/public/output`.
+ */
 function outputDirAbs() {
   return normalizeFsPath(path.join(process.cwd(), "app", "public", "output"));
 }
 
+/**
+ * Ensure the artifact output directory exists before writing files.
+ *
+ * @returns {string}
+ *   Normalized absolute path to the ensured directory.
+ */
 function ensureOutputDir() {
   const dir = outputDirAbs();
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
 
+/**
+ * Build the stable filename prefix for one analysis run.
+ *
+ * Why this exists
+ * ---------------
+ * All artifacts for a run share the same prefix so downstream code can derive
+ * related filenames and URLs deterministically.
+ *
+ * @param {string} appId
+ *   Requested application identifier.
+ * @param {string} timestampIso
+ *   Run timestamp in ISO form.
+ * @returns {string}
+ *   Filesystem-safe artifact prefix.
+ */
 function buildArtifactPrefix(appId, timestampIso) {
   const safeAppId = normalizeId(appId) || "app";
   const safeTimestamp = String(timestampIso || new Date().toISOString())
@@ -55,6 +145,16 @@ function buildArtifactPrefix(appId, timestampIso) {
   return `${safeAppId}-${safeTimestamp}`;
 }
 
+/**
+ * Build the common basename for metrics artifacts.
+ *
+ * @param {string} appId
+ *   Requested application identifier.
+ * @param {string} timestampIso
+ *   Run timestamp in ISO form.
+ * @returns {string}
+ *   Basename without file extension.
+ */
 function metricsBaseName(appId, timestampIso) {
   return `${buildArtifactPrefix(appId, timestampIso)}-code-metrics`;
 }
@@ -81,30 +181,19 @@ function metricsArtifacts(appId, timestampIso) {
   };
 }
 
-function metricsJsonFilename(appId, timestampIso) {
-  return metricsArtifacts(appId, timestampIso).jsonFilename;
-}
-
-function metricsCsvFilename(appId, timestampIso) {
-  return metricsArtifacts(appId, timestampIso).csvFilename;
-}
-
-function metricsJsonPath(appId, timestampIso) {
-  return metricsArtifacts(appId, timestampIso).jsonPath;
-}
-
-function metricsCsvPath(appId, timestampIso) {
-  return metricsArtifacts(appId, timestampIso).csvPath;
-}
-
-function metricsPublicUrl(appId, timestampIso) {
-  return metricsArtifacts(appId, timestampIso).jsonUrl;
-}
 
 // ---------------------------------------------------------------------------
 // CSV helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Escape one value for RFC-4180-style CSV output.
+ *
+ * @param {unknown} value
+ *   Cell value to serialize.
+ * @returns {string}
+ *   Escaped CSV cell content.
+ */
 function csvEscape(value) {
   const s = String(value ?? "");
   if (!/[",\n]/.test(s)) return s;
@@ -115,30 +204,64 @@ function csvEscape(value) {
 // CSV row projection
 // ---------------------------------------------------------------------------
 
-function nodeRow(node) {
-  return {
-    kind: node?.kind,
-    id: node?.id,
-    file: node?.file,
-    label: node?.label,
-    type: node?.type,
-    group: node?.group,
-    layer: node?.layer,
-    lines: node?.lines,
-    complexity: node?.complexity,
-    exported: node?.exported,
-    imported: node?.imported,
-    unused: node?.unused,
-    hotspot: node?.hotspot,
-    hotspotRank: node?._hotspotRank,
-    hotspotScore: node?._hotspotScore,
-    changeFreq: node?._changeFreq,
-    lastTouchedAt: node?._lastTouchedAt,
-    x: node?.x,
-    y: node?.y
-  };
+const NODE_ROW_FIELDS = [
+  ["kind", "kind"],
+  ["id", "id"],
+  ["file", "file"],
+  ["label", "label"],
+  ["type", "type"],
+  ["group", "group"],
+  ["layer", "layer"],
+  ["lines", "lines"],
+  ["complexity", "complexity"],
+  ["exported", "exported"],
+  ["imported", "imported"],
+  ["unused", "unused"],
+  ["hotspot", "hotspot"],
+  ["hotspotRank", "_hotspotRank"],
+  ["hotspotScore", "_hotspotScore"],
+  ["changeFreq", "_changeFreq"],
+  ["lastTouchedAt", "_lastTouchedAt"],
+  ["x", "x"],
+  ["y", "y"]
+];
+
+/**
+ * Project an object into a flat row object using a field mapping table.
+ *
+ * @param {Record<string, unknown>} source
+ *   Source object to project.
+ * @param {Array<[string, string]>} fields
+ *   `[targetKey, sourceKey]` tuples describing the projection.
+ * @returns {Record<string, unknown>}
+ *   Projected row object.
+ */
+function projectRow(source, fields) {
+  return Object.fromEntries(
+    fields.map(([targetKey, sourceKey]) => [targetKey, source?.[sourceKey]])
+  );
 }
 
+/**
+ * Convert one graph node into its CSV row representation.
+ *
+ * @param {Record<string, unknown>} node
+ *   Graph node payload.
+ * @returns {Record<string, unknown>}
+ *   Flat row object aligned to `NODE_ROW_FIELDS`.
+ */
+function nodeRow(node) {
+  return projectRow(node, NODE_ROW_FIELDS);
+}
+
+/**
+ * Convert one graph link into its CSV row representation.
+ *
+ * @param {Record<string, unknown>} link
+ *   Graph link payload.
+ * @returns {Record<string, unknown>}
+ *   Flat row object for CSV export.
+ */
 function linkRow(link) {
   return {
     relation: "link",
@@ -150,6 +273,19 @@ function linkRow(link) {
   };
 }
 
+/**
+ * Serialize the metrics graph to CSV.
+ *
+ * Why this exists
+ * ---------------
+ * The JSON artifact is canonical, but CSV makes ad-hoc inspection and import
+ * into spreadsheet tools straightforward for debugging and reporting.
+ *
+ * @param {Record<string, unknown>} metrics
+ *   Metrics payload containing `nodes` and `links` arrays.
+ * @returns {string}
+ *   Complete CSV document including header row.
+ */
 function buildMetricsCsv(metrics) {
   const rows = [];
 
@@ -191,31 +327,29 @@ function buildMetricsCsv(metrics) {
   return [headers.join(","), ...body].join("\n");
 }
 
-function writeMetricsArtifacts(appId, timestampIso, metrics) {
-  ensureOutputDir();
 
-  const artifacts = metricsArtifacts(appId, timestampIso);
-
-  fs.writeFileSync(
-    artifacts.jsonPath,
-    JSON.stringify(metrics, null, 2),
-    "utf8"
-  );
-
-  fs.writeFileSync(
-    artifacts.csvPath,
-    buildMetricsCsv(metrics),
-    "utf8"
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Apps config (app/config/apps.json)
 // ---------------------------------------------------------------------------
+/**
+ * Resolve the absolute path to the apps configuration file.
+ *
+ * @returns {string}
+ *   Normalized absolute path to `app/config/apps.json`.
+ */
 function appsConfigPath() {
   return normalizeFsPath(path.join(process.cwd(), "app", "config", "apps.json"));
 }
 
+/**
+ * Load and validate the application registry from disk.
+ *
+ * @returns {Array<object>}
+ *   Configured application records.
+ * @throws {Error}
+ *   Thrown when the config file is missing or structurally invalid.
+ */
 function loadAppsConfig() {
   const p = appsConfigPath();
   if (!fs.existsSync(p)) {
@@ -231,23 +365,84 @@ function loadAppsConfig() {
   return apps;
 }
 
+/**
+ * Find one configured application by normalized identifier.
+ *
+ * @param {Array<object>} apps
+ *   Loaded application records.
+ * @param {string} appId
+ *   Requested application identifier.
+ * @returns {object | null}
+ *   Matching application config, or `null` when not found.
+ */
 function findAppById(apps, appId) {
   const id = normalizeId(appId);
   if (!id) return null;
   return apps.find((a) => normalizeId(a?.id) === id) || null;
 }
 
-function resolveAppRootAbs(app) {
-  const rootDir = String(app?.rootDir || app?.root || app?.path || "").trim();
-  if (!rootDir) return null;
-
-  if (path.isAbsolute(rootDir)) {
-    return normalizeFsPath(rootDir);
-  }
-
-  return normalizeFsPath(path.join(process.cwd(), rootDir));
+/**
+ * Read the configured root directory field from an app record.
+ *
+ * Why this exists
+ * ---------------
+ * Historical config variants may use `rootDir`, `root`, or `path`. This helper
+ * centralizes that compatibility rule.
+ *
+ * @param {object} app
+ *   Application config record.
+ * @returns {string}
+ *   Trimmed configured root directory value, or an empty string.
+ */
+function readAppRootDir(app) {
+  return String(app?.rootDir || app?.root || app?.path || "").trim();
 }
 
+/**
+ * Resolve a path that may already be absolute or project-relative.
+ *
+ * @param {string} targetPath
+ *   Absolute or project-relative filesystem path.
+ * @returns {string}
+ *   Normalized absolute path.
+ */
+function resolveAbsoluteOrProjectPath(targetPath) {
+  if (path.isAbsolute(targetPath)) {
+    return normalizeFsPath(targetPath);
+  }
+
+  return normalizeFsPath(path.join(process.cwd(), targetPath));
+}
+
+/**
+ * Resolve the absolute root directory for one configured application.
+ *
+ * @param {object} app
+ *   Application config record.
+ * @returns {string | null}
+ *   Normalized absolute root path, or `null` when no root is configured.
+ */
+function resolveAppRootAbs(app) {
+  const rootDir = readAppRootDir(app);
+  if (!rootDir) return null;
+  return resolveAbsoluteOrProjectPath(rootDir);
+}
+
+/**
+ * Resolve the absolute entry file for one application.
+ *
+ * Why this exists
+ * ---------------
+ * Some app records explicitly declare an entry file. Others rely on a small
+ * set of conventional fallback filenames.
+ *
+ * @param {string} appRootAbs
+ *   Absolute application root directory.
+ * @param {object} app
+ *   Application config record.
+ * @returns {string | null}
+ *   Absolute entry file path, or `null` when no candidate can be resolved.
+ */
 function resolveEntryAbs(appRootAbs, app) {
   const entry = String(app?.entry || "").trim();
   if (entry) return path.resolve(appRootAbs, entry);
@@ -266,12 +461,28 @@ function resolveEntryAbs(appRootAbs, app) {
 // Metrics summary + hotspot enrichment
 // ---------------------------------------------------------------------------
 
+/**
+ * Build a compact summary from the full metrics payload.
+ *
+ * @param {Record<string, unknown>} metrics
+ *   Metrics payload containing graph arrays.
+ * @returns {{nodes: number, links: number}}
+ *   Lightweight count summary for response payloads.
+ */
 function summaryFromMetrics(metrics) {
   const nodes = Array.isArray(metrics?.nodes) ? metrics.nodes.length : 0;
   const links = Array.isArray(metrics?.links) ? metrics.links.length : 0;
   return { nodes, links };
 }
 
+/**
+ * Clamp a numeric value to the inclusive range `[0, 1]`.
+ *
+ * @param {unknown} v
+ *   Candidate numeric value.
+ * @returns {number}
+ *   Clamped normalized number.
+ */
 function clamp01(v) {
   const n = Number(v);
   if (!Number.isFinite(n)) return 0;
@@ -280,36 +491,100 @@ function clamp01(v) {
   return n;
 }
 
+/**
+ * Convert a value to a strictly positive finite number.
+ *
+ * @param {unknown} v
+ *   Candidate numeric value.
+ * @returns {number}
+ *   Positive finite number, or `0` when invalid.
+ */
 function toPositiveNumber(v) {
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
+/**
+ * Determine whether a graph node represents a function.
+ *
+ * @param {Record<string, unknown>} node
+ *   Graph node candidate.
+ * @returns {boolean}
+ *   `true` when the node kind is `function`.
+ */
 function looksLikeFunctionNode(node) {
   return String(node?.kind || "") === "function";
 }
 
+/**
+ * Determine whether a graph node represents a file/module.
+ *
+ * @param {Record<string, unknown>} node
+ *   Graph node candidate.
+ * @returns {boolean}
+ *   `true` when the node kind is `file`.
+ */
 function looksLikeFileNode(node) {
   return String(node?.kind || "") === "file";
 }
 
+/**
+ * Normalize a graph file identifier to forward-slash form.
+ *
+ * @param {unknown} v
+ *   Candidate file identifier.
+ * @returns {string}
+ *   Trimmed identifier using `/` separators.
+ */
 function normalizeGraphFileId(v) {
   return String(v || "").replace(/\\/g, "/").trim();
 }
 
+/**
+ * Read a node complexity metric as a positive number.
+ *
+ * @param {Record<string, unknown>} node
+ *   Graph node payload.
+ * @returns {number}
+ *   Normalized complexity value.
+ */
 function readNodeComplexity(node) {
   return toPositiveNumber(node?.complexity);
 }
 
+/**
+ * Read a node line-count metric as a positive number.
+ *
+ * @param {Record<string, unknown>} node
+ *   Graph node payload.
+ * @returns {number}
+ *   Normalized line-count value.
+ */
 function readNodeLines(node) {
   return toPositiveNumber(node?.lines);
 }
 
+/**
+ * Convert epoch seconds to an ISO timestamp when valid.
+ *
+ * @param {unknown} epochSeconds
+ *   Epoch timestamp in seconds.
+ * @returns {string | null}
+ *   ISO timestamp, or `null` for invalid input.
+ */
 function safeIsoDateFromEpochSeconds(epochSeconds) {
   const ms = Number(epochSeconds) * 1000;
   return Number.isFinite(ms) && ms > 0 ? new Date(ms).toISOString() : null;
 }
 
+/**
+ * Check whether the project root is inside a Git repository.
+ *
+ * @param {string} projectRootAbs
+ *   Absolute project root path.
+ * @returns {boolean}
+ *   `true` when Git metadata is available.
+ */
 function hasGitRepo(projectRootAbs) {
   const probe = spawnSync("git", ["rev-parse", "--show-toplevel"], {
     cwd: projectRootAbs,
@@ -319,8 +594,14 @@ function hasGitRepo(projectRootAbs) {
   return probe.status === 0;
 }
 
-function listGitFileStats(projectRootAbs) {
-  const cmd = [
+/**
+ * Build the Git command used to collect per-file change frequency data.
+ *
+ * @returns {string[]}
+ *   Argument vector for `git log`.
+ */
+function gitLogFileStatsCommand() {
+  return [
     "log",
     "--name-only",
     "--format=@@@%ct",
@@ -328,8 +609,20 @@ function listGitFileStats(projectRootAbs) {
     "--",
     "."
   ];
+}
 
-  const res = spawnSync("git", cmd, {
+/**
+ * Execute the Git history scan used for hotspot enrichment.
+ *
+ * @param {string} projectRootAbs
+ *   Absolute project root path.
+ * @returns {string}
+ *   Raw stdout from the Git command.
+ * @throws {Error}
+ *   Thrown when the Git command fails.
+ */
+function runGitFileStatsLog(projectRootAbs) {
+  const res = spawnSync("git", gitLogFileStatsCommand(), {
     cwd: projectRootAbs,
     encoding: "utf8",
     maxBuffer: 16 * 1024 * 1024
@@ -340,39 +633,127 @@ function listGitFileStats(projectRootAbs) {
     throw new Error(stderr || "git log failed");
   }
 
+  return String(res.stdout || "");
+}
+
+/**
+ * Get or create the mutable stats bucket for one repository-relative file.
+ *
+ * @param {Map<string, {commits: number, lastTouchedEpoch: number}>} stats
+ *   Aggregate stats map.
+ * @param {string} relPath
+ *   Normalized repository-relative file path.
+ * @returns {{commits: number, lastTouchedEpoch: number}}
+ *   Mutable aggregate entry for the file.
+ */
+function ensureGitFileStatEntry(stats, relPath) {
+  let entry = stats.get(relPath);
+  if (entry) return entry;
+
+  entry = {
+    commits: 0,
+    lastTouchedEpoch: 0
+  };
+  stats.set(relPath, entry);
+  return entry;
+}
+
+/**
+ * Apply one file-path line from `git log --name-only` output.
+ *
+ * @param {Map<string, {commits: number, lastTouchedEpoch: number}>} stats
+ *   Aggregate stats map.
+ * @param {string} line
+ *   Raw file-path line.
+ * @param {number | null} currentEpoch
+ *   Commit timestamp currently in scope.
+ * @returns {number | null}
+ *   Unchanged current epoch for parser flow consistency.
+ */
+function applyGitFileStatLine(stats, line, currentEpoch) {
+  const relPath = normalizeGraphFileId(line);
+  if (!relPath) return currentEpoch;
+
+  const entry = ensureGitFileStatEntry(stats, relPath);
+  entry.commits += 1;
+
+  if (Number.isFinite(currentEpoch) && currentEpoch > entry.lastTouchedEpoch) {
+    entry.lastTouchedEpoch = currentEpoch;
+  }
+
+  return currentEpoch;
+}
+
+/**
+ * Read a synthetic commit-timestamp marker from Git log output.
+ *
+ * @param {string} line
+ *   Raw log line.
+ * @param {number | null} currentEpoch
+ *   Previous parser epoch.
+ * @returns {number | null}
+ *   Parsed epoch when the line is a marker, otherwise the previous epoch.
+ */
+function readGitEpochMarker(line, currentEpoch) {
+  if (!line.startsWith("@@@")) return currentEpoch;
+  return Number(line.slice(3));
+}
+
+/**
+ * Parse Git log output into per-file change statistics.
+ *
+ * @param {string} stdout
+ *   Raw stdout produced by the hotspot Git command.
+ * @returns {Map<string, {commits: number, lastTouchedEpoch: number}>}
+ *   Aggregated file statistics keyed by normalized relative path.
+ */
+function parseGitFileStats(stdout) {
   const stats = new Map();
   let currentEpoch = null;
 
-  for (const rawLine of String(res.stdout || "").split(/\r?\n/)) {
+  for (const rawLine of String(stdout || "").split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line) continue;
 
     if (line.startsWith("@@@")) {
-      currentEpoch = Number(line.slice(3));
+      currentEpoch = readGitEpochMarker(line, currentEpoch);
       continue;
     }
 
-    const relPath = normalizeGraphFileId(line);
-    if (!relPath) continue;
-
-    let entry = stats.get(relPath);
-    if (!entry) {
-      entry = {
-        commits: 0,
-        lastTouchedEpoch: 0
-      };
-      stats.set(relPath, entry);
-    }
-
-    entry.commits += 1;
-    if (Number.isFinite(currentEpoch) && currentEpoch > entry.lastTouchedEpoch) {
-      entry.lastTouchedEpoch = currentEpoch;
-    }
+    applyGitFileStatLine(stats, line, currentEpoch);
   }
 
   return stats;
 }
 
+/**
+ * Collect per-file Git history statistics for hotspot scoring.
+ *
+ * @param {string} projectRootAbs
+ *   Absolute project root path.
+ * @returns {Map<string, {commits: number, lastTouchedEpoch: number}>}
+ *   Aggregated Git statistics keyed by normalized relative path.
+ */
+function listGitFileStats(projectRootAbs) {
+  const stdout = runGitFileStatsLog(projectRootAbs);
+  return parseGitFileStats(stdout);
+}
+
+/**
+ * Normalize a positive metric to `[0, 1]` using a logarithmic scale.
+ *
+ * Why this exists
+ * ---------------
+ * Commit counts, complexity, and LOC often have long tails. Log scaling keeps
+ * outliers from dominating the hotspot score.
+ *
+ * @param {unknown} value
+ *   Observed metric value.
+ * @param {unknown} maxValue
+ *   Maximum observed metric value in the same population.
+ * @returns {number}
+ *   Log-normalized score in `[0, 1]`.
+ */
 function normalizeByLogScale(value, maxValue) {
   const v = Math.max(0, Number(value) || 0);
   const max = Math.max(0, Number(maxValue) || 0);
@@ -380,6 +761,19 @@ function normalizeByLogScale(value, maxValue) {
   return clamp01(Math.log1p(v) / Math.log1p(max));
 }
 
+
+/**
+ * Compute the hotspot score for one file node.
+ *
+ * @param {Record<string, unknown>} node
+ *   File node payload.
+ * @param {{commits?: number}} gitStat
+ *   Git-derived change statistics for the file.
+ * @param {{maxCommits: number, maxComplexity: number, maxLines: number}} maxima
+ *   Population maxima used for normalization.
+ * @returns {number}
+ *   Hotspot score in `[0, 1]`.
+ */
 function computeFileHotspotScore(node, gitStat, maxima) {
   const complexity01 = normalizeByLogScale(readNodeComplexity(node), maxima.maxComplexity);
   const lines01 = normalizeByLogScale(readNodeLines(node), maxima.maxLines);
@@ -392,30 +786,32 @@ function computeFileHotspotScore(node, gitStat, maxima) {
   return clamp01(changeFreq01 * codeHealthPressure01);
 }
 
-function rankByHotspot(nodes) {
-  const ranked = [...nodes].sort((a, b) => {
-    const scoreDiff = (Number(b?._hotspotScore) || 0) - (Number(a?._hotspotScore) || 0);
-    if (scoreDiff) return scoreDiff;
-    return String(a?.id || "").localeCompare(String(b?.id || ""), "de");
-  });
-
-  ranked.forEach((node, index) => {
-    node._hotspotRank = index + 1;
-    node.hotspot = index < 10 && (Number(node?._hotspotScore) || 0) > 0;
-  });
+/**
+ * Partition graph nodes into file nodes and function nodes.
+ *
+ * @param {Array<Record<string, unknown>>} nodes
+ *   Full graph node collection.
+ * @returns {{fileNodes: Array<object>, functionNodes: Array<object>}}
+ *   Partitioned node groups used by hotspot enrichment.
+ */
+function splitNodesForHotspots(nodes) {
+  return {
+    fileNodes: nodes.filter(looksLikeFileNode),
+    functionNodes: nodes.filter(looksLikeFunctionNode)
+  };
 }
 
-function enrichMetricsWithHotspots(metrics, projectRootAbs) {
-  const nodes = Array.isArray(metrics?.nodes) ? metrics.nodes : [];
-  if (!nodes.length) return metrics;
-  if (!hasGitRepo(projectRootAbs)) return metrics;
-
-  const gitStats = listGitFileStats(projectRootAbs);
-  if (!gitStats.size) return metrics;
-
-  const fileNodes = nodes.filter(looksLikeFileNode);
-  const functionNodes = nodes.filter(looksLikeFunctionNode);
-
+/**
+ * Scan file nodes to determine normalization maxima for hotspot scoring.
+ *
+ * @param {Array<Record<string, unknown>>} fileNodes
+ *   File nodes participating in hotspot scoring.
+ * @param {Map<string, {commits: number}>} gitStats
+ *   Git-derived file statistics.
+ * @returns {{maxCommits: number, maxComplexity: number, maxLines: number}}
+ *   Population maxima used by the scoring model.
+ */
+function collectHotspotMaxima(fileNodes, gitStats) {
   const maxima = {
     maxCommits: 0,
     maxComplexity: 0,
@@ -431,6 +827,20 @@ function enrichMetricsWithHotspots(metrics, projectRootAbs) {
     maxima.maxLines = Math.max(maxima.maxLines, readNodeLines(fileNode));
   }
 
+  return maxima;
+}
+
+/**
+ * Attach hotspot metrics to file nodes in place.
+ *
+ * @param {Array<Record<string, unknown>>} fileNodes
+ *   File nodes to enrich.
+ * @param {Map<string, {commits: number, lastTouchedEpoch: number}>} gitStats
+ *   Git-derived file statistics.
+ * @param {{maxCommits: number, maxComplexity: number, maxLines: number}} maxima
+ *   Population maxima used for normalization.
+ */
+function enrichFileNodesWithHotspots(fileNodes, gitStats, maxima) {
   for (const fileNode of fileNodes) {
     const fileId = normalizeGraphFileId(fileNode?.file || fileNode?.id);
     const stat = gitStats.get(fileId) || { commits: 0, lastTouchedEpoch: 0 };
@@ -439,13 +849,31 @@ function enrichMetricsWithHotspots(metrics, projectRootAbs) {
     fileNode._lastTouchedAt = safeIsoDateFromEpochSeconds(stat.lastTouchedEpoch);
     fileNode._hotspotScore = computeFileHotspotScore(fileNode, stat, maxima);
   }
+}
 
-  rankByHotspot(fileNodes);
-
-  const fileById = new Map(
+/**
+ * Index file nodes by normalized file identifier.
+ *
+ * @param {Array<Record<string, unknown>>} fileNodes
+ *   File nodes to index.
+ * @returns {Map<string, object>}
+ *   Lookup map keyed by normalized file id.
+ */
+function mapFileNodesById(fileNodes) {
+  return new Map(
     fileNodes.map((fileNode) => [normalizeGraphFileId(fileNode?.file || fileNode?.id), fileNode])
   );
+}
 
+/**
+ * Propagate file-level hotspot metadata to owned function nodes.
+ *
+ * @param {Array<Record<string, unknown>>} functionNodes
+ *   Function nodes to enrich.
+ * @param {Map<string, Record<string, unknown>>} fileById
+ *   File lookup indexed by normalized file id.
+ */
+function inheritHotspotsToFunctionNodes(functionNodes, fileById) {
   for (const fnNode of functionNodes) {
     const owner = fileById.get(normalizeGraphFileId(fnNode?.file));
     if (!owner) continue;
@@ -456,13 +884,131 @@ function enrichMetricsWithHotspots(metrics, projectRootAbs) {
     fnNode._hotspotRank = owner._hotspotRank;
     fnNode.hotspot = Boolean(owner.hotspot);
   }
+}
 
+
+/**
+ * Attach hotspot model provenance metadata to the metrics payload.
+ *
+ * @param {Record<string, unknown>} metrics
+ *   Metrics payload being enriched.
+ */
+function attachHotspotModelMeta(metrics) {
   if (!metrics.meta || typeof metrics.meta !== "object") metrics.meta = {};
+
   metrics.meta.hotspotModel = {
     kind: "codescene-like",
     basedOn: ["git_commit_frequency", "file_complexity", "file_loc"],
     note: "Approximates CodeScene hotspots as frequently changed, cognitively expensive code."
   };
+}
+
+/**
+ * Compare nodes by hotspot score in descending order.
+ *
+ * @param {Record<string, unknown>} a
+ *   First node.
+ * @param {Record<string, unknown>} b
+ *   Second node.
+ * @returns {number}
+ *   Sort comparator result.
+ */
+function hotspotScoreDescending(a, b) {
+  return (Number(b?._hotspotScore) || 0) - (Number(a?._hotspotScore) || 0);
+}
+
+/**
+ * Compare nodes by stable identifier as a hotspot tie-breaker.
+ *
+ * @param {Record<string, unknown>} a
+ *   First node.
+ * @param {Record<string, unknown>} b
+ *   Second node.
+ * @returns {number}
+ *   Locale-aware sort comparator result.
+ */
+function hotspotIdCompare(a, b) {
+  return String(a?.id || "").localeCompare(String(b?.id || ""), "de");
+}
+
+/**
+ * Compare two nodes for hotspot ranking.
+ *
+ * Sort order
+ * ----------
+ * 1. Higher hotspot score first
+ * 2. Stable id comparison as deterministic tie-breaker
+ *
+ * @param {Record<string, unknown>} a
+ *   First node.
+ * @param {Record<string, unknown>} b
+ *   Second node.
+ * @returns {number}
+ *   Sort comparator result.
+ */
+function compareHotspotNodes(a, b) {
+  const scoreDiff = hotspotScoreDescending(a, b);
+  if (scoreDiff) return scoreDiff;
+  return hotspotIdCompare(a, b);
+}
+
+/**
+ * Apply rank metadata and top-N hotspot flag to one ranked node.
+ *
+ * @param {Record<string, unknown>} node
+ *   Ranked file node.
+ * @param {number} index
+ *   Zero-based rank index in sorted order.
+ */
+function applyHotspotRank(node, index) {
+  node._hotspotRank = index + 1;
+  node.hotspot = index < 10 && (Number(node?._hotspotScore) || 0) > 0;
+}
+
+/**
+ * Rank file nodes by hotspot severity and mark the top cohort.
+ *
+ * @param {Array<Record<string, unknown>>} nodes
+ *   File nodes to rank in place.
+ */
+function rankByHotspot(nodes) {
+  const ranked = [...nodes].sort(compareHotspotNodes);
+  ranked.forEach(applyHotspotRank);
+}
+
+/**
+ * Enrich the metrics payload with CodeScene-like hotspot metadata.
+ *
+ * Why this exists
+ * ---------------
+ * The base analyzer describes structure. This post-processing step adds a
+ * change-frequency signal from Git so the UI can highlight expensive, volatile
+ * areas of the codebase.
+ *
+ * @param {Record<string, unknown>} metrics
+ *   Metrics payload to enrich.
+ * @param {string} projectRootAbs
+ *   Absolute project root path.
+ * @returns {Record<string, unknown>}
+ *   The same metrics object after in-place enrichment.
+ */
+function enrichMetricsWithHotspots(metrics, projectRootAbs) {
+  const nodes = Array.isArray(metrics?.nodes) ? metrics.nodes : [];
+  if (!nodes.length) return metrics;
+  if (!hasGitRepo(projectRootAbs)) return metrics;
+
+  const gitStats = listGitFileStats(projectRootAbs);
+  if (!gitStats.size) return metrics;
+
+  const { fileNodes, functionNodes } = splitNodesForHotspots(nodes);
+  const maxima = collectHotspotMaxima(fileNodes, gitStats);
+
+  enrichFileNodesWithHotspots(fileNodes, gitStats, maxima);
+  rankByHotspot(fileNodes);
+
+  const fileById = mapFileNodesById(fileNodes);
+  inheritHotspotsToFunctionNodes(functionNodes, fileById);
+  attachHotspotModelMeta(metrics);
 
   return metrics;
 }
@@ -472,6 +1018,22 @@ function enrichMetricsWithHotspots(metrics, projectRootAbs) {
 // ---------------------------------------------------------------------------
 // We import lazily so server boot does not fail immediately if the analyzer
 // module changes during refactors.
+/**
+ * Lazily load the analyzer module and build the graph metrics payload.
+ *
+ * Why this exists
+ * ---------------
+ * Lazy import keeps server startup resilient while analyzer modules are under
+ * active refactor and allows route-time failure reporting instead of boot-time
+ * crashes.
+ *
+ * @param {{projectRootAbs: string, entryAbs: string, urlInfo: object, maxDirDepth: number}} params
+ *   Analyzer invocation parameters.
+ * @returns {Promise<Record<string, unknown>>}
+ *   Built metrics payload.
+ * @throws {Error}
+ *   Thrown when the analyzer export is missing or the analyzer fails.
+ */
 async function buildMetrics({ projectRootAbs, entryAbs, urlInfo, maxDirDepth }) {
   const mod = await import("../lib/buildMetricsFromEntrypoint.js");
   const fn = mod?.buildMetricsFromEntrypoint;
@@ -489,6 +1051,14 @@ async function buildMetrics({ projectRootAbs, entryAbs, urlInfo, maxDirDepth }) 
   });
 }
 
+/**
+ * Parse the optional directory-depth limit from the request body.
+ *
+ * @param {Record<string, unknown>} body
+ *   Request body payload.
+ * @returns {number}
+ *   Positive depth limit, defaulting to `3`.
+ */
 function parseMaxDirDepth(body) {
   const n = Number(body?.maxDirDepth);
   return Number.isFinite(n) && n > 0 ? n : 3;
@@ -501,10 +1071,30 @@ function parseMaxDirDepth(body) {
 // mounting styles:
 //   app.use("/analyze", router)  -> client POSTs to "/analyze" (router POST "/")
 //   app.use("/", router)         -> client POSTs to "/analyze" (router POST "/analyze")
+/**
+ * Send a normalized HTTP 400 response.
+ *
+ * @param {import("express").Response} res
+ *   Express response object.
+ * @param {unknown} message
+ *   Error message to expose to the client.
+ * @returns {import("express").Response}
+ *   Sent response instance.
+ */
 function sendBadRequest(res, message) {
   return res.status(400).json({ error: { message: String(message || "Bad Request") } });
 }
 
+/**
+ * Send a normalized unsupported-analysis response.
+ *
+ * @param {import("express").Response} res
+ *   Express response object.
+ * @param {{reason?: string, message?: string, details?: unknown}} payload
+ *   Unsupported-target details.
+ * @returns {import("express").Response}
+ *   Sent response instance.
+ */
 function sendUnsupported(res, { reason, message, details }) {
   return res.status(400).json({
     analysisStatus: "unsupported",
@@ -514,20 +1104,54 @@ function sendUnsupported(res, { reason, message, details }) {
   });
 }
 
+/**
+ * Send a normalized HTTP 500 response for unexpected analysis failures.
+ *
+ * @param {import("express").Response} res
+ *   Express response object.
+ * @param {unknown} err
+ *   Thrown error or error-like value.
+ * @returns {import("express").Response}
+ *   Sent response instance.
+ */
 function sendServerError(res, err) {
   const msg = String(err?.message || err || "Analyze failed");
   return res.status(500).json({ error: { message: msg } });
 }
 
+/**
+ * Read the requested app identifier from the request body.
+ *
+ * @param {import("express").Request} req
+ *   Express request object.
+ * @returns {string}
+ *   Normalized requested app id.
+ */
 function getRequestedAppId(req) {
   return normalizeId(req?.body?.appId);
 }
 
+/**
+ * Load the application registry and resolve one app by id.
+ *
+ * @param {string} appId
+ *   Requested application identifier.
+ * @returns {object | null}
+ *   Matching application config, or `null` when not found.
+ */
 function getAppById(appId) {
   const apps = loadAppsConfig();
   return findAppById(apps, appId);
 }
 
+/**
+ * Resolve and validate the configured application root directory.
+ *
+ * @param {object} app
+ *   Application config record.
+ * @returns {{ok: true, appRootAbs: string} | {ok: false, kind: string, payload: object}}
+ *   Success or unsupported-result object.
+ */
 function resolveAndValidateAppRoot(app) {
   const appRootAbs = resolveAppRootAbs(app);
   if (!appRootAbs) {
@@ -557,6 +1181,16 @@ function resolveAndValidateAppRoot(app) {
   return { ok: true, appRootAbs };
 }
 
+/**
+ * Resolve and validate the analyzer entry file for one application.
+ *
+ * @param {string} appRootAbs
+ *   Absolute application root directory.
+ * @param {object} app
+ *   Application config record.
+ * @returns {{ok: true, entryAbs: string} | {ok: false, kind: string, payload: object}}
+ *   Success or unsupported-result object.
+ */
 function resolveAndValidateEntryAbs(appRootAbs, app) {
   const entryAbs = resolveEntryAbs(appRootAbs, app);
   if (entryAbs) return { ok: true, entryAbs };
@@ -572,6 +1206,16 @@ function resolveAndValidateEntryAbs(appRootAbs, app) {
   };
 }
 
+/**
+ * Build the lightweight app descriptor passed into the analyzer.
+ *
+ * @param {string} appId
+ *   Requested application identifier.
+ * @param {object} app
+ *   Application config record.
+ * @returns {{appId: string, appName: string, url: string, entry: string}}
+ *   Analyzer-facing app descriptor.
+ */
 function buildUrlInfo(appId, app) {
   return {
     appId,
@@ -581,6 +1225,21 @@ function buildUrlInfo(appId, app) {
   };
 }
 
+
+/**
+ * Build the public API response for a successful analysis run.
+ *
+ * @param {string} runToken
+ *   Opaque run identifier.
+ * @param {string} appId
+ *   Requested application identifier.
+ * @param {string} timestampIso
+ *   Run timestamp in ISO form.
+ * @param {Record<string, unknown>} metrics
+ *   Built metrics payload.
+ * @returns {{runToken: string, metricsUrl: string, csvUrl: string, summary: {nodes: number, links: number}}}
+ *   Response payload sent to the client.
+ */
 function buildAnalyzeResponse(runToken, appId, timestampIso, metrics) {
   const artifacts = metricsArtifacts(appId, timestampIso);
 
@@ -592,44 +1251,176 @@ function buildAnalyzeResponse(runToken, appId, timestampIso, metrics) {
   };
 }
 
+/**
+ * Resolve the requested application from the incoming analyze request.
+ *
+ * @param {import("express").Request} req
+ *   Express request object.
+ * @returns {{ok: true, appId: string, app: object} | {ok: false, kind: string, payload: string}}
+ *   Success or bad-request result.
+ */
+function resolveAnalyzeApp(req) {
+  const appId = getRequestedAppId(req);
+  if (!appId) {
+    return {
+      ok: false,
+      kind: "bad-request",
+      payload: "Missing appId"
+    };
+  }
+
+  const app = getAppById(appId);
+  if (!app) {
+    return {
+      ok: false,
+      kind: "bad-request",
+      payload: `Unknown appId: ${appId}`
+    };
+  }
+
+  return { ok: true, appId, app };
+}
+
+/**
+ * Resolve the validated filesystem target for one application analysis.
+ *
+ * @param {object} app
+ *   Application config record.
+ * @returns {{ok: true, appRootAbs: string, entryAbs: string} | {ok: false, kind: string, payload: object}}
+ *   Success or unsupported-result object.
+ */
+function resolveAnalyzeTarget(app) {
+  const rootResult = resolveAndValidateAppRoot(app);
+  if (!rootResult.ok) return rootResult;
+
+  const entryResult = resolveAndValidateEntryAbs(rootResult.appRootAbs, app);
+  if (!entryResult.ok) return entryResult;
+
+  return {
+    ok: true,
+    appRootAbs: rootResult.appRootAbs,
+    entryAbs: entryResult.entryAbs
+  };
+}
+
+/**
+ * Convert a typed analyze-result failure into the appropriate HTTP response.
+ *
+ * @param {import("express").Response} res
+ *   Express response object.
+ * @param {{kind?: string, payload?: unknown}} result
+ *   Failure result emitted by resolution helpers.
+ * @returns {import("express").Response}
+ *   Sent response instance.
+ */
+function sendAnalyzeFailure(res, result) {
+  if (result?.kind === "bad-request") {
+    return sendBadRequest(res, result.payload);
+  }
+
+  return sendUnsupported(res, result?.payload);
+}
+
+/**
+ * Build immutable per-request analysis context.
+ *
+ * @param {import("express").Request} req
+ *   Express request object.
+ * @param {string} appId
+ *   Requested application identifier.
+ * @param {object} app
+ *   Application config record.
+ * @returns {{appId: string, app: object, maxDirDepth: number, urlInfo: object, runToken: string, timestampIso: string}}
+ *   Request-scoped analysis context.
+ */
+function buildAnalyzeContext(req, appId, app) {
+  return {
+    appId,
+    app,
+    maxDirDepth: parseMaxDirDepth(req.body),
+    urlInfo: buildUrlInfo(appId, app),
+    runToken: newRunToken(),
+    timestampIso: new Date().toISOString()
+  };
+}
+
+/**
+ * Build and enrich the metrics payload for one analysis request.
+ *
+ * @param {{urlInfo: object, maxDirDepth: number}} context
+ *   Request-scoped analysis context.
+ * @param {{appRootAbs: string, entryAbs: string}} target
+ *   Validated analysis target.
+ * @returns {Promise<Record<string, unknown>>}
+ *   Built and hotspot-enriched metrics payload.
+ */
+async function buildAnalyzeMetrics(context, target) {
+  return enrichMetricsWithHotspots(
+    await buildMetrics({
+      projectRootAbs: target.appRootAbs,
+      entryAbs: target.entryAbs,
+      urlInfo: context.urlInfo,
+      maxDirDepth: context.maxDirDepth
+    }),
+    target.appRootAbs
+  );
+}
+
+/**
+ * Notify the live-change subsystem that an application analysis was activated.
+ *
+ * @param {{appId: string, app: object}} context
+ *   Request-scoped analysis context.
+ * @param {{appRootAbs: string}} target
+ *   Validated analysis target.
+ * @returns {Promise<void>}
+ *   Resolves when activation bookkeeping is complete.
+ */
+async function activateAnalyzeRun(context, target) {
+  await activateAnalysis({
+    appId: context.appId,
+    rootAbs: target.appRootAbs,
+    entryRel: String(context.app?.entry || "").trim() || null
+  });
+}
+
+/**
+ * Handle the analyze endpoint.
+ *
+ * Request flow
+ * ------------
+ * 1. Resolve the requested app
+ * 2. Validate root directory and entry file
+ * 3. Build graph metrics
+ * 4. Enrich metrics with hotspot metadata
+ * 5. Persist artifacts
+ * 6. Activate live analysis state
+ * 7. Return response payload
+ *
+ * @param {import("express").Request} req
+ *   Express request object.
+ * @param {import("express").Response} res
+ *   Express response object.
+ * @returns {Promise<import("express").Response>}
+ *   Sent response instance.
+ */
 async function handleAnalyze(req, res) {
   try {
-    const appId = getRequestedAppId(req);
-    if (!appId) return sendBadRequest(res, "Missing appId");
+    const appResult = resolveAnalyzeApp(req);
+    if (!appResult.ok) return sendAnalyzeFailure(res, appResult);
 
-    const app = getAppById(appId);
-    if (!app) return sendBadRequest(res, `Unknown appId: ${appId}`);
+    const targetResult = resolveAnalyzeTarget(appResult.app);
+    if (!targetResult.ok) return sendAnalyzeFailure(res, targetResult);
 
-    const rootResult = resolveAndValidateAppRoot(app);
-    if (!rootResult.ok) return sendUnsupported(res, rootResult.payload);
+    const context = buildAnalyzeContext(req, appResult.appId, appResult.app);
+    const metrics = await buildAnalyzeMetrics(context, targetResult);
 
-    const entryResult = resolveAndValidateEntryAbs(rootResult.appRootAbs, app);
-    if (!entryResult.ok) return sendUnsupported(res, entryResult.payload);
+    writeMetricsArtifacts(context.appId, context.timestampIso, metrics);
+    await activateAnalyzeRun(context, targetResult);
 
-    const maxDirDepth = parseMaxDirDepth(req.body);
-    const urlInfo = buildUrlInfo(appId, app);
-    const runToken = newRunToken();
-    const timestampIso = new Date().toISOString();
-
-    const metrics = enrichMetricsWithHotspots(
-      await buildMetrics({
-        projectRootAbs: rootResult.appRootAbs,
-        entryAbs: entryResult.entryAbs,
-        urlInfo,
-        maxDirDepth
-      }),
-      rootResult.appRootAbs
+    return res.json(
+      buildAnalyzeResponse(context.runToken, context.appId, context.timestampIso, metrics)
     );
-
-    writeMetricsArtifacts(appId, timestampIso, metrics);
-
-    await activateAnalysis({
-      appId,
-      rootAbs: rootResult.appRootAbs,
-      entryRel: String(app?.entry || "").trim() || null
-    });
-
-    return res.json(buildAnalyzeResponse(runToken, appId, timestampIso, metrics));
   } catch (e) {
     return sendServerError(res, e);
   }
