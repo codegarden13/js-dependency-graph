@@ -102,14 +102,42 @@ const PARSEABLE_EXTS = new Set([
 // Code extensions (used to classify scanned files as "file" vs "asset").
 const CODE_EXTS = new Set([".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"]);
 
+/**
+ * Normalize a file extension to lowercase string form.
+ *
+ * @param {unknown} ext
+ *   Candidate extension value.
+ * @returns {string}
+ *   Lowercased extension string, or an empty string.
+ */
 function normalizeExt(ext) {
   return String(ext || "").toLowerCase();
 }
 
+/**
+ * Classify a scanned file as code-bearing `file` or non-code `asset`.
+ *
+ * @param {string} ext
+ *   Normalized file extension including leading dot.
+ * @returns {"file" | "asset"}
+ *   Graph node kind derived from the extension class.
+ */
 function kindFromExt(ext) {
   return CODE_EXTS.has(ext) ? "file" : "asset";
 }
 
+/**
+ * Add a minimal scanned file node emitted by the structure scan.
+ *
+ * Why this exists
+ * ---------------
+ * The structure scan runs before parsing and therefore only knows filesystem
+ * facts. This helper materializes a stable placeholder node that later parse
+ * passes may enrich.
+ *
+ * @param {{addNode: Function, file: {id: string}, kind: string, ext: string}} args
+ *   Structure-scan file node arguments.
+ */
 function addScannedFileNode({ addNode, file, kind, ext }) {
   addNode({
     id: file.id,
@@ -122,11 +150,31 @@ function addScannedFileNode({ addNode, file, kind, ext }) {
   });
 }
 
+/**
+ * Add an `include` edge from a parent scan node to its child when a parent exists.
+ *
+ * @param {Function} addLink
+ *   Link insertion callback.
+ * @param {{id: string} | null | undefined} parent
+ *   Parent scan node, when present.
+ * @param {string} childId
+ *   Child node identifier.
+ */
 function linkIncludeIfParent(addLink, parent, childId) {
   if (!parent) return;
   addLink(parent.id, childId, "include");
 }
 
+/**
+ * Enqueue a scanned file for BFS parsing only when its extension is parseable.
+ *
+ * @param {Function} enqueue
+ *   BFS enqueue callback.
+ * @param {string} ext
+ *   Normalized file extension.
+ * @param {string} absPath
+ *   Absolute filesystem path of the scanned file.
+ */
 function enqueueIfParseable(enqueue, ext, absPath) {
   if (!PARSEABLE_EXTS.has(ext)) return;
   enqueue(absPath);
@@ -138,12 +186,33 @@ function enqueueIfParseable(enqueue, ext, absPath) {
 /* ========================================================================== */
 
 /**
- * Build a dependency graph starting at a given entrypoint.
+ * Build the canonical dependency graph and metrics payload from one entrypoint.
+ *
+ * Architectural flow
+ * ------------------
+ * 1. Validate root and entry boundaries
+ * 2. Scan project structure for stable include nodes/edges
+ * 3. Traverse parseable files with deterministic BFS
+ * 4. Add import/call relations and defer unresolved cross-file calls
+ * 5. Resolve deferred calls after traversal
+ * 6. Finalize graph statistics and canonical node fields
+ * 7. Emit optional CSV side artifact
  *
  * @param {object} args
- * @param {string} args.projectRoot Absolute path to the project root directory
- * @param {string} args.entryAbs    Absolute path to the entrypoint file
- * @param {any}    args.urlInfo     Optional metadata about a running app URL
+ * @param {string} args.projectRoot
+ *   Absolute path to the project root directory.
+ * @param {string} args.entryAbs
+ *   Absolute path to the entrypoint file.
+ * @param {any} args.urlInfo
+ *   Optional runtime/app metadata to attach into `meta.urlInfo`.
+ * @param {number} [args.maxDirDepth=3]
+ *   Maximum directory scan depth for the initial include graph.
+ * @returns {Promise<{meta: object, nodes: Array<object>, links: Array<object>}>
+ * }
+ *   Canonical graph payload consumed directly by the frontend.
+ * @throws {Error}
+ *   Thrown when arguments are invalid, parsing fails strictly, or the graph has
+ *   no meaningful dependency output.
  */
 export async function buildMetricsFromEntrypoint({
   projectRoot,
@@ -263,7 +332,24 @@ export async function buildMetricsFromEntrypoint({
 /* INTERNAL HELPERS                                                           */
 /* ========================================================================== */
 
-/** Validate and normalize the entrypoint builder arguments (strict). */
+/**
+ * Validate and normalize the entrypoint builder arguments.
+ *
+ * Validation rules
+ * ----------------
+ * - `projectRoot` must be a non-empty string and an existing directory
+ * - `entryAbs` must be a non-empty string and an existing file
+ * - `entryAbs` must remain inside `projectRoot`
+ *
+ * @param {string} projectRoot
+ *   Candidate project root path.
+ * @param {string} entryAbs
+ *   Candidate absolute entry file path.
+ * @returns {{projectRootAbs: string, entryNorm: string}}
+ *   Normalized absolute root and entry paths.
+ * @throws {Error}
+ *   Thrown when validation or boundary checks fail.
+ */
 function validateEntrypointArgs(projectRoot, entryAbs) {
   assertNonEmptyString(projectRoot, "projectRoot");
   assertNonEmptyString(entryAbs, "entryAbs");
@@ -279,7 +365,19 @@ function validateEntrypointArgs(projectRoot, entryAbs) {
   return { projectRootAbs, entryNorm };
 }
 
-/** Create a strict BFS enqueue function with duplicate prevention. */
+/**
+ * Create the BFS enqueue function with duplicate prevention.
+ *
+ * Why this exists
+ * ---------------
+ * Traversal order must be deterministic and each absolute path should appear in
+ * the queue at most once before being visited.
+ *
+ * @param {{visited: Set<string>, queued: Set<string>, queue: string[]}} state
+ *   Mutable BFS state containers.
+ * @returns {(absPath: string) => void}
+ *   Enqueue function that normalizes absolute paths and suppresses duplicates.
+ */
 function createEnqueue({ visited, queued, queue }) {
   return (absPath) => {
     const p = path.resolve(absPath);
@@ -291,7 +389,12 @@ function createEnqueue({ visited, queued, queue }) {
   };
 }
 
-/** Add the stable root node (".") so the UI can anchor the graph. */
+/**
+ * Insert the stable synthetic root node used to anchor the rendered graph.
+ *
+ * @param {Function} addNode
+ *   Node insertion callback.
+ */
 function addStableRootNode(addNode) {
   addNode({
     id: ".",
@@ -303,7 +406,24 @@ function addStableRootNode(addNode) {
   });
 }
 
-/** Scan project structure (include-graph) and enqueue parseable files. */
+/**
+ * Scan the project directory tree and build the include-graph skeleton.
+ *
+ * Why this exists
+ * ---------------
+ * The parser-driven BFS only sees parseable files. The structure scan ensures
+ * directories, assets, shallow files, and containment edges are still present
+ * in the graph even when they are never parsed.
+ *
+ * @param {{
+ *   projectRootAbs: string,
+ *   maxDirDepth: number,
+ *   addNode: Function,
+ *   addLink: Function,
+ *   enqueue: Function
+ * }} args
+ *   Structure-scan dependencies and callbacks.
+ */
 function scanStructure({ projectRootAbs, maxDirDepth, addNode, addLink, enqueue }) {
   scanProjectTree({
     projectRootAbs,
@@ -332,53 +452,134 @@ function scanStructure({ projectRootAbs, maxDirDepth, addNode, addLink, enqueue 
   });
 }
 
-/** Iterate parsed functions safely (no-op if missing/empty). */
+/**
+ * Iterate parsed function descriptors safely.
+ *
+ * @param {Record<string, any>} parsed
+ *   Parsed file result.
+ * @param {(fn: object) => void} fn
+ *   Callback invoked for each parsed function.
+ */
 function forEachParsedFunction(parsed, fn) {
   const fns = parsed?.functions;
   if (!Array.isArray(fns) || fns.length === 0) return;
   for (const item of fns) fn(item);
 }
 
+/**
+ * Normalize a loose value to a trimmed string.
+ *
+ * @param {unknown} v
+ *   Candidate value.
+ * @returns {string}
+ *   Trimmed string representation, or an empty string.
+ */
 function toTrimmedString(v) {
   return String(v || "").trim();
 }
 
+/**
+ * Convert a loose value to a finite non-negative number.
+ *
+ * @param {unknown} v
+ *   Candidate numeric value.
+ * @returns {number}
+ *   Finite non-negative number, or `0` when invalid.
+ */
 function toNonNegativeNumber(v) {
   const n = Number(v || 0);
   return Number.isFinite(n) ? n : 0;
 }
 
-
+/**
+ * Convert a loose numeric value to a positive number with fallback `1`.
+ *
+ * @param {unknown} v
+ *   Candidate numeric value.
+ * @returns {number}
+ *   Positive finite number, or `1` when the value is missing/non-positive.
+ */
 function positiveOrOne(v) {
   const n = toNonNegativeNumber(v);
   return n > 0 ? n : 1;
 }
 
+/**
+ * Derive the normalized file extension from a graph file id.
+ *
+ * @param {unknown} fileId
+ *   Graph file identifier.
+ * @returns {string}
+ *   Lowercased extension including leading dot, or an empty string.
+ */
 function extFromFileId(fileId) {
   return normalizeExt(path.extname(String(fileId || "")));
 }
 
+/**
+ * Convert an extension to its subtype token without a leading dot.
+ *
+ * @param {unknown} ext
+ *   Candidate extension value.
+ * @returns {string}
+ *   Extension token without leading dot.
+ */
 function subtypeFromExt(ext) {
   return String(ext || "").replace(/^\./, "");
 }
 
-/** Build a canonical function node (returns null if fn has no usable id). */
+/**
+ * Build the canonical function node for one parsed function descriptor.
+ *
+ * @param {string} fileId
+ *   Owning file identifier.
+ * @param {Record<string, any>} fn
+ *   Parsed function descriptor.
+ * @returns {object | null}
+ *   Canonical function node, or `null` when the function has no usable id.
+ */
 function buildFunctionNode(fileId, fn) {
-  const fnIdRaw = toTrimmedString(fn?.id);
-  if (!fnIdRaw) return null;
+  const functionId = readFunctionNodeId(fn);
+  if (!functionId) return null;
 
-  const fnNodeId = `${fileId}::${fnIdRaw}`;
   const fileExt = extFromFileId(fileId);
-  const fileSubtype = subtypeFromExt(fileExt);
 
+  return createFunctionNode({
+    fileId,
+    functionId,
+    fileExt,
+    fn
+  });
+}
+
+/**
+ * Read the canonical function id from a parsed function descriptor.
+ *
+ * @param {Record<string, any>} fn
+ *   Parsed function descriptor.
+ * @returns {string}
+ *   Trimmed function id, or an empty string.
+ */
+function readFunctionNodeId(fn) {
+  return toTrimmedString(fn?.id);
+}
+
+/**
+ * Materialize the canonical graph node shape for a parsed function.
+ *
+ * @param {{fileId: string, functionId: string, fileExt: string, fn: Record<string, any>}} args
+ *   Parsed function metadata and owning file context.
+ * @returns {object}
+ *   Canonical function node ready for graph insertion.
+ */
+function createFunctionNode({ fileId, functionId, fileExt, fn }) {
   return {
-    id: fnNodeId,
+    id: `${fileId}::${functionId}`,
     file: fileId,
 
     // Use function span (LOC) as size driver in the renderer.
     // Falls back to 1 so functions are not all identical in size.
     lines: positiveOrOne(fn?.locLines),
-
     complexity: toNonNegativeNumber(fn?.complexity),
     headerComment: "",
 
@@ -388,11 +589,16 @@ function buildFunctionNode(fileId, fn) {
     startLine: toNonNegativeNumber(fn?.startLine),
     ext: fileExt,
     type: "function",
-    subtype: fileSubtype || "function"
+    subtype: subtypeFromExt(fileExt) || "function"
   };
 }
 
-/** Add function nodes for a parsed file. Containment stays on the node model only. */
+/**
+ * Add all parsed function nodes for one file.
+ *
+ * @param {{parsed: Record<string, any>, fileId: string, addNode: Function}} args
+ *   Parsed file result and insertion callback.
+ */
 function addFunctionNodes({ parsed, fileId, addNode }) {
   forEachParsedFunction(parsed, (fn) => {
     const node = buildFunctionNode(fileId, fn);
@@ -401,7 +607,21 @@ function addFunctionNodes({ parsed, fileId, addNode }) {
   });
 }
 
-/** Import edges ("use") + enqueue discovered internal modules. */
+/**
+ * Add `use` edges for resolvable internal imports and enqueue discovered modules.
+ *
+ * @param {{
+ *   parsed: Record<string, any>,
+ *   absNorm: string,
+ *   projectRootAbs: string,
+ *   fileId: string,
+ *   toRelId: Function,
+ *   addLink: Function,
+ *   enqueue: Function,
+ *   visited: Set<string>
+ * }} args
+ *   Import-edge resolution context.
+ */
 function addImportEdges({ parsed, absNorm, projectRootAbs, fileId, toRelId, addLink, enqueue, visited }) {
   const specs = parsed?.imports || [];
   for (const spec of specs) {
@@ -418,7 +638,29 @@ function addImportEdges({ parsed, absNorm, projectRootAbs, fileId, toRelId, addL
   }
 }
 
-/** Call edges ("call"): intra-file + best-effort cross-file via importBindings. */
+/**
+ * Add `call` edges for local and cross-file function calls.
+ *
+ * Resolution strategy
+ * -------------------
+ * 1. Try bare local function names in the same file
+ * 2. Try qualified local ids in the same file
+ * 3. Try imported bindings for cross-file calls
+ * 4. Defer export-target resolution until BFS has materialized all nodes
+ *
+ * @param {{
+ *   parsed: Record<string, any>,
+ *   store: GraphStore,
+ *   fileId: string,
+ *   absNorm: string,
+ *   projectRootAbs: string,
+ *   toRelId: Function,
+ *   addLink: Function,
+ *   pendingCalls: Array<object>,
+ *   warnings: Array<object>
+ * }} args
+ *   Call-edge resolution context.
+ */
 function addCallEdges({ parsed, store, fileId, absNorm, projectRootAbs, toRelId, addLink, pendingCalls, warnings }) {
   if (!Array.isArray(parsed?.calls) || parsed.calls.length === 0) return;
 
@@ -517,7 +759,17 @@ function addCallEdges({ parsed, store, fileId, absNorm, projectRootAbs, toRelId,
   }
 }
 
-/** Resolve deferred call targets after BFS, emitting best-effort edges/warnings. */
+/**
+ * Resolve deferred cross-file call targets after BFS traversal.
+ *
+ * @param {{
+ *   pendingCalls: Array<{fromId: string, targetFileId: string, targetExport: string | null}>,
+ *   store: GraphStore,
+ *   addLink: Function,
+ *   warnings: Array<object>
+ * }} args
+ *   Deferred call-resolution context.
+ */
 function resolveDeferredCalls({ pendingCalls, store, addLink, warnings }) {
   if (!pendingCalls.length) return;
 
@@ -552,7 +804,14 @@ function resolveDeferredCalls({ pendingCalls, store, addLink, warnings }) {
   }
 }
 
-/** Strict sanity checks to fail fast when analysis produced no usable output. */
+/**
+ * Enforce strict post-analysis sanity checks.
+ *
+ * @param {GraphStore} store
+ *   Graph store after traversal and deferred resolution.
+ * @throws {Error}
+ *   Thrown when analysis produced no usable nodes or no meaningful non-include links.
+ */
 function strictSanityCheck(store) {
   if (store.nodes.length <= 1) {
     throw new Error(
@@ -650,7 +909,17 @@ function getNodeFileId(node) {
   return String(node.file || node.id || "");
 }
 
-/** Mark unused functions (best-effort heuristic). */
+/**
+ * Mark function nodes as unused using a conservative best-effort heuristic.
+ *
+ * Heuristic
+ * ---------
+ * A function is marked unused when it is not exported and has zero inbound
+ * call edges.
+ *
+ * @param {Array<object>} nodes
+ *   Canonical graph nodes mutated in place.
+ */
 function markUnusedFunctions(nodes) {
   for (const n of nodes) {
     if (!n || typeof n !== "object") continue;
@@ -662,7 +931,12 @@ function markUnusedFunctions(nodes) {
   }
 }
 
-/** Enforce canonical fields and hard requirements for function nodes. */
+/**
+ * Re-apply canonical node fields and hard requirements after graph finalization.
+ *
+ * @param {Array<object>} nodes
+ *   Canonical graph nodes mutated in place.
+ */
 function enforceCanonicalFields(nodes) {
   for (const n of nodes) {
     ensureCanonicalNodeFields(n);
@@ -683,10 +957,17 @@ function enforceCanonicalFields(nodes) {
   }
 }
 
-/** BFS traversal: parse files, add nodes/edges, and enqueue discovered modules. */
 /**
  * Pull the next unvisited absolute path from the BFS queue.
- * Returns a normalized absolute path, or "" when the queue is exhausted.
+ *
+ * @param {string[]} queue
+ *   Pending BFS queue.
+ * @param {Set<string>} queued
+ *   Set of currently queued absolute paths.
+ * @param {Set<string>} visited
+ *   Set of already visited absolute paths.
+ * @returns {string}
+ *   Normalized absolute path, or an empty string when the queue is exhausted.
  */
 function dequeueNextAbs(queue, queued, visited) {
   while (queue.length > 0) {
@@ -705,7 +986,16 @@ function dequeueNextAbs(queue, queued, visited) {
   return "";
 }
 
-/** Parse a file strictly (throws if missing/invalid). */
+/**
+ * Parse one queued file strictly.
+ *
+ * @param {string} absNorm
+ *   Normalized absolute file path.
+ * @returns {Record<string, any>}
+ *   Parsed file descriptor returned by `parseFile()`.
+ * @throws {Error}
+ *   Thrown when the path is invalid or parsing returns no usable object.
+ */
 function parseOrThrow(absNorm) {
   // Strict: queued paths must exist and be files.
   statFileOrThrow(absNorm);
@@ -718,7 +1008,12 @@ function parseOrThrow(absNorm) {
   return parsed;
 }
 
-/** Add the file node for a parsed file. */
+/**
+ * Add the canonical file node for one parsed file.
+ *
+ * @param {{fileId: string, parsed: Record<string, any>, addNode: Function}} args
+ *   Parsed file result and insertion callback.
+ */
 function addFileNode({ fileId, parsed, addNode }) {
   addNode({
     id: fileId,
@@ -730,6 +1025,24 @@ function addFileNode({ fileId, parsed, addNode }) {
   });
 }
 
+/**
+ * Execute the deterministic BFS traversal over parseable project files.
+ *
+ * @param {{
+ *   queue: string[],
+ *   queued: Set<string>,
+ *   visited: Set<string>,
+ *   projectRootAbs: string,
+ *   store: GraphStore,
+ *   addNode: Function,
+ *   addLink: Function,
+ *   enqueue: Function,
+ *   toRelId: Function,
+ *   pendingCalls: Array<object>,
+ *   warnings: Array<object>
+ * }} args
+ *   Full traversal state and callbacks.
+ */
 function bfsTraverse({
   queue,
   queued,
@@ -773,10 +1086,21 @@ function bfsTraverse({
 }
 
 /**
- * Convert an absolute path into a project-relative id used as node ids.
+ * Convert an absolute filesystem path into the canonical project-relative graph id.
  *
- * Always returns POSIX-style separators.
- * Strict: never allows ids outside root.
+ * Rules
+ * -----
+ * - Output always uses POSIX separators
+ * - Paths outside the project root are rejected strictly
+ *
+ * @param {string} projectRootAbs
+ *   Absolute project root path.
+ * @param {string} absPath
+ *   Absolute file path to convert.
+ * @returns {string}
+ *   Canonical project-relative graph id.
+ * @throws {Error}
+ *   Thrown when the path escapes the project root.
  */
 function toProjectRelativeId(projectRootAbs, absPath) {
   const rootAbs = path.resolve(projectRootAbs);
@@ -792,12 +1116,30 @@ function toProjectRelativeId(projectRootAbs, absPath) {
   return rel.replace(/\\/g, "/");
 }
 
-/** Read a UTF-8 text file. Throws on error (strict). */
+/**
+ * Read a UTF-8 text file strictly.
+ *
+ * @param {string} absPath
+ *   Absolute file path.
+ * @returns {string}
+ *   UTF-8 file contents.
+ * @throws {Error}
+ *   Propagates filesystem read failures.
+ */
 function readUtf8(absPath) {
   return fs.readFileSync(absPath, "utf8");
 }
 
-/** Strict stat helper: throws on error or if not a file. */
+/**
+ * Stat a path strictly and require that it is a file.
+ *
+ * @param {string} abs
+ *   Candidate absolute file path.
+ * @returns {import("node:fs").Stats}
+ *   Filesystem stat result.
+ * @throws {Error}
+ *   Thrown when the path does not exist or is not a file.
+ */
 function statFileOrThrow(abs) {
   const p = path.resolve(abs);
   const st = fs.statSync(p, { throwIfNoEntry: false });
@@ -810,19 +1152,34 @@ function statFileOrThrow(abs) {
   return st;
 }
 
-
-
-
-
-
-/** Strict string arg check: throws if missing or not a non-empty string. */
+/**
+ * Assert that a value is a non-empty string.
+ *
+ * @param {unknown} value
+ *   Candidate value.
+ * @param {string} name
+ *   Logical argument name for error reporting.
+ * @throws {Error}
+ *   Thrown when the value is missing or not a non-empty string.
+ */
 function assertNonEmptyString(value, name) {
   if (typeof value !== "string" || value.trim() === "") {
     throw new Error(`Invalid ${name} (missing or not a string).`);
   }
 }
 
-/** Strict stat helper: throws on error or if not a directory. */
+/**
+ * Stat a path strictly and require that it is a directory.
+ *
+ * @param {string} abs
+ *   Candidate absolute directory path.
+ * @param {string} [label="path"]
+ *   Logical label for error reporting.
+ * @returns {import("node:fs").Stats}
+ *   Filesystem stat result.
+ * @throws {Error}
+ *   Thrown when the path does not exist or is not a directory.
+ */
 function statDirOrThrow(abs, label = "path") {
   const p = path.resolve(abs);
   const st = fs.statSync(p, { throwIfNoEntry: false });
@@ -832,7 +1189,16 @@ function statDirOrThrow(abs, label = "path") {
   return st;
 }
 
-/** Safety boundary assertion: throws if file is outside root. */
+/**
+ * Assert that a file path remains inside the configured project root.
+ *
+ * @param {string} rootAbs
+ *   Absolute project root path.
+ * @param {string} fileAbs
+ *   Absolute file path to validate.
+ * @throws {Error}
+ *   Thrown when the file escapes the root boundary.
+ */
 function assertInsideRootOrThrow(rootAbs, fileAbs) {
   if (!isInsideRoot(rootAbs, fileAbs)) {
     const root = path.resolve(rootAbs);
@@ -840,7 +1206,18 @@ function assertInsideRootOrThrow(rootAbs, fileAbs) {
     throw new Error(`entryAbs is outside projectRoot. entry=${file} root=${root}`);
   }
 }
-// CSV code metrics helpers
+/**
+ * Persist the module-level code metrics CSV side artifact.
+ *
+ * Why this exists
+ * ---------------
+ * The graph JSON is canonical, but the CSV provides a lightweight module-level
+ * metrics export for spreadsheet inspection and historical snapshots.
+ * Export failure is intentionally non-fatal.
+ *
+ * @param {{nodes: Array<object>, links: Array<object>, appId: string}} args
+ *   Graph payload and app identifier used for artifact naming.
+ */
 function writeCodeMetricsCsv({ nodes, links, appId }) {
   try {
     const timestampIso = new Date().toISOString();
@@ -861,6 +1238,14 @@ function writeCodeMetricsCsv({ nodes, links, appId }) {
   }
 }
 
+/**
+ * Build one CSV row per file/module from the finalized graph.
+ *
+ * @param {{nodes: Array<object>, links: Array<object>, timestampIso: string}} args
+ *   Finalized graph payload and run timestamp.
+ * @returns {Array<object>}
+ *   Module-level metrics rows for CSV serialization.
+ */
 function buildCodeMetricsRows({ nodes, links, timestampIso }) {
   const fileNodes = nodes.filter((n) => n?.kind === "file");
   const functionNodes = nodes.filter((n) => n?.kind === "function");
@@ -896,6 +1281,14 @@ function buildCodeMetricsRows({ nodes, links, timestampIso }) {
   return rows;
 }
 
+/**
+ * Group function nodes by their owning file id.
+ *
+ * @param {Array<object>} functionNodes
+ *   Function-node collection.
+ * @returns {Map<string, Array<object>>}
+ *   Function buckets keyed by owning file id.
+ */
 function groupFunctionsByFile(functionNodes) {
   const functionsByFile = new Map();
 
@@ -911,38 +1304,72 @@ function groupFunctionsByFile(functionNodes) {
   return functionsByFile;
 }
 
+/**
+ * Summarize complexity metrics across the functions of one file.
+ *
+ * @param {Array<object>} functions
+ *   Function nodes belonging to one file.
+ * @returns {{avgCc: number, minCc: number, maxCc: number, unusedFunctionCount: number}}
+ *   Aggregate complexity and unused-function summary.
+ */
 function summarizeFunctionComplexity(functions) {
+  if (!Array.isArray(functions) || functions.length === 0) {
+    return {
+      avgCc: 0,
+      minCc: 0,
+      maxCc: 0,
+      unusedFunctionCount: 0
+    };
+  }
+
   let minCc = Number.POSITIVE_INFINITY;
   let maxCc = 0;
   let ccTotal = 0;
   let unusedFunctionCount = 0;
 
   for (const fn of functions) {
-    const cc = Number(fn?.complexity || fn?.cc || 0);
-    if (Number.isFinite(cc)) {
-      minCc = Math.min(minCc, cc);
-      maxCc = Math.max(maxCc, cc);
-      ccTotal += cc;
-    }
+    const cc = readFunctionComplexity(fn);
 
-    if (fn?._unused === true) {
+    minCc = Math.min(minCc, cc);
+    maxCc = Math.max(maxCc, cc);
+    ccTotal += cc;
+
+    if (isUnusedFunctionNode(fn)) {
       unusedFunctionCount++;
     }
   }
 
-  if (!functions.length) {
-    minCc = 0;
-    maxCc = 0;
-  } else if (!Number.isFinite(minCc)) {
-    minCc = 0;
-  }
-
   return {
-    avgCc: functions.length ? (ccTotal / functions.length) : 0,
-    minCc,
+    avgCc: ccTotal / functions.length,
+    minCc: Number.isFinite(minCc) ? minCc : 0,
     maxCc,
     unusedFunctionCount
   };
+}
+
+/**
+ * Read a function complexity metric from a function node.
+ *
+ * @param {object} fn
+ *   Function node.
+ * @returns {number}
+ *   Finite complexity value.
+ */
+function readFunctionComplexity(fn) {
+  const cc = Number(fn?.complexity ?? fn?.cc ?? 0);
+  return Number.isFinite(cc) ? cc : 0;
+}
+
+/**
+ * Check whether a function node has already been marked unused.
+ *
+ * @param {object} fn
+ *   Function node.
+ * @returns {boolean}
+ *   `true` when the node is flagged as unused.
+ */
+function isUnusedFunctionNode(fn) {
+  return fn?._unused === true;
 }
 
 /**
@@ -950,19 +1377,19 @@ function summarizeFunctionComplexity(functions) {
  *
  * Counted dimensions
  * ------------------
- * - useCount / callCount / includeCount:
+ * - `useCount` / `callCount` / `includeCount`:
  *   number of link types touching one of the file's functions
- *
- * - fanIn:
+ * - `fanIn`:
  *   links whose target is one of the file's functions
- *
- * - fanOut:
+ * - `fanOut`:
  *   links whose source is one of the file's functions
  *
- * Important
- * ---------
- * We only look at links that touch at least one function node of this file.
- * Links unrelated to the file are ignored.
+ * @param {Array<object>} links
+ *   Finalized graph links.
+ * @param {Set<string>} functionIds
+ *   Function ids belonging to the current file.
+ * @returns {{useCount: number, callCount: number, includeCount: number, fanIn: number, fanOut: number}}
+ *   Coupling and link-type summary for the file.
  */
 function summarizeFileLinkStats(links, functionIds) {
   const stats = createEmptyLinkStats();
@@ -982,7 +1409,10 @@ function summarizeFileLinkStats(links, functionIds) {
 }
 
 /**
- * Create a stable empty stats object.
+ * Create the stable zero-initialized link-stat accumulator.
+ *
+ * @returns {{useCount: number, callCount: number, includeCount: number, fanIn: number, fanOut: number}}
+ *   Empty link-stat object.
  */
 function createEmptyLinkStats() {
   return {
@@ -995,8 +1425,12 @@ function createEmptyLinkStats() {
 }
 
 /**
- * Normalize one link into plain string fields so downstream logic
- * does not need to deal with null/undefined values.
+ * Normalize one graph link into plain string endpoint fields.
+ *
+ * @param {object} link
+ *   Raw graph link.
+ * @returns {{source: string, target: string, type: string}}
+ *   Normalized link descriptor.
  */
 function normalizeLinkEndpoints(link) {
   return {
@@ -1007,14 +1441,26 @@ function normalizeLinkEndpoints(link) {
 }
 
 /**
- * A link is relevant if either endpoint belongs to one of the file's functions.
+ * Check whether a normalized link touches at least one function in the file set.
+ *
+ * @param {{source: string, target: string}} link
+ *   Normalized graph link.
+ * @param {Set<string>} functionIds
+ *   Function ids belonging to the current file.
+ * @returns {boolean}
+ *   `true` when either endpoint belongs to the file's function set.
  */
 function linkTouchesFunctionSet(link, functionIds) {
   return functionIds.has(link.source) || functionIds.has(link.target);
 }
 
 /**
- * Count the semantic link type.
+ * Increment the semantic link-type counters on the accumulator.
+ *
+ * @param {{useCount: number, callCount: number, includeCount: number}} stats
+ *   Mutable link-stat accumulator.
+ * @param {string} linkType
+ *   Normalized link type.
  */
 function incrementLinkTypeCount(stats, linkType) {
   if (linkType === "use") {
@@ -1033,10 +1479,14 @@ function incrementLinkTypeCount(stats, linkType) {
 }
 
 /**
- * Count directional coupling relative to the file's function set.
+ * Increment directional coupling counters relative to the file's function set.
  *
- * fanIn  = link points into one of the file's functions
- * fanOut = link starts from one of the file's functions
+ * @param {{fanIn: number, fanOut: number}} stats
+ *   Mutable link-stat accumulator.
+ * @param {{source: string, target: string}} link
+ *   Normalized graph link.
+ * @param {Set<string>} functionIds
+ *   Function ids belonging to the current file.
  */
 function incrementFanDirectionCounts(stats, link, functionIds) {
   if (functionIds.has(link.target)) {
@@ -1048,6 +1498,14 @@ function incrementFanDirectionCounts(stats, link, functionIds) {
   }
 }
 
+/**
+ * Serialize module-level code metric rows to CSV text.
+ *
+ * @param {Array<object>} rows
+ *   Module-level metric rows.
+ * @returns {string}
+ *   Complete CSV document including header row.
+ */
 function buildCodeMetricsCsvText(rows) {
   const header = [
     "timestamp",
