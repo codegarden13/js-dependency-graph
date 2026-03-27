@@ -1,25 +1,25 @@
 import express from "express";
 import fs from "fs";
-import path from "path";
 import crypto from "crypto";
 import { spawnSync } from "node:child_process";
 
 import { activateAnalysis } from "../lib/liveChangeFeed.js";
-import { normalizeFsPath } from "../lib/fsPaths.js";
 import {
-  loadAppsConfig,
-  findAppById,
   resolveAppRootAbs,
   resolveEntryAbs
 } from "../lib/appsRegistry.js";
+import { clamp01 } from "../lib/numberUtils.js";
+import {
+  resolveConfiguredApp,
+  sendBadRequest,
+  sendServerError
+} from "../lib/requestNormalization.js";
 
 
 import {
   metricsArtifacts,
   writeMetricsArtifacts
 } from "../lib/analyze/artifacts.js";
-
-import { normalizeId } from "../lib/stringUtils.js"
 
 
 
@@ -71,23 +71,6 @@ function newRunToken() {
 
 
 
-/**
- * Resolve a path that may already be absolute or project-relative.
- *
- * @param {string} targetPath
- *   Absolute or project-relative filesystem path.
- * @returns {string}
- *   Normalized absolute path.
- */
-function resolveAbsoluteOrProjectPath(targetPath) {
-  if (path.isAbsolute(targetPath)) {
-    return normalizeFsPath(targetPath);
-  }
-
-  return normalizeFsPath(path.join(process.cwd(), targetPath));
-}
-
-
 // ---------------------------------------------------------------------------
 // Metrics summary + hotspot enrichment
 // ---------------------------------------------------------------------------
@@ -104,22 +87,6 @@ function summaryFromMetrics(metrics) {
   const nodes = Array.isArray(metrics?.nodes) ? metrics.nodes.length : 0;
   const links = Array.isArray(metrics?.links) ? metrics.links.length : 0;
   return { nodes, links };
-}
-
-/**
- * Clamp a numeric value to the inclusive range `[0, 1]`.
- *
- * @param {unknown} v
- *   Candidate numeric value.
- * @returns {number}
- *   Clamped normalized number.
- */
-function clamp01(v) {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return 0;
-  if (n <= 0) return 0;
-  if (n >= 1) return 1;
-  return n;
 }
 
 /**
@@ -712,10 +679,6 @@ function parseMaxDirDepth(body) {
  * @returns {import("express").Response}
  *   Sent response instance.
  */
-function sendBadRequest(res, message) {
-  return res.status(400).json({ error: { message: String(message || "Bad Request") } });
-}
-
 /**
  * Send a normalized unsupported-analysis response.
  *
@@ -733,46 +696,6 @@ function sendUnsupported(res, { reason, message, details }) {
     message: String(message || "Unsupported target"),
     details
   });
-}
-
-/**
- * Send a normalized HTTP 500 response for unexpected analysis failures.
- *
- * @param {import("express").Response} res
- *   Express response object.
- * @param {unknown} err
- *   Thrown error or error-like value.
- * @returns {import("express").Response}
- *   Sent response instance.
- */
-function sendServerError(res, err) {
-  const msg = String(err?.message || err || "Analyze failed");
-  return res.status(500).json({ error: { message: msg } });
-}
-
-/**
- * Read the requested app identifier from the request body.
- *
- * @param {import("express").Request} req
- *   Express request object.
- * @returns {string}
- *   Normalized requested app id.
- */
-function getRequestedAppId(req) {
-  return normalizeId(req?.body?.appId);
-}
-
-/**
- * Load the application registry and resolve one app by id.
- *
- * @param {string} appId
- *   Requested application identifier.
- * @returns {object | null}
- *   Matching application config, or `null` when not found.
- */
-function getAppById(appId) {
-  const apps = loadAppsConfig();
-  return findAppById(apps, appId);
 }
 
 /**
@@ -891,25 +814,16 @@ function buildAnalyzeResponse(runToken, appId, timestampIso, metrics) {
  *   Success or bad-request result.
  */
 function resolveAnalyzeApp(req) {
-  const appId = getRequestedAppId(req);
-  if (!appId) {
+  const result = resolveConfiguredApp(req?.body?.appId, { notFoundStatus: 400 });
+  if (!result.ok) {
     return {
       ok: false,
       kind: "bad-request",
-      payload: "Missing appId"
+      payload: result.message
     };
   }
 
-  const app = getAppById(appId);
-  if (!app) {
-    return {
-      ok: false,
-      kind: "bad-request",
-      payload: `Unknown appId: ${appId}`
-    };
-  }
-
-  return { ok: true, appId, app };
+  return result;
 }
 
 /**
@@ -1053,7 +967,7 @@ async function handleAnalyze(req, res) {
       buildAnalyzeResponse(context.runToken, context.appId, context.timestampIso, metrics)
     );
   } catch (e) {
-    return sendServerError(res, e);
+    return sendServerError(res, e, "Analyze failed");
   }
 }
 

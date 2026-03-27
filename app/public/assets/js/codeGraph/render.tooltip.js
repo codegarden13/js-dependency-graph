@@ -1,4 +1,6 @@
 
+import { escapeHtml } from "./shared.js";
+
 
 /**
  * CodeGraph tooltip content helpers.
@@ -46,7 +48,7 @@ export function buildTooltipHtml(d, opts = {}) {
 function getTooltipEscaper(opts = {}) {
   return typeof opts.escapeHtml === "function"
     ? opts.escapeHtml
-    : defaultEscapeHtml;
+    : escapeHtml;
 }
 
 /**
@@ -255,19 +257,4 @@ function defaultToSafeInt(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.floor(n));
-}
-
-/**
- * Default HTML escaper.
- *
- * @param {any} value
- * @returns {string}
- */
-function defaultEscapeHtml(value) {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\"/g, "&quot;")
-    .replace(/'/g, "&#39;");
 }

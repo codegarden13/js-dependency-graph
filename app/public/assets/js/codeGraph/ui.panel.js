@@ -1,3 +1,4 @@
+import { escapeHtml, normalizeLinkType } from "./shared.js";
 
 /**
  * CodeGraph legend/filter panel.
@@ -23,7 +24,7 @@ export function buildLegendFilterPanel(svgId, nodes, links, opts = {}) {
   const stateBySvgId = opts.stateBySvgId;
   const escape = typeof opts.escapeHtml === "function"
     ? opts.escapeHtml
-    : defaultEscapeHtml;
+    : escapeHtml;
 
   if (typeof getState !== "function") return;
   if (typeof dispatchFiltersChanged !== "function") return;
@@ -48,15 +49,6 @@ export function buildLegendFilterPanel(svgId, nodes, links, opts = {}) {
 
   dispatchFiltersChanged(id);
   updateLegendSummary(state);
-}
-
-function defaultEscapeHtml(value) {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\"/g, "&quot;")
-    .replace(/'/g, "&#39;");
 }
 
 function buildLegendPanelViewModel({ state, nodes, links, opts }) {
@@ -292,26 +284,25 @@ function createLegendItem(cfg) {
 function renderLegendPanel(vm, safe) {
   return `
     <div data-legend-layout="dense">
-      <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
-        <div class="small fw-semibold">Graph legend & filters</div>
-        <div class="d-flex flex-wrap align-items-center gap-2 small">
+      <div class="legendPanelToolbar mb-2">
+        <div class="legendPanelStats small">
           <span class="badge text-bg-light border">${safe(String(vm.totals.sectionCount))} sections</span>
           <span class="badge text-bg-light border">${safe(String(vm.totals.itemCount))} controls</span>
         </div>
+
+        <div class="legendPanelSearch">
+          <label for="legendFilterSearch" class="form-label small mb-1">Filter legend entries</label>
+          <input
+            id="legendFilterSearch"
+            type="search"
+            class="form-control form-control-sm"
+            placeholder="Search groups, links, or options"
+            autocomplete="off"
+          />
+        </div>
       </div>
 
-      <div class="mb-2">
-        <label for="legendFilterSearch" class="form-label small mb-1">Filter legend entries</label>
-        <input
-          id="legendFilterSearch"
-          type="search"
-          class="form-control form-control-sm"
-          placeholder="Search groups, links, or options"
-          autocomplete="off"
-        />
-      </div>
-
-      <div class="d-flex flex-column gap-2">
+      <div class="legendPanelSections">
         ${vm.sections.map((section) => renderSection(section, safe)).join("")}
       </div>
 
@@ -344,21 +335,21 @@ function renderLegendItem(item, safe) {
 
   return `
     <label
-      class="d-flex align-items-center justify-content-between gap-2 px-2 py-1 border rounded legend-filter-item"
+      class="legend-filter-item"
       data-cg-name="${safe(name)}"
       data-legend-title="${safe(item.title || item.label)}"
       data-legend-text="${safe(item.description || "")}" 
       data-legend-search="${safe(`${item.label} ${item.title || ""} ${item.description || ""} ${item.kind}`.toLowerCase())}"
     >
-      <span class="d-flex align-items-center gap-2 flex-grow-1 min-w-0">
+      <span class="legendFilterMain">
         <input
           type="checkbox"
-          class="form-check-input mt-0"
+          class="legendFilterCheckbox"
           data-cg-name="${safe(name)}"
           ${item.checked ? "checked" : ""}
         />
         ${badgeHtml}
-        <span class="small text-truncate flex-grow-1">${safe(item.label)}</span>
+        <span class="small legendFilterLabel">${safe(item.label)}</span>
         <span class="badge rounded-pill text-bg-light border text-uppercase" style="font-size:10px">${safe(item.kind)}</span>
       </span>
       ${metaHtml}
@@ -368,7 +359,7 @@ function renderLegendItem(item, safe) {
 
 function renderItemMeta(item, safe) {
   if (!Number.isFinite(item.count)) return "";
-  return `<span class="badge rounded-pill text-bg-light border">${safe(String(item.count))}</span>`;
+  return `<span class="badge rounded-pill text-bg-light border legendFilterMeta">${safe(String(item.count))}</span>`;
 }
 
 function renderColorDot(color, safe) {
@@ -397,40 +388,11 @@ function countNodesByGroup(list, group) {
 function countLinksByType(list, type) {
   let count = 0;
   for (const link of list || []) {
-    const linkType = resolveLegendLinkType(link);
+    const linkType = normalizeLinkType(link, "use");
     if (linkType !== type) continue;
     count += 1;
   }
   return count;
-}
-
-function resolveLegendLinkType(link) {
-  const raw = firstNonEmptyLegendString(
-    link?.type,
-    link?.edgeType,
-    link?.relation,
-    link?.rel,
-    link?.kind,
-    link?.label
-  ).toLowerCase();
-
-  if (!raw) return "use";
-  if (raw.includes("include")) return "include";
-  if (raw.includes("call")) return "call";
-  if (raw.includes("extend")) return "extends";
-  if (raw.includes("inherit")) return "extends";
-  if (raw.includes("import")) return "use";
-  if (raw.includes("use")) return "use";
-  return raw;
-}
-
-function firstNonEmptyLegendString(...values) {
-  for (const value of values) {
-    if (typeof value !== "string") continue;
-    const trimmed = value.trim();
-    if (trimmed) return trimmed;
-  }
-  return "";
 }
 
 function bindLegendPanelEvents(root, id, deps) {

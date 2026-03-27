@@ -22,6 +22,7 @@
 
 
 
+import { escapeHtml, normalizeLinkType } from "./shared.js";
 import { buildLegendFilterPanel as buildLegendFilterPanelModule } from "./ui.panel.js";
 
 // ---------------------------------------------------------------------------
@@ -146,25 +147,11 @@ export function setState(svgId, patch) {
 // Utilities
 // ---------------------------------------------------------------------------
 
-export function escapeHtml(s) {
-  return String(s ?? "").replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
-  );
-}
-
-
 function hasOwn(obj, key) {
   return Boolean(obj) && Object.prototype.hasOwnProperty.call(obj, key);
 }
 
-function firstNonEmptyString(...values) {
-  for (const value of values) {
-    if (typeof value !== "string") continue;
-    const trimmed = value.trim();
-    if (trimmed) return trimmed;
-  }
-  return "";
-}
+export { escapeHtml };
 
 export function dispatchFiltersChanged(svgId) {
   const detail = { svgId: String(svgId || ""), state: getState(svgId) };
@@ -476,23 +463,7 @@ export function attachLegendFilterWiring(svgId, nodes, links, sels) {
   }
 
   function readLinkFilterType(l) {
-    const rawType = firstNonEmptyString(
-      l?.type,
-      l?.edgeType,
-      l?.relation,
-      l?.rel,
-      l?.kind,
-      l?.label
-    ).toLowerCase();
-
-    if (!rawType) return "use";
-    if (rawType.includes("include")) return "include";
-    if (rawType.includes("call")) return "call";
-    if (rawType.includes("extend")) return "extends";
-    if (rawType.includes("inherit")) return "extends";
-    if (rawType.includes("import")) return "use";
-    if (rawType.includes("use")) return "use";
-    return rawType;
+    return normalizeLinkType(l, "use");
   }
 
   function isHiddenByLinkTypeFilter(l, st) {

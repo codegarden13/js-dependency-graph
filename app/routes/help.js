@@ -21,6 +21,10 @@
  *     app/public/readme.md (case-insensitive fallback)
  */
 
+
+
+//TODO:Hilfe aktivieren
+
 import express from "express";
 import path from "node:path";
 import fs from "node:fs";

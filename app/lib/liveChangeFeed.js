@@ -256,8 +256,7 @@ async function startWatcher(rootAbs) {
   const emit = (ev, absPath) => {
     const id = toRelPosix(rootAbs, absPath);
 
-    // Root itself has no stable graph node id and out-of-root paths are ignored.
-    if (!id || id === "." || id.startsWith("..")) return;
+    if (!isWatchableRelativeId(id)) return;
 
     broadcast("fs-change", {
       ev,
@@ -283,6 +282,23 @@ async function startWatcher(rootAbs) {
         runToken: activeAnalysis.runToken
       });
     });
+}
+
+/**
+ * Return true when a watcher path can be mapped to a stable graph-relative id.
+ *
+ * Invalid ids are:
+ * - empty / null
+ * - the watched root itself (`.`)
+ * - anything outside the active root (`..` prefix)
+ *
+ * @param {string | null | undefined} id
+ */
+function isWatchableRelativeId(id) {
+  if (!id) return false;
+  if (id === ".") return false;
+  if (id.startsWith("..")) return false;
+  return true;
 }
 
 // -----------------------------------------------------------------------------

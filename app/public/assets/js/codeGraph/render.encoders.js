@@ -4,6 +4,7 @@
  * Owns visual encoding helpers that derive colors, radii, strokes, and node
  * classification from normalized graph nodes.
  */
+import { normalizeLinkType } from "./shared.js";
 
 /**
  * Central visual encoding schema for graph nodes.
@@ -73,9 +74,17 @@ const GRAPH_ENCODING = {
     useColor: "var(--cg-edge-use, rgba(168,85,247,0.30))",
     includeColor: "var(--cg-edge-include, rgba(245,158,11,0.34))",
     extendsColor: "var(--cg-edge-extends, rgba(6,214,160,0.34))",
+    resourceColors: {
+      doc: "var(--cg-edge-resource-doc, rgba(46,196,182,0.16))",
+      data: "var(--cg-edge-resource-data, rgba(255,153,51,0.16))",
+      image: "var(--cg-edge-resource-image, rgba(157,78,221,0.18))",
+      asset: "var(--cg-edge-resource-asset, rgba(46,196,182,0.14))"
+    },
     defaultWidth: 1,
     minWidth: 1,
     maxWidth: 4,
+    resourceMinWidth: 0.4,
+    resourceMaxWidth: 1,
     weightReference: 12
   }
 };
@@ -115,21 +124,6 @@ function firstTruthy(...vals) {
   return null;
 }
 
-/** Read the first non-empty trimmed string from a candidate list. */
-function firstNonEmptyString(...values) {
-  for (const value of values) {
-    if (typeof value !== "string") continue;
-    const trimmed = value.trim();
-    if (trimmed) return trimmed;
-  }
-  return "";
-}
-
-/** Read a case-insensitive normalized token. */
-function normalizeToken(...values) {
-  return firstNonEmptyString(...values).toLowerCase();
-}
-
 const CSS_COLOR_CACHE = new Map();
 const NODE_COUPLING_CACHE = new WeakMap();
 const NODE_CHILD_FUNCTIONS_CACHE = new WeakMap();
@@ -157,6 +151,58 @@ function resolveCssColor(value) {
   const resolved = cssValue || String(fallback || "").trim();
   CSS_COLOR_CACHE.set(trimmed, resolved);
   return resolved;
+}
+
+function readEdgeEndpointId(endpoint) {
+  if (endpoint && typeof endpoint === "object") {
+    return readTrimmedString(endpoint, "id");
+  }
+
+  return String(endpoint || "").trim();
+}
+
+function resolveEdgeEndpointNode(endpoint, nodeById) {
+  if (endpoint && typeof endpoint === "object") return endpoint;
+
+  const id = readEdgeEndpointId(endpoint);
+  if (!id || !(nodeById instanceof Map)) return null;
+  return nodeById.get(id) || null;
+}
+
+function readEdgeTargetNode(edge, nodeById = null) {
+  return resolveEdgeEndpointNode(edge?.target, nodeById);
+}
+
+function readResourceEdgeArt(node) {
+  const kind = readTrimmedString(node, "kind");
+  const type = readTrimmedString(node, "type");
+  const group = readTrimmedString(node, "group");
+
+  if (group === "doc" || group === "data" || group === "image") return group;
+  if (kind === "asset" || type === "asset") return "asset";
+  return "";
+}
+
+function getResourceEdgeColor(edge, nodeById = null) {
+  const targetNode = readEdgeTargetNode(edge, nodeById);
+  const art = readResourceEdgeArt(targetNode);
+  if (!art) return null;
+
+  return resolveCssColor(
+    lookupOrNull(art, GRAPH_ENCODING.edge.resourceColors) || GRAPH_ENCODING.edge.defaultColor
+  );
+}
+
+function buildNodeLookup(nodes) {
+  const map = new Map();
+
+  for (const node of nodes || []) {
+    const id = readTrimmedString(node, "id");
+    if (!id) continue;
+    map.set(id, node);
+  }
+
+  return map;
 }
 
 /** Pick the semantic base color for a node. */
@@ -447,32 +493,7 @@ function getEdgeSemanticType(edge) {
     if (cached) return cached;
   }
 
-  const rawType = normalizeToken(
-    edge?.edgeType,
-    edge?.relation,
-    edge?.rel,
-    edge?.kind,
-    edge?.type,
-    edge?.label
-  );
-
-  let normalizedType = "default";
-
-  if (!rawType) {
-    normalizedType = "default";
-  } else if (rawType.includes("include")) {
-    normalizedType = "include";
-  } else if (rawType.includes("call")) {
-    normalizedType = "call";
-  } else if (rawType.includes("extend")) {
-    normalizedType = "extends";
-  } else if (rawType.includes("inherit")) {
-    normalizedType = "extends";
-  } else if (rawType.includes("import")) {
-    normalizedType = "use";
-  } else if (rawType.includes("use")) {
-    normalizedType = "use";
-  }
+  const normalizedType = normalizeLinkType(edge, "default");
 
   if (edge && typeof edge === "object") {
     EDGE_TYPE_CACHE.set(edge, normalizedType);
@@ -622,7 +643,10 @@ export function computeNodeStrokeWidth(d) {
   }
 }
 
-export function computeEdgeColor(edge) {
+export function computeEdgeColor(edge, nodeById = null) {
+  const resourceEdgeColor = getResourceEdgeColor(edge, nodeById);
+  if (resourceEdgeColor) return resourceEdgeColor;
+
   if (edge?._changed) return resolveCssColor(GRAPH_ENCODING.edge.changedColor);
 
   switch (getEdgeSemanticType(edge)) {
@@ -640,7 +664,16 @@ export function computeEdgeColor(edge) {
 }
 
 /** Compute the edge stroke width from its numeric weight. */
-export function computeEdgeWidth(edge) {
+export function computeEdgeWidth(edge, nodeById = null) {
+  if (readResourceEdgeArt(readEdgeTargetNode(edge, nodeById))) {
+    const weight = readEdgeWeight(edge);
+    if (!weight) return GRAPH_ENCODING.edge.resourceMinWidth;
+
+    const spread01 = normalizeEdgeWeight01(weight);
+    return GRAPH_ENCODING.edge.resourceMinWidth
+      + ((GRAPH_ENCODING.edge.resourceMaxWidth - GRAPH_ENCODING.edge.resourceMinWidth) * spread01);
+  }
+
   if (edge?._changed) return GRAPH_ENCODING.edge.maxWidth;
 
   const weight = readEdgeWeight(edge);
@@ -653,7 +686,7 @@ export function computeEdgeWidth(edge) {
 
 /** Assemble the node encoder bundle used by render and repaint. */
 export function makeEncoders(nodes) {
-  void nodes;
+  const nodeById = buildNodeLookup(nodes);
 
   return {
     getNodeColor: computeNodeColor,
@@ -661,7 +694,7 @@ export function makeEncoders(nodes) {
     getNodeStroke: computeNodeStroke,
     getNodeStrokeWidth: computeNodeStrokeWidth,
     getFunctionRingWidth,
-    getEdgeColor: computeEdgeColor,
-    getEdgeWidth: computeEdgeWidth
+    getEdgeColor: (edge) => computeEdgeColor(edge, nodeById),
+    getEdgeWidth: (edge) => computeEdgeWidth(edge, nodeById)
   };
 }

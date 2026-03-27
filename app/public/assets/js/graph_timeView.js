@@ -22,6 +22,8 @@
 "use strict";
 
 
+
+
 let STACK_KEYS = [];
 const STACK_COLOR_TOKENS = {
   loc: "--cg-node-kind-service",

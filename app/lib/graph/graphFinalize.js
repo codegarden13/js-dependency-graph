@@ -10,6 +10,8 @@
  * - finalizeGraphStats(nodes, links, entryId)
  */
 
+import { normalizeId } from "../stringUtils.js";
+
 /**
  * Finalize derived graph stats on the backend.
  *
@@ -47,9 +49,7 @@ export function finalizeGraphStats(nodes, links, entryId) {
 /* Internals                                                                  */
 /* ========================================================================== */
 
-function normalizeId(x) {
-  return String(x || "").trim();
-}
+
 
 function getEndpointId(x) {
   if (!x) return "";

@@ -1,4 +1,4 @@
-# NodeAnalyzer
+# appFlow - my personal code design UI.
 
 Interactive Architecture & Dependency Visualization for Complex JavaScript & TypeScript Systems.
 

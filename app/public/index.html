@@ -27,9 +27,31 @@
     </div>
 
     <div class="row g-3 g-lg-4 align-items-start">
-      <!-- LEFT: readme + selection -->
-      <aside class="col-12 col-xl-3 order-3 order-xl-1">
+      <!-- LEFT: apps + readme + selection -->
+      <aside class="col-12 col-xl-3 order-1 order-xl-1">
         <div class="d-flex flex-column gap-3">
+          <div class="accordion" id="leftTopAccordion">
+            <div class="accordion-item">
+              <h2 class="accordion-header" id="accAppsHdr">
+                <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse"
+                  data-bs-target="#accApps" aria-expanded="false" aria-controls="accApps">
+                  <span class="small fw-semibold" id="currentAppSummary">Apps</span>
+                </button>
+              </h2>
+              <div id="accApps" class="accordion-collapse collapse" aria-labelledby="accAppsHdr"
+                data-bs-parent="#leftTopAccordion">
+                <div class="accordion-body p-2">
+                  <div id="appList" class="appsList appsScroll" role="list">
+                    <div class="text-secondary small px-2 py-2">Loading…</div>
+                  </div>
+
+                  <!-- Hidden state used by runAnalysis() -->
+                  <input type="hidden" id="appSelect" value="" />
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div class="border rounded shadow-sm bg-body overflow-hidden">
             <div
               class="px-3 py-2 border-bottom bg-body-tertiary d-flex align-items-center justify-content-between gap-2">
@@ -65,32 +87,8 @@
         </div>
       </aside>
 
-      <!-- CENTER: app picker + graph -->
-      <main class="col-12 col-lg-8 col-xl-6 order-1 order-xl-2">
-        <div class="accordion mb-3" id="leftTopAccordion">
-          <div class="accordion-item">
-            <h2 class="accordion-header" id="accAppsHdr">
-              <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse"
-                data-bs-target="#accApps" aria-expanded="false" aria-controls="accApps">
-                <span class="small fw-semibold" id="currentAppSummary">Apps</span>
-              </button>
-            </h2>
-            <div id="accApps" class="accordion-collapse collapse" aria-labelledby="accAppsHdr"
-              data-bs-parent="#leftTopAccordion">
-              <div class="accordion-body p-2">
-                <div id="appList" class="appsList appsScroll" role="list">
-                  <div class="text-secondary small px-2 py-2">Loading…</div>
-                </div>
-
-                <!-- Hidden state used by runAnalysis() -->
-                <input type="hidden" id="appSelect" value="" />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- graphs -->
-
+      <!-- CENTER: graph -->
+      <main class="col-12 col-xl-9 order-2 order-xl-2">
         <div class="card shadow-sm">
           <div class="card-header py-2 d-flex align-items-center justify-content-between">
             <span class="small fw-semibold" id="graphInfoHeader">Workspace</span>
@@ -163,6 +161,54 @@
                       <svg id="graphTimeView" width="1200" height="800"></svg>
                     </div>
                   </div>
+
+                  <div class="accordion graphToolsAccordion mt-2" id="graphToolsAccordion">
+                    <div class="accordion-item">
+                      <h2 class="accordion-header" id="graphToolsHeader">
+                        <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse"
+                          data-bs-target="#graphToolsBody" aria-expanded="false" aria-controls="graphToolsBody">
+                          <span class="graphToolsSummary">
+                            <span class="small fw-semibold">Legend &amp; Filter</span>
+                            <span class="small text-secondary d-block" id="filterSummary">architecture</span>
+                          </span>
+                        </button>
+                      </h2>
+                      <div id="graphToolsBody" class="accordion-collapse collapse" aria-labelledby="graphToolsHeader"
+                        data-bs-parent="#graphToolsAccordion">
+                        <div class="accordion-body p-2">
+                          <div class="graphToolsGrid">
+                            <section class="graphToolSection">
+                              <div class="d-flex align-items-center justify-content-between gap-2 mb-1">
+                                <label for="graphZoomSlider" class="form-label small fw-semibold mb-0">Graph zoom</label>
+                                <span class="small text-secondary fw-semibold" id="graphZoomValue">100%</span>
+                              </div>
+                              <input id="graphZoomSlider" class="form-range graphZoomSlider" type="range" min="40"
+                                max="220" step="5" value="100" aria-describedby="graphZoomHelp" disabled />
+                              <div class="form-text small mb-0" id="graphZoomHelp">
+                                Zoom the standard graph with the slider instead of wheel or trackpad gestures.
+                              </div>
+                            </section>
+
+                            <section class="graphToolSection">
+                              <label for="graphTextFilterMode" class="form-label small fw-semibold mb-1">Text filter</label>
+                              <select id="graphTextFilterMode" class="form-select form-select-sm"
+                                aria-label="Text filter mode">
+                                <option value="comments_readme">Kommentare und readme</option>
+                                <option value="functions">Funktionsnamen und Funktionsinhalte</option>
+                              </select>
+                              <div class="form-text small mb-0">
+                                Bereitet textbasierte Filter für unterschiedliche Analysemodi vor.
+                              </div>
+                            </section>
+                          </div>
+
+                          <div id="legendFilterPanel">
+                            <div class="text-secondary small">Run Analyze to load graph filters.</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -177,33 +223,6 @@
         </div>
       </main>
 
-      <!-- RIGHT: legend + recommendations -->
-      <aside class="col-12 col-lg-4 col-xl-3 order-2 order-xl-3">
-        <div class="d-flex flex-column gap-3">
-          <div class="border rounded shadow-sm bg-body overflow-hidden">
-            <div
-              class="px-3 py-2 border-bottom bg-body-tertiary d-flex align-items-center justify-content-between gap-2">
-              <div>
-                <div class="small fw-semibold">Legend &amp; Filter</div>
-                <div class="small text-secondary" id="filterSummary">architecture</div>
-              </div>
-            </div>
-
-            <div class="p-3">
-              <div class="mb-3">
-                <label for="graphTextFilterMode" class="form-label small fw-semibold mb-1">Text filter</label>
-                <select id="graphTextFilterMode" class="form-select form-select-sm" aria-label="Text filter mode">
-                  <option value="comments_readme">Kommentare und readme</option>
-                  <option value="functions">Funktionsnamen und Funktionsinhalte</option>
-                </select>
-                <div class="form-text small">Bereitet textbasierte Filter für unterschiedliche Analysemodi vor.</div>
-              </div>
-
-              <div id="legendFilterPanel"></div>
-            </div>
-          </div>
-        </div>
-      </aside>
     </div>
   </div>
 

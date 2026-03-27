@@ -54,6 +54,111 @@ body {
   overflow: visible;
 }
 
+.graphToolsAccordion .accordion-button {
+  align-items: center;
+}
+
+.graphToolsSummary {
+  display: inline-flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.graphToolsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.graphToolSection {
+  padding: 10px 12px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 12px;
+  background: rgba(248, 249, 250, 0.8);
+}
+
+.graphZoomSlider {
+  width: 100%;
+}
+
+#legendFilterPanel {
+  display: grid;
+  gap: 8px;
+}
+
+.legendPanelToolbar {
+  display: grid;
+  grid-template-columns: auto minmax(260px, 1fr);
+  gap: 8px;
+  align-items: end;
+}
+
+.legendPanelStats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.legendPanelSearch {
+  min-width: 0;
+}
+
+.legendPanelSections {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 8px;
+}
+
+.legend-filter-item {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.legendFilterMain {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.legendFilterCheckbox {
+  margin: 0;
+  inline-size: 14px;
+  block-size: 14px;
+  flex: 0 0 auto;
+  float: none;
+  accent-color: #0d6efd;
+}
+
+.legendFilterLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.legendFilterMeta {
+  flex-shrink: 0;
+}
+
+@media (max-width: 991.98px) {
+  .graphToolsGrid,
+  .legendPanelToolbar,
+  .legendPanelSections {
+    grid-template-columns: 1fr;
+  }
+}
+
 .panelScroll pre,
 .panelScroll code,
 .panel-scroll pre,

@@ -10,6 +10,7 @@ import { wireLegendAndFilters } from "./codeGraph/ui.filters.js";
 import { assertCodeStructureDeps, buildGraphDiagnosticsPanel } from "./codeGraph/ui.diagnostics.js";
 import { createSimulation } from "./codeGraph/render.simulation.js";
 import { buildTooltipHtml } from "./codeGraph/render.tooltip.js";
+import { normalizeLinkType } from "./codeGraph/shared.js";
 import {
   makeEncoders,
   isFunctionNode,
@@ -81,45 +82,12 @@ const LINK_TYPE_COLORS = {
 
 // Highlight color for exported function nodes
 const EXPORTED_FUNCTION_COLOR = "var(--graph-exported-function-ring)";
+const GRAPH_ZOOM_MIN = 0.4;
+const GRAPH_ZOOM_MAX = 2.2;
+const GRAPH_ZOOM_DEFAULT = 1;
 
 // Stable cluster palette for hull rendering.
 const clusterColor = d3.scaleOrdinal(d3.schemeSet3);
-
-/**
- * Read the first non-empty string from a candidate list.
- * Keeps link type handling aligned with legend/filter normalization.
- */
-function firstNonEmptyString(...values) {
-  for (const value of values) {
-    if (typeof value !== "string") continue;
-    const trimmed = value.trim();
-    if (trimmed) return trimmed;
-  }
-  return "";
-}
-
-/**
- * Normalize raw edge/link type strings to the canonical renderer tokens.
- */
-function readRenderedLinkType(link) {
-  const rawType = firstNonEmptyString(
-    link?.type,
-    link?.edgeType,
-    link?.relation,
-    link?.rel,
-    link?.kind,
-    link?.label
-  ).toLowerCase();
-
-  if (!rawType) return "use";
-  if (rawType.includes("include")) return "include";
-  if (rawType.includes("call")) return "call";
-  if (rawType.includes("extend")) return "extends";
-  if (rawType.includes("inherit")) return "extends";
-  if (rawType.includes("import")) return "use";
-  if (rawType.includes("use")) return "use";
-  return rawType;
-}
 
 /**
  * Show a browser alert once per page-load for a given key.
@@ -216,11 +184,50 @@ export function initcodeStructureChart(svgId, metrics, opts = {}) {
    * Attach pan/zoom behavior to the root SVG.
    */
   function installZoom(svg, zoomLayer) {
-    svg.call(
-      d3.zoom()
-        .scaleExtent([0.1, 3])
-        .on("zoom", (event) => zoomLayer.attr("transform", event.transform))
-    );
+    let currentTransform = d3.zoomIdentity;
+
+    const zoom = d3.zoom()
+      .scaleExtent([GRAPH_ZOOM_MIN, GRAPH_ZOOM_MAX])
+      .filter((event) => {
+        const type = String(event?.type || "");
+        if (type === "wheel" || type === "dblclick") return false;
+        if (type.startsWith("touch")) return false;
+        return !event?.button;
+      })
+      .on("zoom", (event) => {
+        currentTransform = event.transform;
+        zoomLayer.attr("transform", currentTransform);
+      });
+
+    svg.call(zoom);
+    zoomLayer.attr("transform", currentTransform);
+
+    function clampZoomScale(value) {
+      const scale = Number(value);
+      if (!Number.isFinite(scale)) return GRAPH_ZOOM_DEFAULT;
+      return Math.max(GRAPH_ZOOM_MIN, Math.min(GRAPH_ZOOM_MAX, scale));
+    }
+
+    function getZoom() {
+      const scale = Number(currentTransform?.k);
+      return Number.isFinite(scale) ? scale : GRAPH_ZOOM_DEFAULT;
+    }
+
+    function setZoom(value) {
+      const nextScale = clampZoomScale(value);
+      svg.call(zoom.scaleTo, nextScale);
+      return nextScale;
+    }
+
+    function destroyZoom() {
+      try { svg.on(".zoom", null); } catch { }
+    }
+
+    return {
+      getZoom,
+      setZoom,
+      destroyZoom
+    };
   }
 
   /**
@@ -382,7 +389,7 @@ export function initcodeStructureChart(svgId, metrics, opts = {}) {
   function renderLinks(linkGroup, links, enc) {
     const getEdgeColor = (typeof enc?.getEdgeColor === "function")
       ? enc.getEdgeColor
-      : ((d) => LINK_TYPE_COLORS[readRenderedLinkType(d)] || LINK_TYPE_COLORS.default);
+      : ((d) => LINK_TYPE_COLORS[normalizeLinkType(d, "use")] || LINK_TYPE_COLORS.default);
 
     const getEdgeWidth = (typeof enc?.getEdgeWidth === "function")
       ? enc.getEdgeWidth
@@ -392,11 +399,11 @@ export function initcodeStructureChart(svgId, metrics, opts = {}) {
       .data(links)
       .enter()
       .append("line")
-      .attr("class", (d) => `link ${readRenderedLinkType(d)}`)
-      .attr("data-link-type", (d) => readRenderedLinkType(d))
+      .attr("class", (d) => `link ${normalizeLinkType(d, "use")}`)
+      .attr("data-link-type", (d) => normalizeLinkType(d, "use"))
       .attr("stroke", (d) => getEdgeColor(d))
       .attr("stroke-width", (d) => getEdgeWidth(d))
-      .attr("marker-end", (d) => (readRenderedLinkType(d) === "include" ? null : "url(#arrowhead)"));
+      .attr("marker-end", (d) => (normalizeLinkType(d, "use") === "include" ? null : "url(#arrowhead)"));
   }
 
   /**
@@ -797,7 +804,7 @@ export function initcodeStructureChart(svgId, metrics, opts = {}) {
   const layers = buildLayers(svg);
   const tooltip = getTooltipOrNull();
 
-  installZoom(svg, layers.zoomLayer);
+  const zoomController = installZoom(svg, layers.zoomLayer);
   defineArrowMarker(svg);
 
   // -------------------------------------------------------------------
@@ -922,12 +929,22 @@ export function initcodeStructureChart(svgId, metrics, opts = {}) {
    * Tear down simulation, tooltip, and SVG content for this graph instance.
    */
   function destroy() {
+    try { zoomController?.destroyZoom?.(); } catch { }
     try { simulation?.stop?.(); } catch { }
     try { hideTooltip(tooltip); } catch { }
     try { svg?.selectAll?.("*")?.remove?.(); } catch { }
   }
 
-  return { svg, nodes, links, simulation, markChanged, destroy };
+  return {
+    svg,
+    nodes,
+    links,
+    simulation,
+    markChanged,
+    getZoom: zoomController?.getZoom,
+    setZoom: zoomController?.setZoom,
+    destroy
+  };
 };
 
 

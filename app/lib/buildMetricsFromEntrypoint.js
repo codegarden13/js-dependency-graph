@@ -83,6 +83,7 @@ import { applyAutoRefs } from "./autoMode.js";
 import { ensureCanonicalNodeFields, DEFAULT_LAYER_ORDER, defaultLayerY } from "./nodeClassification.js";
 import { finalizeGraphStats } from "./graph/graphFinalize.js";
 import { isInsideRoot } from "./fsPaths.js";
+import { toTrimmedString} from "../lib/stringUtils.js"
 
 
 /* ========================================================================== */
@@ -466,17 +467,7 @@ function forEachParsedFunction(parsed, fn) {
   for (const item of fns) fn(item);
 }
 
-/**
- * Normalize a loose value to a trimmed string.
- *
- * @param {unknown} v
- *   Candidate value.
- * @returns {string}
- *   Trimmed string representation, or an empty string.
- */
-function toTrimmedString(v) {
-  return String(v || "").trim();
-}
+
 
 /**
  * Convert a loose value to a finite non-negative number.
@@ -938,6 +929,7 @@ function markUnusedFunctions(nodes) {
  *   Canonical graph nodes mutated in place.
  */
 function enforceCanonicalFields(nodes) {
+  console.log("START: buildMetricsFromEntrypoint: enforceCanonicalFields");
   for (const n of nodes) {
     ensureCanonicalNodeFields(n);
 

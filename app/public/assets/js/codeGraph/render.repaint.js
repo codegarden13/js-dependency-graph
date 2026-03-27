@@ -12,6 +12,7 @@
  * - exported / unused emphasis
  * - any host-triggered state refresh that only needs style updates
  */
+import { clamp01 } from "./shared.js";
 
 /**
  * Read the current body fill for one node.
@@ -291,15 +292,6 @@ function isHotspotNode(d) {
 function isTopHotspotNode(d) {
   const rank = Number(d?._hotspotRank);
   return Number.isFinite(rank) && rank > 0 && rank <= 5;
-}
-
-/** Clamp a scalar into the 0..1 range. */
-function clamp01(v) {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return 0;
-  if (n <= 0) return 0;
-  if (n >= 1) return 1;
-  return n;
 }
 
 /** Read hotspot rank as a safe number. */

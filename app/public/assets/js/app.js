@@ -60,6 +60,7 @@ let graphController = null;
 let activeGraphAppId = "";
 let appInfoLoadToken = 0;
 let freezeInFlight = false;
+let graphZoomUiBound = false;
 
 /* ======================================================================= */
 /* DOM helpers                                                              */
@@ -112,6 +113,64 @@ function ensurePanelsExist() {
     return false;
   }
   return true;
+}
+
+function getGraphZoomSlider() {
+  return /** @type {HTMLInputElement|null} */ (byId("graphZoomSlider"));
+}
+
+function getGraphZoomPercent(scale) {
+  const numericScale = Number(scale);
+  if (!Number.isFinite(numericScale) || numericScale <= 0) return 100;
+  return Math.round(numericScale * 100);
+}
+
+function updateGraphZoomUi(scale = 1, disabled = true) {
+  const slider = getGraphZoomSlider();
+  const percent = getGraphZoomPercent(scale);
+
+  if (slider) {
+    slider.value = String(percent);
+    slider.disabled = disabled;
+  }
+
+  setTextById("graphZoomValue", `${percent}%`);
+}
+
+function syncGraphZoomUi() {
+  const scale = graphController?.getZoom?.();
+  if (Number.isFinite(scale)) {
+    updateGraphZoomUi(scale, false);
+    return;
+  }
+
+  updateGraphZoomUi(1, true);
+}
+
+function handleGraphZoomInput(ev) {
+  const slider = ev?.target;
+  if (!(slider instanceof HTMLInputElement)) return;
+
+  const controller = graphController;
+  if (!controller?.setZoom) {
+    updateGraphZoomUi(1, true);
+    return;
+  }
+
+  const requestedScale = Number(slider.value) / 100;
+  const appliedScale = controller.setZoom(requestedScale);
+  updateGraphZoomUi(appliedScale, false);
+}
+
+function bindGraphZoomUi() {
+  if (graphZoomUiBound) return;
+
+  const slider = getGraphZoomSlider();
+  if (!slider) return;
+
+  slider.addEventListener("input", handleGraphZoomInput);
+  graphZoomUiBound = true;
+  syncGraphZoomUi();
 }
 
 
@@ -1405,6 +1464,7 @@ function resetGraphViews() {
   clearSvgContent("graphTimeView");
   updateCurrentAppSummary(null);
   updateGraphHeader(null);
+  syncGraphZoomUi();
 }
 
 function renderGraph(metrics) {
@@ -1420,6 +1480,7 @@ function renderGraph(metrics) {
   graphController = initcodeStructureChart("codeStructureSvg", metrics, {
     onNodeSelected
   });
+  syncGraphZoomUi();
 }
 
 /**
@@ -1694,6 +1755,7 @@ async function runAnalysis() {
  */
 function init() {
   ensurePanelsExist();
+  bindGraphZoomUi();
   updateCurrentAppSummary(null);
   updateGraphHeader(null);
   startLiveEvents();

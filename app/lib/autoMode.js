@@ -94,7 +94,7 @@ export const AUTO_ASSET_EXT_ALLOW = new Set([
   // code
   ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx",
   // data
-  ".json", ".jsonc", ".csv", ".tsv", ".yml", ".yaml", ".env", ".env.local", ".sql",
+  ".json", ".jsonc", ".csv", ".tsv", ".yml", ".yaml", ".env", ".env.local", ".sql","csv",
   // docs (also parseable)
   ".md", ".txt", ".html", ".htm", ".css",
   // images
