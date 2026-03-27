@@ -31,7 +31,8 @@
       <aside class="col-12 col-xl-3 order-3 order-xl-1">
         <div class="d-flex flex-column gap-3">
           <div class="border rounded shadow-sm bg-body overflow-hidden">
-            <div class="px-3 py-2 border-bottom bg-body-tertiary d-flex align-items-center justify-content-between gap-2">
+            <div
+              class="px-3 py-2 border-bottom bg-body-tertiary d-flex align-items-center justify-content-between gap-2">
               <div>
                 <div class="small fw-semibold">README</div>
                 <div class="small text-secondary" id="readmeSummary">none</div>
@@ -41,7 +42,8 @@
           </div>
 
           <div class="border rounded shadow-sm bg-body overflow-hidden">
-            <div class="px-3 py-2 border-bottom bg-body-tertiary d-flex align-items-center justify-content-between gap-2">
+            <div
+              class="px-3 py-2 border-bottom bg-body-tertiary d-flex align-items-center justify-content-between gap-2">
               <div>
                 <div class="small fw-semibold">Selection</div>
                 <div class="small text-secondary" id="selectionSummary">none</div>
@@ -51,7 +53,8 @@
           </div>
 
           <div class="border rounded shadow-sm bg-body overflow-hidden">
-            <div class="px-3 py-2 border-bottom bg-body-tertiary d-flex align-items-center justify-content-between gap-2">
+            <div
+              class="px-3 py-2 border-bottom bg-body-tertiary d-flex align-items-center justify-content-between gap-2">
               <div>
                 <div class="small fw-semibold">Recommendations</div>
                 <span class="badge bg-secondary ms-2" id="recoCountBadge">0</span>
@@ -69,7 +72,7 @@
             <h2 class="accordion-header" id="accAppsHdr">
               <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse"
                 data-bs-target="#accApps" aria-expanded="false" aria-controls="accApps">
-                <span class="small fw-semibold" id="currentAppSummary">Current app</span>
+                <span class="small fw-semibold" id="currentAppSummary">Apps</span>
               </button>
             </h2>
             <div id="accApps" class="accordion-collapse collapse" aria-labelledby="accAppsHdr"
@@ -86,100 +89,88 @@
           </div>
         </div>
 
-         <!-- graphs -->
+        <!-- graphs -->
 
         <div class="card shadow-sm">
           <div class="card-header py-2 d-flex align-items-center justify-content-between">
-            <span class="small fw-semibold" id="graphInfoHeader">Graph</span>
-            <span class="small text-secondary">Click a node to inspect</span>
+            <span class="small fw-semibold" id="graphInfoHeader">Workspace</span>
+            <span class="small text-secondary" id="workspaceHint">Graph and app details</span>
           </div>
 
           <div class="card-header py-0 border-top-0 bg-body">
-            <ul class="nav nav-tabs card-header-tabs" id="graphTabs" role="tablist">
+            <ul class="nav nav-tabs card-header-tabs" id="workspaceTabs" role="tablist">
               <li class="nav-item" role="presentation">
-                <button
-                  class="nav-link active small"
-                  id="graph-main-tab"
-                  data-bs-toggle="tab"
-                  data-bs-target="#graph-main-pane"
-                  type="button"
-                  role="tab"
-                  aria-controls="graph-main-pane"
-                  aria-selected="true"
-                >
-                  Standard graph
+                <button class="nav-link active small" id="workspace-graph-tab" data-bs-toggle="tab"
+                  data-bs-target="#workspace-graph-pane" type="button" role="tab" aria-controls="workspace-graph-pane"
+                  aria-selected="true">
+                  Graph
                 </button>
               </li>
               <li class="nav-item" role="presentation">
-                <button
-                  class="nav-link small"
-                  id="graph-MRI-tab"
-                  data-bs-toggle="tab"
-                  data-bs-target="#graph-MRI-pane"
-                  type="button"
-                  role="tab"
-                  aria-controls="graph-MRI-pane"
-                  aria-selected="false"
-                >
-                  MRI
-                </button>
-              </li>
-              <li class="nav-item" role="presentation">
-                <button
-                  class="nav-link small"
-                  id="graph-time-tab"
-                  data-bs-toggle="tab"
-                  data-bs-target="#graph-time-pane"
-                  type="button"
-                  role="tab"
-                  aria-controls="graph-time-pane"
-                  aria-selected="false"
-                >
-                  Time view
+                <button class="nav-link small" id="workspace-app-tab" data-bs-toggle="tab"
+                  data-bs-target="#workspace-app-pane" type="button" role="tab" aria-controls="workspace-app-pane"
+                  aria-selected="false">
+                  App
                 </button>
               </li>
             </ul>
           </div>
 
-          <div class="card-body p-2">
-            <div class="tab-content" id="graphTabsContent">
-              <div
-                class="tab-pane fade show active"
-                id="graph-main-pane"
-                role="tabpanel"
-                aria-labelledby="graph-main-tab"
-                tabindex="0"
-              >
-                <svg id="codeStructureSvg" width="1200" height="800"></svg>
+          <div class="card-body p-0">
+            <div class="tab-content" id="workspaceTabsContent">
+              <div class="tab-pane fade show active" id="workspace-graph-pane" role="tabpanel"
+                aria-labelledby="workspace-graph-tab" tabindex="0">
+                <div class="border-bottom bg-body">
+                  <ul class="nav nav-tabs workspaceInnerTabs px-2 pt-2" id="graphTabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                      <button class="nav-link active small" id="graph-main-tab" data-bs-toggle="tab"
+                        data-bs-target="#graph-main-pane" type="button" role="tab" aria-controls="graph-main-pane"
+                        aria-selected="true">
+                        Standard graph
+                      </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                      <button class="nav-link small" id="graph-MRI-tab" data-bs-toggle="tab"
+                        data-bs-target="#graph-MRI-pane" type="button" role="tab" aria-controls="graph-MRI-pane"
+                        aria-selected="false">
+                        MRI
+                      </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                      <button class="nav-link small" id="graph-time-tab" data-bs-toggle="tab"
+                        data-bs-target="#graph-time-pane" type="button" role="tab" aria-controls="graph-time-pane"
+                        aria-selected="false">
+                        Time view
+                      </button>
+                    </li>
+                  </ul>
+                </div>
+
+                <div class="p-2">
+                  <div class="tab-content" id="graphTabsContent">
+                    <div class="tab-pane fade show active" id="graph-main-pane" role="tabpanel"
+                      aria-labelledby="graph-main-tab" tabindex="0">
+                      <svg id="codeStructureSvg" width="1200" height="800"></svg>
+                    </div>
+
+                    <div class="tab-pane fade" id="graph-MRI-pane" role="tabpanel" aria-labelledby="graph-MRI-tab"
+                      tabindex="0">
+                      <svg id="graphMriView" width="1200" height="800"></svg>
+                    </div>
+
+                    <div class="tab-pane fade" id="graph-time-pane" role="tabpanel" aria-labelledby="graph-time-tab"
+                      tabindex="0">
+                      <svg id="graphTimeView" width="1200" height="800"></svg>
+                    </div>
+                  </div>
+                </div>
               </div>
 
-              <div
-                class="tab-pane fade"
-                id="graph-MRI-pane"
-                role="tabpanel"
-                aria-labelledby="graph-MRI-tab"
-                tabindex="0"
-              >
-                <svg id="graphMriView" width="1200" height="800"></svg>
-              </div>
-
-              <div
-                class="tab-pane fade"
-                id="graph-alt-pane"
-                role="tabpanel"
-                aria-labelledby="graph-alt-tab"
-                tabindex="0"
-              >
-                <svg id="codeStructureAltSvg" width="1200" height="800"></svg>
-              </div>
-              <div
-                class="tab-pane fade"
-                id="graph-time-pane"
-                role="tabpanel"
-                aria-labelledby="graph-time-tab"
-                tabindex="0"
-              >
-                <svg id="graphTimeView" width="1200" height="800"></svg>
+              <div class="tab-pane fade" id="workspace-app-pane" role="tabpanel"
+                aria-labelledby="workspace-app-tab" tabindex="0">
+                <div class="p-3 workspaceAppPanel panelScroll" id="appInfoPanel">
+                  <div class="text-secondary small">Select an app to inspect details.</div>
+                </div>
               </div>
             </div>
           </div>
@@ -190,7 +181,8 @@
       <aside class="col-12 col-lg-4 col-xl-3 order-2 order-xl-3">
         <div class="d-flex flex-column gap-3">
           <div class="border rounded shadow-sm bg-body overflow-hidden">
-            <div class="px-3 py-2 border-bottom bg-body-tertiary d-flex align-items-center justify-content-between gap-2">
+            <div
+              class="px-3 py-2 border-bottom bg-body-tertiary d-flex align-items-center justify-content-between gap-2">
               <div>
                 <div class="small fw-semibold">Legend &amp; Filter</div>
                 <div class="small text-secondary" id="filterSummary">architecture</div>
@@ -238,6 +230,20 @@
       });
     })();
   </script>
+
+  <script>
+  window.addEventListener("load", ()=> {
+      document.body.style.zoom = "100%";
+    });
+
+  </script>
+
+
+
+
+
+
+
 
   <div id="helpPanel" class="help-panel d-none" role="dialog" aria-label="Help">
     <div class="help-panel__header" id="helpPanelHeader">

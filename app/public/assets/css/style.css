@@ -1,3 +1,5 @@
+
+
 :root {
   --panelTop: 16px;
 }
@@ -13,7 +15,9 @@ body {
 /* --------------------------------------------------------------------------
    Main graph SVG sizing
    -------------------------------------------------------------------------- */
-#codeStructureSvg {
+#codeStructureSvg,
+#graphMriView,
+#graphTimeView {
   width: 100%;
   height: 78vh;
   min-height: 520px;
@@ -189,8 +193,8 @@ body {
 /* One row per app */
 .appRow {
   display: grid;
-  /* ● | name | entry | url | actions */
-  grid-template-columns: 14px 1.2fr 1fr 1fr auto;
+  /* ● | name | actions */
+  grid-template-columns: 14px 1fr auto;
   gap: 8px;
   align-items: center;
 
@@ -240,12 +244,17 @@ body {
   text-overflow: ellipsis;
 }
 
+.appPrimary {
+  min-width: 0;
+}
+
 /* Rightmost actions column (e.g. Restart / Show) */
 .appActions {
   display: flex;
   justify-content: flex-end;
   gap: 6px;
   align-items: center;
+  flex-wrap: wrap;
   /* Avoid row click interference: buttons handle their own click */
   pointer-events: auto;
 }
@@ -274,7 +283,7 @@ body {
 
 .appHdr {
   display: grid;
-  grid-template-columns: 14px 1.2fr 1fr 1fr auto;
+  grid-template-columns: 14px 1fr auto;
   gap: 8px;
   padding: 0 8px 6px 8px;
   font-size: 10px;
@@ -288,18 +297,54 @@ body {
   text-align: right;
 }
 
-@media (max-width: 992px) {
-  /* On smaller screens, hide URL but keep actions */
-  .appRow,
-  .appHdr {
-    /* ● | name | entry | actions */
-    grid-template-columns: 14px 1fr 1fr auto;
-  }
+.workspaceInnerTabs {
+  margin-bottom: -1px;
+}
 
-  .appRow .appUrl,
-  .appHdr .appUrl {
-    display: none;
-  }
+.workspaceAppPanel {
+  min-height: 520px;
+  max-height: 78vh;
+  overflow: auto;
+}
+
+.appInfoSection + .appInfoSection {
+  margin-top: 20px;
+}
+
+.appInfoSectionTitle {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(0, 0, 0, 0.55);
+  margin-bottom: 8px;
+}
+
+.appInfoTable {
+  margin-bottom: 0;
+}
+
+.appInfoTable th {
+  width: 170px;
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.55);
+  font-weight: 600;
+}
+
+.appInfoTable td {
+  font-size: 12px;
+  vertical-align: top;
+}
+
+.appInfoPath {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+
+.appInfoBadgeRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 /* --------------------------------------------------------------------------
@@ -369,4 +414,10 @@ body {
 .help-panel__body .md code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
+}
+
+
+
+body {
+  zoom: 1;
 }

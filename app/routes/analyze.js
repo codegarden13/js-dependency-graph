@@ -6,6 +6,34 @@ import { spawnSync } from "node:child_process";
 
 import { activateAnalysis } from "../lib/liveChangeFeed.js";
 import { normalizeFsPath } from "../lib/fsPaths.js";
+import {
+  loadAppsConfig,
+  findAppById,
+  resolveAppRootAbs,
+  resolveEntryAbs
+} from "../lib/appsRegistry.js";
+
+
+import {
+  metricsArtifacts,
+  writeMetricsArtifacts
+} from "../lib/analyze/artifacts.js";
+
+import { normalizeId } from "../lib/stringUtils.js"
+
+
+
+
+import {
+
+
+  csvEscape,
+  NODE_ROW_FIELDS,
+  projectRow,
+  nodeRow,
+  linkRow,
+  buildMetricsCsv
+} from "../lib/analyze/csvExport.js";
 
 
 // NOTE:
@@ -35,368 +63,13 @@ function newRunToken() {
   return crypto.randomBytes(12).toString("hex");
 }
 
-/**
- * Read and parse a JSON file synchronously.
- *
- * Why this exists
- * ---------------
- * Route bootstrap data is small and local. A synchronous read keeps the helper
- * simple and makes configuration failures immediate and explicit.
- *
- * @param {string} fileAbs
- *   Absolute path to the JSON file.
- * @returns {unknown}
- *   Parsed JSON payload.
- * @throws {Error}
- *   Propagates filesystem and JSON parse failures.
- */
-function safeJsonRead(fileAbs) {
-  const txt = fs.readFileSync(fileAbs, "utf8");
-  return JSON.parse(txt);
-}
-
-/**
- * Normalize a loose identifier input to a trimmed string.
- *
- * @param {unknown} v
- *   Candidate identifier value.
- * @returns {string}
- *   Trimmed string representation, or an empty string for missing input.
- */
-function normalizeId(v) {
-  return String(v || "").trim();
-}
-
-// ---------------------------------------------------------------------------
-// Metrics artifact paths
-// ---------------------------------------------------------------------------
-
-/**
- * Persist JSON and CSV metrics artifacts for one analysis run.
- *
- * @param {string} appId
- *   Requested application identifier.
- * @param {string} timestampIso
- *   Run timestamp in ISO form.
- * @param {Record<string, unknown>} metrics
- *   Metrics payload to persist.
- */
-function writeMetricsArtifacts(appId, timestampIso, metrics) {
-  ensureOutputDir();
-
-  const artifacts = metricsArtifacts(appId, timestampIso);
-
-  fs.writeFileSync(
-    artifacts.jsonPath,
-    JSON.stringify(metrics, null, 2),
-    "utf8"
-  );
-
-  fs.writeFileSync(
-    artifacts.csvPath,
-    buildMetricsCsv(metrics),
-    "utf8"
-  );
-}
-
-/**
- * Resolve the absolute output directory for generated analysis artifacts.
- *
- * @returns {string}
- *   Normalized absolute path to `app/public/output`.
- */
-function outputDirAbs() {
-  return normalizeFsPath(path.join(process.cwd(), "app", "public", "output"));
-}
-
-/**
- * Ensure the artifact output directory exists before writing files.
- *
- * @returns {string}
- *   Normalized absolute path to the ensured directory.
- */
-function ensureOutputDir() {
-  const dir = outputDirAbs();
-  fs.mkdirSync(dir, { recursive: true });
-  return dir;
-}
-
-/**
- * Build the stable filename prefix for one analysis run.
- *
- * Why this exists
- * ---------------
- * All artifacts for a run share the same prefix so downstream code can derive
- * related filenames and URLs deterministically.
- *
- * @param {string} appId
- *   Requested application identifier.
- * @param {string} timestampIso
- *   Run timestamp in ISO form.
- * @returns {string}
- *   Filesystem-safe artifact prefix.
- */
-function buildArtifactPrefix(appId, timestampIso) {
-  const safeAppId = normalizeId(appId) || "app";
-  const safeTimestamp = String(timestampIso || new Date().toISOString())
-    .replace(/[:.]/g, "-")
-    .trim();
-
-  return `${safeAppId}-${safeTimestamp}`;
-}
-
-/**
- * Build the common basename for metrics artifacts.
- *
- * @param {string} appId
- *   Requested application identifier.
- * @param {string} timestampIso
- *   Run timestamp in ISO form.
- * @returns {string}
- *   Basename without file extension.
- */
-function metricsBaseName(appId, timestampIso) {
-  return `${buildArtifactPrefix(appId, timestampIso)}-code-metrics`;
-}
-
-/**
- * Build the full artifact descriptor for one analysis run.
- *
- * Keeping the derived names/paths/urls in one place prevents tiny helper
- * functions from drifting apart over time.
- */
-function metricsArtifacts(appId, timestampIso) {
-  const baseName = metricsBaseName(appId, timestampIso);
-  const jsonFilename = `${baseName}.json`;
-  const csvFilename = `${baseName}.csv`;
-
-  return {
-    baseName,
-    jsonFilename,
-    csvFilename,
-    jsonPath: path.join(outputDirAbs(), jsonFilename),
-    csvPath: path.join(outputDirAbs(), csvFilename),
-    jsonUrl: `/output/${jsonFilename}`,
-    csvUrl: `/output/${csvFilename}`
-  };
-}
-
-
-// ---------------------------------------------------------------------------
-// CSV helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Escape one value for RFC-4180-style CSV output.
- *
- * @param {unknown} value
- *   Cell value to serialize.
- * @returns {string}
- *   Escaped CSV cell content.
- */
-function csvEscape(value) {
-  const s = String(value ?? "");
-  if (!/[",\n]/.test(s)) return s;
-  return `"${s.replace(/"/g, '""')}"`;
-}
-
-// ---------------------------------------------------------------------------
-// CSV row projection
-// ---------------------------------------------------------------------------
-
-const NODE_ROW_FIELDS = [
-  ["kind", "kind"],
-  ["id", "id"],
-  ["file", "file"],
-  ["label", "label"],
-  ["type", "type"],
-  ["group", "group"],
-  ["layer", "layer"],
-  ["lines", "lines"],
-  ["complexity", "complexity"],
-  ["exported", "exported"],
-  ["imported", "imported"],
-  ["unused", "unused"],
-  ["hotspot", "hotspot"],
-  ["hotspotRank", "_hotspotRank"],
-  ["hotspotScore", "_hotspotScore"],
-  ["changeFreq", "_changeFreq"],
-  ["lastTouchedAt", "_lastTouchedAt"],
-  ["x", "x"],
-  ["y", "y"]
-];
-
-/**
- * Project an object into a flat row object using a field mapping table.
- *
- * @param {Record<string, unknown>} source
- *   Source object to project.
- * @param {Array<[string, string]>} fields
- *   `[targetKey, sourceKey]` tuples describing the projection.
- * @returns {Record<string, unknown>}
- *   Projected row object.
- */
-function projectRow(source, fields) {
-  return Object.fromEntries(
-    fields.map(([targetKey, sourceKey]) => [targetKey, source?.[sourceKey]])
-  );
-}
-
-/**
- * Convert one graph node into its CSV row representation.
- *
- * @param {Record<string, unknown>} node
- *   Graph node payload.
- * @returns {Record<string, unknown>}
- *   Flat row object aligned to `NODE_ROW_FIELDS`.
- */
-function nodeRow(node) {
-  return projectRow(node, NODE_ROW_FIELDS);
-}
-
-/**
- * Convert one graph link into its CSV row representation.
- *
- * @param {Record<string, unknown>} link
- *   Graph link payload.
- * @returns {Record<string, unknown>}
- *   Flat row object for CSV export.
- */
-function linkRow(link) {
-  return {
-    relation: "link",
-    source: link?.source,
-    target: link?.target,
-    kind: link?.kind,
-    type: link?.type,
-    value: link?.value
-  };
-}
-
-/**
- * Serialize the metrics graph to CSV.
- *
- * Why this exists
- * ---------------
- * The JSON artifact is canonical, but CSV makes ad-hoc inspection and import
- * into spreadsheet tools straightforward for debugging and reporting.
- *
- * @param {Record<string, unknown>} metrics
- *   Metrics payload containing `nodes` and `links` arrays.
- * @returns {string}
- *   Complete CSV document including header row.
- */
-function buildMetricsCsv(metrics) {
-  const rows = [];
-
-  for (const node of Array.isArray(metrics?.nodes) ? metrics.nodes : []) {
-    rows.push({ relation: "node", ...nodeRow(node) });
-  }
-
-  for (const link of Array.isArray(metrics?.links) ? metrics.links : []) {
-    rows.push(linkRow(link));
-  }
-
-  const headers = [
-    "relation",
-    "kind",
-    "id",
-    "file",
-    "label",
-    "type",
-    "group",
-    "layer",
-    "lines",
-    "complexity",
-    "exported",
-    "imported",
-    "unused",
-    "hotspot",
-    "hotspotRank",
-    "hotspotScore",
-    "changeFreq",
-    "lastTouchedAt",
-    "x",
-    "y",
-    "source",
-    "target",
-    "value"
-  ];
-
-  const body = rows.map((row) => headers.map((key) => csvEscape(row?.[key])).join(","));
-  return [headers.join(","), ...body].join("\n");
-}
 
 
 
-// ---------------------------------------------------------------------------
-// Apps config (app/config/apps.json)
-// ---------------------------------------------------------------------------
-/**
- * Resolve the absolute path to the apps configuration file.
- *
- * @returns {string}
- *   Normalized absolute path to `app/config/apps.json`.
- */
-function appsConfigPath() {
-  return normalizeFsPath(path.join(process.cwd(), "app", "config", "apps.json"));
-}
 
-/**
- * Load and validate the application registry from disk.
- *
- * @returns {Array<object>}
- *   Configured application records.
- * @throws {Error}
- *   Thrown when the config file is missing or structurally invalid.
- */
-function loadAppsConfig() {
-  const p = appsConfigPath();
-  if (!fs.existsSync(p)) {
-    throw new Error(`Missing apps config: ${p}`);
-  }
 
-  const data = safeJsonRead(p);
-  const apps = data?.apps || data;
-  if (!Array.isArray(apps)) {
-    throw new Error("apps.json must be an array or an object with an 'apps' array");
-  }
 
-  return apps;
-}
 
-/**
- * Find one configured application by normalized identifier.
- *
- * @param {Array<object>} apps
- *   Loaded application records.
- * @param {string} appId
- *   Requested application identifier.
- * @returns {object | null}
- *   Matching application config, or `null` when not found.
- */
-function findAppById(apps, appId) {
-  const id = normalizeId(appId);
-  if (!id) return null;
-  return apps.find((a) => normalizeId(a?.id) === id) || null;
-}
-
-/**
- * Read the configured root directory field from an app record.
- *
- * Why this exists
- * ---------------
- * Historical config variants may use `rootDir`, `root`, or `path`. This helper
- * centralizes that compatibility rule.
- *
- * @param {object} app
- *   Application config record.
- * @returns {string}
- *   Trimmed configured root directory value, or an empty string.
- */
-function readAppRootDir(app) {
-  return String(app?.rootDir || app?.root || app?.path || "").trim();
-}
 
 /**
  * Resolve a path that may already be absolute or project-relative.
@@ -414,48 +87,6 @@ function resolveAbsoluteOrProjectPath(targetPath) {
   return normalizeFsPath(path.join(process.cwd(), targetPath));
 }
 
-/**
- * Resolve the absolute root directory for one configured application.
- *
- * @param {object} app
- *   Application config record.
- * @returns {string | null}
- *   Normalized absolute root path, or `null` when no root is configured.
- */
-function resolveAppRootAbs(app) {
-  const rootDir = readAppRootDir(app);
-  if (!rootDir) return null;
-  return resolveAbsoluteOrProjectPath(rootDir);
-}
-
-/**
- * Resolve the absolute entry file for one application.
- *
- * Why this exists
- * ---------------
- * Some app records explicitly declare an entry file. Others rely on a small
- * set of conventional fallback filenames.
- *
- * @param {string} appRootAbs
- *   Absolute application root directory.
- * @param {object} app
- *   Application config record.
- * @returns {string | null}
- *   Absolute entry file path, or `null` when no candidate can be resolved.
- */
-function resolveEntryAbs(appRootAbs, app) {
-  const entry = String(app?.entry || "").trim();
-  if (entry) return path.resolve(appRootAbs, entry);
-
-  // Best-effort fallback if entry is omitted.
-  const guesses = ["index.js", "src/index.js", "main.js", "app.js"];
-  for (const g of guesses) {
-    const p = path.resolve(appRootAbs, g);
-    if (fs.existsSync(p) && fs.statSync(p).isFile()) return p;
-  }
-
-  return null;
-}
 
 // ---------------------------------------------------------------------------
 // Metrics summary + hotspot enrichment

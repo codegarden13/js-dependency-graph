@@ -8,7 +8,7 @@
  *
  * - loads configured apps from `/apps`
  * - stores the current selection in hidden DOM state (`#appSelect`)
- * - triggers `/analyze` for the selected app
+ * - lets the user explicitly trigger `/analyze` or `/freeze` for the selected app
  * - fetches the produced metrics JSON
  * - renders the main D3 graph via `initcodeStructureChart(...)`
  * - keeps side panels (node info + README) in sync with graph selection
@@ -30,12 +30,16 @@
  * - #status
  * - #graphInfoPanel
  * - #readmePanel
+ * - #appInfoPanel
  * - #codeStructureSvg
  */
 
 "use strict";
 
 import { initcodeStructureChart } from "./d3_codeStructure.js";
+
+
+
 
 // App-local state (no window globals)
 
@@ -53,6 +57,9 @@ let selectedNode = null;
 // - mark changed nodes from SSE (`markChanged`)
 // - read the latest rendered nodes for panel refreshes
 let graphController = null;
+let activeGraphAppId = "";
+let appInfoLoadToken = 0;
+let freezeInFlight = false;
 
 /* ======================================================================= */
 /* DOM helpers                                                              */
@@ -305,6 +312,196 @@ async function fetchJsonOrNullOn404(url, init) {
   return body;
 }
 
+function getActiveGraphAppId() {
+  return String(activeGraphAppId || "").trim();
+}
+
+function toDisplayText(value, fallback = "—") {
+  const text = String(value || "").trim();
+  return text || fallback;
+}
+
+function formatIsoDate(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "—";
+
+  const date = new Date(raw);
+  if (!Number.isFinite(date.getTime())) return raw;
+  return date.toLocaleString();
+}
+
+function formatBytes(value) {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes <= 0) return "—";
+
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let size = bytes;
+  let unitIndex = 0;
+
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+
+  const digits = size >= 10 || unitIndex === 0 ? 0 : 1;
+  return `${size.toFixed(digits)} ${units[unitIndex]}`;
+}
+
+function renderAppInfoRow(label, value, { html = false } = {}) {
+  const cell = html ? String(value || "—") : esc(toDisplayText(value));
+  return `
+    <tr>
+      <th scope="row">${esc(label)}</th>
+      <td>${cell || "—"}</td>
+    </tr>
+  `;
+}
+
+function renderAppInfoSection(title, rows) {
+  return `
+    <section class="appInfoSection">
+      <div class="appInfoSectionTitle">${esc(title)}</div>
+      <div class="table-responsive">
+        <table class="table table-sm appInfoTable">
+          <tbody>${rows.join("")}</tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function buildLinkHtml(url) {
+  const href = String(url || "").trim();
+  if (!href) return "—";
+  return `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(href)}</a>`;
+}
+
+function buildPathHtml(value) {
+  const text = String(value || "").trim();
+  if (!text) return "—";
+  return `<span class="appInfoPath">${esc(text)}</span>`;
+}
+
+function buildWorktreeBadges(worktree, gitAvailable) {
+  if (!gitAvailable) {
+    return `<span class="badge text-bg-secondary">No Git repository detected</span>`;
+  }
+
+  const dirty = Boolean(worktree?.dirty);
+  const badges = [
+    `<span class="badge ${dirty ? "text-bg-warning" : "text-bg-success"}">${dirty ? "Dirty" : "Clean"}</span>`,
+    `<span class="badge text-bg-light">Staged ${Number(worktree?.stagedCount || 0)}</span>`,
+    `<span class="badge text-bg-light">Modified ${Number(worktree?.modifiedCount || 0)}</span>`,
+    `<span class="badge text-bg-light">Untracked ${Number(worktree?.untrackedCount || 0)}</span>`
+  ];
+
+  if (Number(worktree?.conflictedCount || 0) > 0) {
+    badges.push(
+      `<span class="badge text-bg-danger">Conflicted ${Number(worktree?.conflictedCount || 0)}</span>`
+    );
+  }
+
+  return `<div class="appInfoBadgeRow">${badges.join("")}</div>`;
+}
+
+function renderAppInfoEmpty(message) {
+  const root = byId("appInfoPanel");
+  if (!root) return;
+  root.innerHTML = `<div class="text-secondary small">${esc(message)}</div>`;
+}
+
+function renderAppInfoPanel(data) {
+  const root = byId("appInfoPanel");
+  if (!root) return;
+
+  if (!data) {
+    renderAppInfoEmpty("Select an app to inspect details.");
+    return;
+  }
+
+  const app = data.app || {};
+  const git = data.git || {};
+  const lastCommit = git.lastCommit || null;
+  const freeze = data.freeze || {};
+  const latestFreeze = freeze.latest || null;
+
+  root.innerHTML = `
+    <div class="d-grid gap-3">
+      <div>
+        <div class="h5 mb-1">${esc(app.name || app.id || "App")}</div>
+        <div class="small text-secondary">${esc(app.id || "")}</div>
+      </div>
+
+      ${renderAppInfoSection("Overview", [
+        renderAppInfoRow("URL", buildLinkHtml(app.url), { html: true }),
+        renderAppInfoRow("Entrypoint", buildPathHtml(app.entry), { html: true }),
+        renderAppInfoRow("Project root", buildPathHtml(app.appRootAbs || app.rootDir), { html: true }),
+        renderAppInfoRow("Backup dir", buildPathHtml(freeze.backupDir || app.backupDir), { html: true })
+      ])}
+
+      ${renderAppInfoSection("Git", [
+        renderAppInfoRow("Repository", buildPathHtml(git.repoRootAbs), { html: true }),
+        renderAppInfoRow("Branch", toDisplayText(git.branch)),
+        renderAppInfoRow("Upstream", toDisplayText(git.upstream)),
+        renderAppInfoRow("HEAD", toDisplayText(git.head?.shortSha || git.head?.fullSha)),
+        renderAppInfoRow("Origin", buildLinkHtml(git.remoteOriginUrl), { html: true }),
+        renderAppInfoRow("Commits", String(Number(git.commitCount || 0))),
+        renderAppInfoRow("Tracked files", String(Number(git.trackedFileCount || 0))),
+        renderAppInfoRow(
+          "Ahead / behind",
+          git.available ? `${Number(git.ahead || 0)} / ${Number(git.behind || 0)}` : "—"
+        ),
+        renderAppInfoRow("Worktree", buildWorktreeBadges(git.worktree, git.available), { html: true })
+      ])}
+
+      ${renderAppInfoSection("Last commit", [
+        renderAppInfoRow("Subject", toDisplayText(lastCommit?.subject)),
+        renderAppInfoRow("Commit", toDisplayText(lastCommit?.shortSha || lastCommit?.fullSha)),
+        renderAppInfoRow("Author", toDisplayText(lastCommit?.authorName)),
+        renderAppInfoRow("Email", toDisplayText(lastCommit?.authorEmail)),
+        renderAppInfoRow("Date", formatIsoDate(lastCommit?.authoredAt))
+      ])}
+
+      ${renderAppInfoSection("Freeze", [
+        renderAppInfoRow("Latest ZIP", buildPathHtml(latestFreeze?.zipPath), { html: true }),
+        renderAppInfoRow("Filename", toDisplayText(latestFreeze?.zipFilename)),
+        renderAppInfoRow("Modified", formatIsoDate(latestFreeze?.modifiedAt)),
+        renderAppInfoRow("Size", formatBytes(latestFreeze?.sizeBytes))
+      ])}
+    </div>
+  `;
+}
+
+async function fetchAppInfo(appId) {
+  const id = encodeURIComponent(String(appId || ""));
+  return fetchJson(`/apps/${id}/info`);
+}
+
+async function loadSelectedAppInfo() {
+  const appId = getSelectedAppId();
+  const requestToken = ++appInfoLoadToken;
+
+  if (!appId) {
+    renderAppInfoEmpty("Select an app to inspect details.");
+    return null;
+  }
+
+  renderAppInfoEmpty("Loading app details…");
+
+  try {
+    const data = await fetchAppInfo(appId);
+    if (requestToken !== appInfoLoadToken) return null;
+
+    renderAppInfoPanel(data);
+    return data;
+  } catch (e) {
+    if (requestToken !== appInfoLoadToken) return null;
+
+    renderAppInfoEmpty(String(e?.message || e || "Could not load app details."));
+    return null;
+  }
+}
+
 /* ======================================================================= */
 /* Panels                                                                   */
 /* ======================================================================= */
@@ -381,7 +578,7 @@ function showReadmeSearching(root) {
 }
 
 function showReadmeSelectApp(root) {
-  root.innerHTML = `<div class="text-muted small">Select an app to load README.</div>`;
+  root.innerHTML = `<div class="text-muted small">Run Analyze to load README context for the active graph.</div>`;
 }
 
 function showReadmeNotFound(root) {
@@ -444,7 +641,7 @@ async function renderReadmeForNode(node, signal) {
 
   showReadmeSearching(root);
 
-  const appId = getSelectedAppId();
+  const appId = getActiveGraphAppId();
   if (!appId) {
     showReadmeSelectApp(root);
     return;
@@ -712,8 +909,16 @@ async function fetchAppsOrThrow() {
  */
 function chooseInitialAppId(apps) {
   const remembered = getSelectedAppId();
-  if (remembered) return remembered;
+  if (remembered && (apps || []).some((app) => String(app?.id || "") === remembered)) {
+    return remembered;
+  }
   return String(apps?.[0]?.id || "");
+}
+
+function applySelectedApp(listEl, appId) {
+  setSelectedAppId(appId);
+  if (listEl) setAppActiveRow(listEl, appId);
+  loadSelectedAppInfo().catch((e) => console.warn("App info load failed:", e));
 }
 
 /** Render the static header row (column labels). */
@@ -722,8 +927,6 @@ function renderAppsHeader(list) {
       <div class="appHdr">
         <div></div>
         <div>Name</div>
-        <div>Entrypoint</div>
-        <div class="appUrl">URL</div>
         <div class="appActionsHdr">Actions</div>
       </div>
     `;
@@ -739,7 +942,6 @@ function buildAppRow(app, currentId) {
 
   const id = String(a.id || "");
   const name = String(a.name || a.id || "");
-  const entry = String(a.entry || "(auto)");
   const url = String(a.url || "");
 
   const row = document.createElement("div");
@@ -751,9 +953,10 @@ function buildAppRow(app, currentId) {
 
   row.innerHTML = `
       <span class="appDot" aria-hidden="true"></span>
-      <div class="appName" title="${esc(name)}">${esc(name)}</div>
-      <div class="appMeta" title="${esc(entry)}">${esc(entry)}</div>
-      <div class="appMeta appUrl" title="${esc(url)}">${esc(url)}</div>
+      <div class="appPrimary">
+        <div class="appName" title="${esc(name)}">${esc(name)}</div>
+        <div class="appMeta" title="${esc(id)}">${esc(id)}</div>
+      </div>
 
       <div class="appActions">
         <button type="button" class="btn btn-sm btn-outline-secondary"
@@ -763,6 +966,14 @@ function buildAppRow(app, currentId) {
         <button type="button" class="btn btn-sm btn-outline-primary"
                 data-action="open" data-url="${esc(url)}">
           Show
+        </button>
+        <button type="button" class="btn btn-sm btn-primary"
+                data-action="analyze" data-app-id="${esc(id)}">
+          Analyze
+        </button>
+        <button type="button" class="btn btn-sm btn-outline-primary"
+                data-action="freeze" data-app-id="${esc(id)}">
+          Freeze
         </button>
       </div>
     `;
@@ -775,17 +986,6 @@ function renderAppRows(list, apps, currentId) {
   for (const a of apps || []) {
     list.appendChild(buildAppRow(a, currentId));
   }
-}
-
-/**
- * Auto-run analysis once after the initial list load if no graph exists yet.
- * Uses a 0ms timeout so the DOM paint happens first.
- */
-function maybeAutoAnalyzeOnFirstLoad() {
-  setTimeout(() => {
-    const hasGraph = Array.isArray(graphController?.nodes) && graphController.nodes.length > 0;
-    if (!hasGraph) runAnalysis().catch((e) => console.error(e));
-  }, 0);
 }
 
 /* ----------------------------------------------------------------------- */
@@ -812,18 +1012,15 @@ function safeRunAnalysis() {
   runAnalysis().catch((e) => console.error(e));
 }
 
-function scheduleRerunAnalysis(delayMs = 300) {
-  setTimeout(() => safeRunAnalysis(), delayMs);
-}
-
 function getActionContext(btn) {
   const action = getAttr(btn, "data-action");
   const row = getClosestAppRow(btn);
+  const list = /** @type {HTMLElement|null} */ (row?.parentElement || null);
 
   const appId = getAttr(btn, "data-app-id") || getDataset(row, "appId");
   const url = getAttr(btn, "data-url") || getDataset(row, "appUrl");
 
-  return { action, appId, url };
+  return { action, appId, url, list };
 }
 
 function showRestartFailed(e) {
@@ -844,11 +1041,18 @@ function handleOpenAction(url) {
 function handleRestartAction(appId) {
   setStatus("Restarting…");
   restartApp(appId)
-    .then(() => {
-      // Optional: re-run analysis after restart (small delay so server can come up)
-      scheduleRerunAnalysis(300);
-    })
+    .then(() => loadSelectedAppInfo().catch(() => { }))
     .catch(showRestartFailed);
+}
+
+function handleAnalyzeAction(listEl, appId) {
+  applySelectedApp(listEl, appId);
+  safeRunAnalysis();
+}
+
+function handleFreezeAction(listEl, appId) {
+  applySelectedApp(listEl, appId);
+  runFreeze().catch((e) => console.error(e));
 }
 
 function tryHandleAppActionClick(ev, target) {
@@ -871,6 +1075,16 @@ function tryHandleAppActionClick(ev, target) {
     return true;
   }
 
+  if (ctx.action === "analyze") {
+    handleAnalyzeAction(ctx.list, ctx.appId);
+    return true;
+  }
+
+  if (ctx.action === "freeze") {
+    handleFreezeAction(ctx.list, ctx.appId);
+    return true;
+  }
+
   // Unknown action: ignore but consume.
   return true;
 }
@@ -885,9 +1099,7 @@ function handleAppRowSelectionClick(ev, target, listEl) {
   const newId = String(row.dataset.appId || "").trim();
   if (!newId) return;
 
-  setSelectedAppId(newId);
-  setAppActiveRow(listEl, newId);
-  safeRunAnalysis();
+  applySelectedApp(listEl, newId);
 }
 
 /**
@@ -917,7 +1129,7 @@ function ensureAppsListActionsBound(list) {
  * 3) Auswahl festlegen (gemerkte Auswahl oder erstes Preset)
  * 4) Liste rendern (Header + Rows)
  * 5) Delegierten Click-Handler einmalig binden (open/restart/select)
- * 6) Optional: initiale Analyse triggern, wenn noch kein Graph existiert
+ * 6) App-Info für die Auswahl laden
  */
 async function loadApps() {
   const list = byId("appList");
@@ -942,10 +1154,8 @@ async function loadApps() {
     setSelectedAppId("");
     return;
   }
-
   // Auswahl: gemerkt oder erstes Preset.
   const current = chooseInitialAppId(apps);
-  setSelectedAppId(current);
 
   // Rendern: Header + Rows.
   renderAppsHeader(list);
@@ -954,8 +1164,7 @@ async function loadApps() {
   // Delegierter Click-Handler (nur 1x binden).
   ensureAppsListActionsBound(list);
 
-  // Initial-Analyse beim ersten Boot.
-  maybeAutoAnalyzeOnFirstLoad();
+  applySelectedApp(list, current);
 }
 
 /* ======================================================================= */
@@ -1116,13 +1325,20 @@ async function postAnalyze(appId) {
   });
 }
 
+async function postFreeze(appId) {
+  return fetchJson("/freeze", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ appId }),
+  });
+}
+
 function isUnsupportedAnalysis(data) {
   return String(data?.analysisStatus || "") === "unsupported";
 }
 
 function handleUnsupportedAnalysis(data) {
-  clearPanels();
-  selectedNode = null;
+  resetGraphViews();
   showUnsupportedTargetMessage(data);
   setStatus("Unsupported target (see details).");
 }
@@ -1138,6 +1354,58 @@ function handleUnsupportedAnalysis(data) {
  *
  * @param {any} metrics Analyzer metrics payload used by the D3 renderer.
  */
+
+function clearSvgContent(id) {
+  const el = byId(id);
+  if (!el) return;
+  el.innerHTML = "";
+}
+
+function buildGraphHeaderText(appId, metrics) {
+  if (!appId || !metrics) return "Workspace";
+
+  const stats = deriveGraphStats(metrics);
+  return buildCurrentAppSummary({
+    appId,
+    functionCount: stats.functionCount,
+    loc: stats.loc,
+  });
+}
+
+function updateGraphHeader(metrics) {
+  const graphAppId = getActiveGraphAppId();
+
+  setTextById("graphInfoHeader", buildGraphHeaderText(graphAppId, metrics));
+  setTextById(
+    "workspaceHint",
+    graphAppId ? "Click a node to inspect" : "Select an app, then run Analyze."
+  );
+}
+
+function activateTabById(id) {
+  const el = byId(id);
+  const tabApi = window.bootstrap?.Tab;
+  if (!el || !tabApi?.getOrCreateInstance) return;
+  tabApi.getOrCreateInstance(el).show();
+}
+
+function showWorkspaceGraphTab() {
+  activateTabById("workspace-graph-tab");
+}
+
+function resetGraphViews() {
+  try { graphController?.destroy?.(); } catch { }
+
+  graphController = null;
+  activeGraphAppId = "";
+  selectedNode = null;
+  clearPanels();
+  clearSvgContent("codeStructureSvg");
+  clearSvgContent("graphMriView");
+  clearSvgContent("graphTimeView");
+  updateCurrentAppSummary(null);
+  updateGraphHeader(null);
+}
 
 function renderGraph(metrics) {
   // Clean up any previous graph instance (stops simulation + clears svg)
@@ -1168,8 +1436,8 @@ function hasElement(id) {
   return Boolean(byId(id));
 }
 
-function getSelectedAppIdOrNull() {
-  const appId = getSelectedAppId();
+function getActiveGraphAppIdOrNull() {
+  const appId = getActiveGraphAppId();
   return appId || "";
 }
 
@@ -1187,7 +1455,7 @@ async function renderOptionalChart({
 }) {
   if (!hasElement(elementId)) return;
 
-  const appId = getSelectedAppIdOrNull();
+  const appId = getActiveGraphAppIdOrNull();
   if (!appId) return;
 
   try {
@@ -1294,15 +1562,8 @@ function updateTextSummary(targetId, buildText) {
 }
 
 function updateCurrentAppSummary(metrics) {
-  return updateTextSummary("currentAppSummary", () => {
-    const appId = getSelectedAppId();
-    const stats = deriveGraphStats(metrics);
-    return buildCurrentAppSummary({
-      appId,
-      functionCount: stats.functionCount,
-      loc: stats.loc,
-    });
-  });
+  void metrics;
+  return setTextById("currentAppSummary", "Apps");
 }
 
 function statusDone(data) {
@@ -1322,6 +1583,44 @@ function handleAnalyzeError(e) {
     },
   });
   setStatus("Analysis failed.");
+}
+
+function handleFreezeError(e) {
+  console.error("Freeze failed:", e);
+  showMessageBox({
+    title: "Freeze failed",
+    severity: "error",
+    message: String(e?.message || e || "Unknown error"),
+    details: {
+      status: e?.status,
+      code: e?.code,
+      details: e?.details,
+    },
+  });
+  setStatus("Freeze failed.");
+}
+
+async function runFreeze() {
+  if (freezeInFlight) return;
+
+  const appId = getSelectedAppIdOrShowStatus();
+  if (!appId) return;
+
+  freezeInFlight = true;
+
+  try {
+    setStatus("Creating freeze…");
+    const data = await postFreeze(appId);
+    const zipPath = String(data?.freeze?.zipPath || "").trim();
+
+    setStatus(zipPath ? `Freeze created: ${zipPath}` : "Freeze created.");
+    await loadSelectedAppInfo();
+    activateTabById("workspace-app-tab");
+  } catch (e) {
+    handleFreezeError(e);
+  } finally {
+    freezeInFlight = false;
+  }
 }
 
 
@@ -1362,11 +1661,14 @@ async function runAnalysis() {
     // SSE stream state. The live event token is updated only from SSE events,
     // so we intentionally do NOT overwrite `currentRunToken` here.
     const metrics = await fetchJson(data.metricsUrl);
+    activeGraphAppId = appId;
     renderGraph(metrics);
     await renderSupplementaryCharts(metrics);
 
     // Best-effort summary update for the current app accordion header.
     updateCurrentAppSummary(metrics);
+    updateGraphHeader(metrics);
+    showWorkspaceGraphTab();
 
     statusDone(data);
   } catch (e) {
@@ -1386,11 +1688,14 @@ async function runAnalysis() {
  *
  * Order matters:
  * 1) verify side panels exist
- * 2) start SSE early so live events are available
- * 3) load apps, which may auto-trigger the first analyze run
+ * 2) initialize static headers
+ * 3) start SSE early so live events are available
+ * 4) load apps without auto-running analysis
  */
 function init() {
   ensurePanelsExist();
+  updateCurrentAppSummary(null);
+  updateGraphHeader(null);
   startLiveEvents();
   loadApps();
 }
