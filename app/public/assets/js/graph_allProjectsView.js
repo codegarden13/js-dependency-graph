@@ -5,6 +5,12 @@ const SCORE_WEIGHTS = Object.freeze({
   cc: 0.35,
   volatility: 0.20
 });
+const REVIEW_QUEUE_WEIGHTS = Object.freeze({
+  hotness: 0.5,
+  ccDensity: 0.3,
+  codeLines: 0.2
+});
+const REVIEW_QUEUE_LIMIT = 18;
 
 export async function renderAllProjectsView(elementId) {
   const root = document.getElementById(String(elementId || ""));
@@ -42,6 +48,7 @@ function decoratePortfolioPayload(payload) {
   return {
     generatedAt: String(payload?.generatedAt || ""),
     apps,
+    reviewQueue: buildReviewQueue(apps),
     totalRuns: apps.reduce((sum, app) => sum + Number(app?.runCount || 0), 0)
   };
 }
@@ -153,6 +160,51 @@ function compactSeries(history, readValue) {
   return values;
 }
 
+function buildReviewQueue(apps) {
+  const modules = (apps || [])
+    .flatMap((app) => Array.isArray(app?.latestModules) ? app.latestModules : []);
+  const maxima = collectReviewQueueMaxima(modules);
+
+  return modules
+    .map((module) => attachReviewQueuePriority(module, maxima))
+    .sort(compareReviewQueueItems)
+    .slice(0, REVIEW_QUEUE_LIMIT);
+}
+
+function collectReviewQueueMaxima(modules) {
+  return {
+    hotness: maxMetric(modules, (module) => module.hotness),
+    ccDensity: maxMetric(modules, (module) => module.ccDensity),
+    codeLines: maxMetric(modules, (module) => module.codeLines)
+  };
+}
+
+function attachReviewQueuePriority(module, maxima) {
+  const hotnessNorm = normalizeMetric(module?.hotness, maxima.hotness);
+  const ccDensityNorm = normalizeMetric(module?.ccDensity, maxima.ccDensity);
+  const codeLinesNorm = normalizeMetric(module?.codeLines, maxima.codeLines);
+  const priority =
+    hotnessNorm * REVIEW_QUEUE_WEIGHTS.hotness +
+    ccDensityNorm * REVIEW_QUEUE_WEIGHTS.ccDensity +
+    codeLinesNorm * REVIEW_QUEUE_WEIGHTS.codeLines;
+
+  return {
+    ...module,
+    priority,
+    priorityPct: Math.round(priority * 100)
+  };
+}
+
+function compareReviewQueueItems(a, b) {
+  return (
+    (Number(b?.priority) || 0) - (Number(a?.priority) || 0) ||
+    (Number(b?.hotness) || 0) - (Number(a?.hotness) || 0) ||
+    (Number(b?.ccDensity) || 0) - (Number(a?.ccDensity) || 0) ||
+    (Number(b?.codeLines) || 0) - (Number(a?.codeLines) || 0) ||
+    String(a?.module || "").localeCompare(String(b?.module || ""))
+  );
+}
+
 function renderPortfolioView(root, state) {
   if (!state.apps.length) {
     root.innerHTML = `<div class="text-secondary small">No project history available yet.</div>`;
@@ -160,6 +212,7 @@ function renderPortfolioView(root, state) {
   }
 
   root.innerHTML = buildPortfolioMarkup(state);
+  bindReviewNoteButtons(root);
 
   const riskMapSvg = root.querySelector("[data-role='portfolio-risk-map']");
   if (riskMapSvg) renderRiskMap(riskMapSvg, state.apps);
@@ -180,16 +233,127 @@ function buildPortfolioMarkup(state) {
         </div>
       </div>
 
-      <section class="portfolioCard">
-        <div class="small fw-semibold mb-2">Risk map</div>
-        <svg class="portfolioRiskMap" data-role="portfolio-risk-map" viewBox="0 0 920 320" preserveAspectRatio="xMidYMid meet"></svg>
-      </section>
+      <div class="portfolioTopGrid">
+        <section class="portfolioCard portfolioLegendCard">${buildRiskLegendMarkup()}</section>
+
+        <section class="portfolioCard">
+          <div class="small fw-semibold mb-2">Risk map</div>
+          <svg class="portfolioRiskMap" data-role="portfolio-risk-map" viewBox="0 0 920 320" preserveAspectRatio="xMidYMid meet"></svg>
+        </section>
+      </div>
+
+      ${buildReviewQueueMarkup(state.reviewQueue)}
 
       <section class="portfolioProjectsList">
         ${state.apps.map(buildProjectRowMarkup).join("")}
       </section>
     </div>
   `;
+}
+
+function buildRiskLegendMarkup() {
+  return `
+    <section class="portfolioLegend">
+      <div class="small fw-semibold">Legend</div>
+      <div class="portfolioLegendRows">
+        <div class="portfolioLegendRow">
+          <span class="portfolioLegendSwatch tone-stable" aria-hidden="true"></span>
+          <span class="small">stable</span>
+        </div>
+        <div class="portfolioLegendRow">
+          <span class="portfolioLegendSwatch tone-watch" aria-hidden="true"></span>
+          <span class="small">watch</span>
+        </div>
+        <div class="portfolioLegendRow">
+          <span class="portfolioLegendSwatch tone-critical" aria-hidden="true"></span>
+          <span class="small">critical</span>
+        </div>
+      </div>
+      <div class="portfolioLegendMeta small text-secondary">
+        <div>X: hotness density</div>
+        <div>Y: CC density</div>
+        <div>Size: code lines</div>
+      </div>
+    </section>
+  `;
+}
+
+function buildReviewQueueMarkup(reviewQueue) {
+  if (!Array.isArray(reviewQueue) || !reviewQueue.length) {
+    return `
+      <section class="portfolioCard">
+        <div class="text-secondary small">No module-level review queue available yet.</div>
+      </section>
+    `;
+  }
+
+  return `
+    <section class="portfolioCard portfolioReviewQueue">
+      <div class="portfolioReviewQueueHeader">
+        <div class="small fw-semibold">Next files to revise</div>
+        <div class="small text-secondary">Sorted globally by hotspot, CC density and size.</div>
+      </div>
+      <div class="table-responsive portfolioReviewTableWrap">
+        <table class="table table-sm portfolioReviewTable align-middle">
+          <thead>
+            <tr>
+              <th scope="col">App</th>
+              <th scope="col">Module</th>
+              <th scope="col">Hotness</th>
+              <th scope="col">CC density</th>
+              <th scope="col">CC</th>
+              <th scope="col">Code lines</th>
+              <th scope="col">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${reviewQueue.map(buildReviewQueueRow).join("")}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function buildReviewQueueRow(item) {
+  const appId = String(item?.appId || "");
+  const moduleName = String(item?.module || "");
+  const hotness = Number(item?.hotness || 0);
+  const ccDensity = Number(item?.ccDensity || 0);
+  const cc = Number(item?.cc || 0);
+  const codeLines = Number(item?.codeLines || 0);
+
+  return `
+    <tr>
+      <td class="portfolioReviewApp">${escapeHtml(appId)}</td>
+      <td class="portfolioReviewModule">${escapeHtml(moduleName)}</td>
+      <td>${escapeHtml(formatMetricValue(hotness))}</td>
+      <td>${escapeHtml(formatMetricValue(ccDensity))}</td>
+      <td>${escapeHtml(formatIntegerMetric(cc))}</td>
+      <td>${escapeHtml(formatIntegerMetric(codeLines))}</td>
+      <td class="portfolioReviewAction">
+        <button
+          type="button"
+          class="btn btn-sm btn-outline-secondary portfolioNoteBtn"
+          data-action="create-review-note"
+          data-app-id="${escapeHtml(appId)}"
+          data-module="${escapeHtml(moduleName)}"
+          data-hotness="${escapeHtml(hotness)}"
+          data-cc-density="${escapeHtml(ccDensity)}"
+          data-cc="${escapeHtml(cc)}"
+          data-code-lines="${escapeHtml(codeLines)}"
+        >
+          create note
+        </button>
+      </td>
+    </tr>
+  `;
+}
+
+function formatIntegerMetric(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "n/a";
+  return String(Math.round(numeric));
 }
 
 function buildProjectRowMarkup(app) {
@@ -366,6 +530,90 @@ function renderRiskMap(svgElement, apps) {
     .attr("text-anchor", "middle")
     .attr("class", "portfolioRiskLabel")
     .text((app) => app.appId);
+}
+
+function bindReviewNoteButtons(root) {
+  root.querySelectorAll("[data-action='create-review-note']").forEach((button) => {
+    button.addEventListener("click", () => createReviewNote(button));
+  });
+}
+
+function createReviewNote(button) {
+  const appId = String(button?.dataset?.appId || "");
+  const moduleName = String(button?.dataset?.module || "");
+  const hotness = Number(button?.dataset?.hotness || 0);
+  const ccDensity = Number(button?.dataset?.ccDensity || 0);
+  const cc = Number(button?.dataset?.cc || 0);
+  const codeLines = Number(button?.dataset?.codeLines || 0);
+  const noteText = buildReviewNoteText({ appId, moduleName, hotness, ccDensity, cc, codeLines });
+  const filename = buildReviewNoteFilename(appId, moduleName);
+
+  downloadTextFile(filename, noteText);
+  flashReviewNoteButton(button);
+}
+
+function buildReviewNoteText({ appId, moduleName, hotness, ccDensity, cc, codeLines }) {
+  return [
+    `# Review note: ${moduleName}`,
+    "",
+    `- App: ${appId}`,
+    `- Module: ${moduleName}`,
+    `- Hotness: ${formatMetricValue(hotness)}`,
+    `- CC density: ${formatMetricValue(ccDensity)}`,
+    `- CC: ${cc}`,
+    `- Code lines: ${codeLines}`,
+    `- Created: ${new Date().toISOString()}`,
+    "",
+    "## Why review now",
+    "- High portfolio review priority based on hotspot, CC density and size.",
+    "",
+    "## Findings",
+    "-",
+    "",
+    "## Refactor ideas",
+    "-",
+    "",
+    "## Risks / tests",
+    "-"
+  ].join("\n");
+}
+
+function buildReviewNoteFilename(appId, moduleName) {
+  return `${noteFilenameToken(appId)}-${noteFilenameToken(moduleName)}-review-note.md`;
+}
+
+function noteFilenameToken(value) {
+  return String(value || "")
+    .trim()
+    .replace(/[^a-z0-9._-]+/gi, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "") || "note";
+}
+
+function downloadTextFile(filename, text) {
+  const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+function flashReviewNoteButton(button) {
+  if (!button) return;
+
+  const originalText = button.textContent;
+  button.textContent = "created";
+  button.disabled = true;
+
+  window.setTimeout(() => {
+    button.textContent = originalText;
+    button.disabled = false;
+  }, 1400);
 }
 
 function scaleLinear(value, min, max, outMin, outMax) {

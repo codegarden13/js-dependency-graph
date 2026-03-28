@@ -6,6 +6,11 @@ import { normalizeId } from "../stringUtils.js";
 
 const CODE_FILE_EXT_RE = /\.(js|mjs|cjs|ts|tsx|jsx)$/i;
 const CODE_METRICS_SUFFIX = "-code-metrics.csv";
+const MODULE_PRIORITY_WEIGHTS = Object.freeze({
+  hotness: 0.5,
+  ccDensity: 0.3,
+  codeLines: 0.2
+});
 
 export function buildPortfolioHistory(apps) {
   const configuredApps = Array.isArray(apps) ? apps : [];
@@ -25,6 +30,7 @@ function buildConfiguredAppHistory(app) {
   const history = listAppHistoryFiles(appId)
     .map((fileName) => buildHistoryRun(appId, fileName))
     .filter((run) => run !== null);
+  const latest = history[history.length - 1] || null;
 
   return {
     appId,
@@ -32,8 +38,9 @@ function buildConfiguredAppHistory(app) {
     url: String(app?.url || ""),
     entry: String(app?.entry || ""),
     runCount: history.length,
-    latest: history[history.length - 1] || null,
-    history
+    latest,
+    history,
+    latestModules: latest ? buildLatestModules(appId, latest.file) : []
   };
 }
 
@@ -57,6 +64,7 @@ function buildHistoryRun(appId, fileName) {
   if (!timestamp) return null;
 
   const rows = readCsvRows(path.join(OUTPUT_DIR, fileName));
+  if (!isSupportedHistoryRows(rows)) return null;
   const summary = summarizeHistoryRows(rows);
 
   return {
@@ -64,6 +72,12 @@ function buildHistoryRun(appId, fileName) {
     timestamp,
     ...summary
   };
+}
+
+function buildLatestModules(appId, fileName) {
+  const rows = readCsvRows(path.join(OUTPUT_DIR, fileName));
+  if (!isSupportedHistoryRows(rows)) return [];
+  return rankLatestModules(extractLatestModules(rows, appId));
 }
 
 function extractRunDate(fileName, appId) {
@@ -100,6 +114,18 @@ function parseCsvText(text) {
 
   const headers = splitCsvLine(lines[0]);
   return lines.slice(1).map((line) => buildCsvRow(headers, splitCsvLine(line)));
+}
+
+function isSupportedHistoryRows(rows) {
+  const sample = Array.isArray(rows) ? rows[0] : null;
+  if (!sample || typeof sample !== "object") return false;
+
+  return [
+    "relation",
+    "kind",
+    "file",
+    "fileName"
+  ].some((key) => Object.prototype.hasOwnProperty.call(sample, key));
 }
 
 function splitCsvLine(line) {
@@ -154,6 +180,92 @@ function summarizeHistoryRows(rows) {
   }
 
   return finalizeHistoryAggregate(aggregate);
+}
+
+function extractLatestModules(rows, appId) {
+  return (rows || [])
+    .filter(isProjectCodeRow)
+    .map((row) => toLatestModuleMetric(row, appId))
+    .filter(Boolean);
+}
+
+function toLatestModuleMetric(row, appId) {
+  const module = readHistoryFileName(row);
+  if (!module) return null;
+
+  const codeLines = readCodeLinesValue(row).value;
+  const cc = readCcValue(row) ?? 0;
+  const hotness = readNumberOrZero(row?.hotspotScore);
+
+  return {
+    appId,
+    module,
+    codeLines,
+    cc,
+    hotness,
+    ccDensity: codeLines > 0 ? (cc / codeLines) * 1000 : 0
+  };
+}
+
+function rankLatestModules(modules) {
+  const maxima = collectLatestModuleMaxima(modules);
+
+  return modules
+    .map((module) => attachModulePriority(module, maxima))
+    .sort(compareLatestModules);
+}
+
+function collectLatestModuleMaxima(modules) {
+  return {
+    hotness: maxModuleMetric(modules, (module) => module.hotness),
+    ccDensity: maxModuleMetric(modules, (module) => module.ccDensity),
+    codeLines: maxModuleMetric(modules, (module) => module.codeLines)
+  };
+}
+
+function maxModuleMetric(modules, readValue) {
+  let max = 0;
+
+  for (const module of modules) {
+    const value = Number(readValue(module) || 0);
+    if (value > max) max = value;
+  }
+
+  return max;
+}
+
+function attachModulePriority(module, maxima) {
+  const hotnessNorm = normalizeModuleMetric(module.hotness, maxima.hotness);
+  const ccDensityNorm = normalizeModuleMetric(module.ccDensity, maxima.ccDensity);
+  const codeLinesNorm = normalizeModuleMetric(module.codeLines, maxima.codeLines);
+  const priority =
+    hotnessNorm * MODULE_PRIORITY_WEIGHTS.hotness +
+    ccDensityNorm * MODULE_PRIORITY_WEIGHTS.ccDensity +
+    codeLinesNorm * MODULE_PRIORITY_WEIGHTS.codeLines;
+
+  return {
+    ...module,
+    priority,
+    priorityPct: Math.round(priority * 100)
+  };
+}
+
+function normalizeModuleMetric(value, max) {
+  const numericValue = Number(value || 0);
+  const numericMax = Number(max || 0);
+  if (!Number.isFinite(numericValue) || numericValue <= 0) return 0;
+  if (!Number.isFinite(numericMax) || numericMax <= 0) return 0;
+  return numericValue / numericMax;
+}
+
+function compareLatestModules(a, b) {
+  return (
+    (Number(b?.priority) || 0) - (Number(a?.priority) || 0) ||
+    (Number(b?.hotness) || 0) - (Number(a?.hotness) || 0) ||
+    (Number(b?.ccDensity) || 0) - (Number(a?.ccDensity) || 0) ||
+    (Number(b?.codeLines) || 0) - (Number(a?.codeLines) || 0) ||
+    String(a?.module || "").localeCompare(String(b?.module || ""))
+  );
 }
 
 function createHistoryAggregate() {

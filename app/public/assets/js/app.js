@@ -583,16 +583,111 @@ function renderAppInfoRow(label, value, { html = false } = {}) {
   `;
 }
 
-function renderAppInfoSection(title, rows) {
+function renderAppInfoTable(rows) {
   return `
-    <section class="appInfoSection">
-      <div class="appInfoSectionTitle">${esc(title)}</div>
-      <div class="table-responsive">
-        <table class="table table-sm appInfoTable">
-          <tbody>${rows.join("")}</tbody>
-        </table>
-      </div>
+    <div class="table-responsive">
+      <table class="table table-sm appInfoTable">
+        <tbody>${rows.join("")}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderAppInfoSectionPanel(section) {
+  return `
+    <section class="appInfoSection appInfoTabPanel">
+      <div class="appInfoSectionTitle">${esc(section.title)}</div>
+      ${String(section.contentHtml || "")}
     </section>
+  `;
+}
+
+function renderAppInfoSectionTabs(sections) {
+  const navItems = sections
+    .map((section, index) => {
+      const active = index === 0 ? " active" : "";
+      const selected = index === 0 ? "true" : "false";
+      const shown = index === 0 ? " show active" : "";
+      const tabId = `app-info-${section.id}-tab`;
+      const paneId = `app-info-${section.id}-pane`;
+
+      return {
+        nav: `
+          <li class="nav-item" role="presentation">
+            <button class="nav-link small${active}" id="${tabId}" data-bs-toggle="tab"
+              data-bs-target="#${paneId}" type="button" role="tab" aria-controls="${paneId}"
+              aria-selected="${selected}">
+              ${esc(section.title)}
+            </button>
+          </li>
+        `,
+        pane: `
+          <div class="tab-pane fade${shown}" id="${paneId}" role="tabpanel" aria-labelledby="${tabId}" tabindex="0">
+            ${renderAppInfoSectionPanel(section)}
+          </div>
+        `
+      };
+    });
+
+  return `
+    <div class="appInfoTabs">
+      <ul class="nav nav-tabs appInfoTabsNav" role="tablist">
+        ${navItems.map((item) => item.nav).join("")}
+      </ul>
+      <div class="tab-content appInfoTabsContent">
+        ${navItems.map((item) => item.pane).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderCommitAuthorCell(commit) {
+  const authorName = esc(toDisplayText(commit?.authorName));
+  const authorEmail = String(commit?.authorEmail || "").trim();
+  if (!authorEmail) return authorName;
+
+  return `
+    <div>${authorName}</div>
+    <div class="small text-secondary">${esc(authorEmail)}</div>
+  `;
+}
+
+function renderCommitsTable(commits, gitAvailable) {
+  if (!gitAvailable) {
+    return `<div class="text-secondary small">No Git repository detected.</div>`;
+  }
+
+  if (!Array.isArray(commits) || commits.length === 0) {
+    return `<div class="text-secondary small">No commits available.</div>`;
+  }
+
+  const rows = commits
+    .map((commit) => `
+      <tr>
+        <td class="appInfoCommitDate">${esc(formatIsoDate(commit?.authoredAt))}</td>
+        <td class="appInfoCommitShaCell">
+          <span class="appInfoCommitSha">${esc(toDisplayText(commit?.shortSha || commit?.fullSha))}</span>
+        </td>
+        <td>${renderCommitAuthorCell(commit)}</td>
+        <td class="appInfoCommitSubject">${esc(toDisplayText(commit?.subject))}</td>
+      </tr>
+    `)
+    .join("");
+
+  return `
+    <div class="table-responsive">
+      <table class="table table-sm appInfoTable appInfoCommitsTable">
+        <thead>
+          <tr>
+            <th scope="col">Date</th>
+            <th scope="col">Commit</th>
+            <th scope="col">Author</th>
+            <th scope="col">Subject</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
   `;
 }
 
@@ -647,25 +742,24 @@ function renderAppInfoPanel(data) {
 
   const app = data.app || {};
   const git = data.git || {};
-  const lastCommit = git.lastCommit || null;
+  const commits = Array.isArray(git.commits) ? git.commits : [];
   const freeze = data.freeze || {};
   const latestFreeze = freeze.latest || null;
-
-  root.innerHTML = `
-    <div class="d-grid gap-3">
-      <div>
-        <div class="h5 mb-1">${esc(app.name || app.id || "App")}</div>
-        <div class="small text-secondary">${esc(app.id || "")}</div>
-      </div>
-
-      ${renderAppInfoSection("Overview", [
+  const sections = [
+    {
+      id: "overview",
+      title: "Overview",
+      contentHtml: renderAppInfoTable([
         renderAppInfoRow("URL", buildLinkHtml(app.url), { html: true }),
         renderAppInfoRow("Entrypoint", buildPathHtml(app.entry), { html: true }),
         renderAppInfoRow("Project root", buildPathHtml(app.appRootAbs || app.rootDir), { html: true }),
         renderAppInfoRow("Backup dir", buildPathHtml(freeze.backupDir || app.backupDir), { html: true })
-      ])}
-
-      ${renderAppInfoSection("Git", [
+      ])
+    },
+    {
+      id: "git",
+      title: "Git",
+      contentHtml: renderAppInfoTable([
         renderAppInfoRow("Repository", buildPathHtml(git.repoRootAbs), { html: true }),
         renderAppInfoRow("Branch", toDisplayText(git.branch)),
         renderAppInfoRow("Upstream", toDisplayText(git.upstream)),
@@ -678,22 +772,32 @@ function renderAppInfoPanel(data) {
           git.available ? `${Number(git.ahead || 0)} / ${Number(git.behind || 0)}` : "—"
         ),
         renderAppInfoRow("Worktree", buildWorktreeBadges(git.worktree, git.available), { html: true })
-      ])}
-
-      ${renderAppInfoSection("Last commit", [
-        renderAppInfoRow("Subject", toDisplayText(lastCommit?.subject)),
-        renderAppInfoRow("Commit", toDisplayText(lastCommit?.shortSha || lastCommit?.fullSha)),
-        renderAppInfoRow("Author", toDisplayText(lastCommit?.authorName)),
-        renderAppInfoRow("Email", toDisplayText(lastCommit?.authorEmail)),
-        renderAppInfoRow("Date", formatIsoDate(lastCommit?.authoredAt))
-      ])}
-
-      ${renderAppInfoSection("Freeze", [
+      ])
+    },
+    {
+      id: "commits",
+      title: "Commits",
+      contentHtml: renderCommitsTable(commits, git.available)
+    },
+    {
+      id: "freeze",
+      title: "Freeze",
+      contentHtml: renderAppInfoTable([
         renderAppInfoRow("Latest ZIP", buildPathHtml(latestFreeze?.zipPath), { html: true }),
         renderAppInfoRow("Filename", toDisplayText(latestFreeze?.zipFilename)),
         renderAppInfoRow("Modified", formatIsoDate(latestFreeze?.modifiedAt)),
         renderAppInfoRow("Size", formatBytes(latestFreeze?.sizeBytes))
-      ])}
+      ])
+    }
+  ];
+
+  root.innerHTML = `
+    <div class="appInfoShell">
+      <div>
+        <div class="h5 mb-1">${esc(app.name || app.id || "App")}</div>
+        <div class="small text-secondary">${esc(app.id || "")}</div>
+      </div>
+      ${renderAppInfoSectionTabs(sections)}
     </div>
   `;
 }
@@ -1351,6 +1455,10 @@ function ensureAppsListActionsBound(list) {
   });
 }
 
+function requestInitialAnalysis() {
+  runAnalysis().catch((e) => console.error(e));
+}
+
 /**
  * Lädt die App-Presets vom Backend (`/apps`) und rendert sie in die Sidebar.
  *
@@ -1363,7 +1471,7 @@ function ensureAppsListActionsBound(list) {
  * 5) Delegierten Click-Handler einmalig binden (open/restart/select)
  * 6) App-Info für die Auswahl laden
  */
-async function loadApps() {
+async function loadApps({ autoAnalyze = false } = {}) {
   const list = byId("appList");
   const hidden = /** @type {HTMLInputElement|null} */ (byId("appSelect"));
   if (!list || !hidden) return;
@@ -1402,6 +1510,10 @@ async function loadApps() {
 
   applySelectedApp(list, current);
   renderAllProjectsOverview().catch((e) => console.warn("Portfolio refresh failed:", e));
+
+  if (autoAnalyze) {
+    requestInitialAnalysis();
+  }
 }
 
 /* ======================================================================= */
@@ -1970,7 +2082,7 @@ async function runAnalysis() {
  * 1) verify side panels exist
  * 2) initialize static headers
  * 3) start SSE early so live events are available
- * 4) load apps without auto-running analysis
+ * 4) load apps and immediately analyze the default selection
  */
 function init() {
   ensurePanelsExist();
@@ -1982,7 +2094,7 @@ function init() {
   updateGraphHeader(null);
   startLiveEvents();
   renderAllProjectsOverview().catch((e) => console.warn("Portfolio init failed:", e));
-  loadApps();
+  loadApps({ autoAnalyze: true });
 }
 
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);

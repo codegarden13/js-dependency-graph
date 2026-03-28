@@ -17,6 +17,8 @@
  * - No traversal strategy (BFS/DFS) knowledge
  */
 
+const NUMERIC_NODE_METRIC_KEYS = ["lines", "codeLines", "commentLines", "blankLines", "complexity"];
+
 export class GraphStore {
   constructor() {
     /** @type {any[]} */
@@ -42,9 +44,9 @@ export class GraphStore {
   }
 
   mergeStubMetrics(existing, incoming) {
-    // Prefer richer metrics if the existing node is still a stub (0).
-    this.mergeMetric(existing, incoming, "lines");
-    this.mergeMetric(existing, incoming, "complexity");
+    for (const key of NUMERIC_NODE_METRIC_KEYS) {
+      this.mergeMetric(existing, incoming, key);
+    }
 
     if (!existing.headerComment && incoming.headerComment) {
       existing.headerComment = String(incoming.headerComment || "");
@@ -104,13 +106,22 @@ export class GraphStore {
     return String(value || "");
   }
 
+  buildMetricFields(node) {
+    return Object.fromEntries(
+      NUMERIC_NODE_METRIC_KEYS.map((key) => [key, this.normalizeNumber(node?.[key])])
+    );
+  }
+
   buildBaseNode(id, node) {
     const file = this.normalizeFile(node, id);
-    const lines = this.normalizeNumber(node?.lines);
-    const complexity = this.normalizeNumber(node?.complexity);
     const headerComment = this.normalizeString(node?.headerComment);
 
-    return { id, file, lines, complexity, headerComment };
+    return {
+      id,
+      file,
+      ...this.buildMetricFields(node),
+      headerComment
+    };
   }
 
   applyOptionalNodeFields(out, node) {

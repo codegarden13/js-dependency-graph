@@ -231,6 +231,18 @@ body {
   background: #fff;
 }
 
+.portfolioTopGrid {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.portfolioLegendCard {
+  width: max-content;
+  max-width: 100%;
+}
+
 .portfolioRiskMap {
   width: 100%;
   height: 320px;
@@ -259,6 +271,83 @@ body {
 
 .portfolioRiskBubble.tone-critical {
   fill: rgba(220, 38, 38, 0.58);
+}
+
+.portfolioLegend {
+  display: grid;
+  gap: 8px;
+}
+
+.portfolioLegendRows {
+  display: grid;
+  gap: 6px;
+}
+
+.portfolioLegendRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.portfolioLegendSwatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 23, 42, 0.18);
+  flex: 0 0 auto;
+}
+
+.portfolioLegendSwatch.tone-stable {
+  background: rgba(22, 163, 74, 0.45);
+}
+
+.portfolioLegendSwatch.tone-watch {
+  background: rgba(245, 158, 11, 0.55);
+}
+
+.portfolioLegendSwatch.tone-critical {
+  background: rgba(220, 38, 38, 0.58);
+}
+
+.portfolioLegendMeta {
+  display: grid;
+  gap: 2px;
+}
+
+.portfolioReviewQueue {
+  display: grid;
+  gap: 10px;
+}
+
+.portfolioReviewTableWrap {
+  max-height: 320px;
+  overflow: auto;
+}
+
+.portfolioReviewTable {
+  margin-bottom: 0;
+}
+
+.portfolioReviewTable th {
+  white-space: nowrap;
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.55);
+  font-weight: 600;
+}
+
+.portfolioReviewApp,
+.portfolioReviewAction {
+  white-space: nowrap;
+}
+
+.portfolioReviewModule {
+  min-width: 220px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+
+.portfolioNoteBtn {
+  white-space: nowrap;
 }
 
 .portfolioProjectsList {
@@ -320,6 +409,16 @@ body {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
+}
+
+@media (max-width: 1199.98px) {
+  .portfolioTopGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .portfolioReviewTableWrap {
+    max-height: none;
+  }
 }
 
 .portfolioMetricTile {
@@ -441,8 +540,8 @@ body {
    App list
    -------------------------------------------------------------------------- */
 .appsScroll {
-  max-height: 220px;
-  overflow: auto;
+  max-height: none;
+  overflow: visible;
 }
 
 .app-item {
@@ -636,6 +735,27 @@ body {
   overflow: auto;
 }
 
+.appInfoShell {
+  display: grid;
+  gap: 16px;
+}
+
+.appInfoTabsNav {
+  gap: 4px;
+}
+
+.appInfoTabsContent {
+  padding-top: 12px;
+}
+
+.appInfoTabPanel {
+  margin: 0;
+  padding: 16px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 12px;
+  background: rgba(248, 249, 250, 0.7);
+}
+
 .appInfoSection + .appInfoSection {
   margin-top: 20px;
 }
@@ -663,6 +783,28 @@ body {
 .appInfoTable td {
   font-size: 12px;
   vertical-align: top;
+}
+
+.appInfoCommitsTable thead th {
+  width: auto;
+  white-space: nowrap;
+}
+
+.appInfoCommitsTable td {
+  font-size: 12px;
+}
+
+.appInfoCommitDate,
+.appInfoCommitShaCell {
+  white-space: nowrap;
+}
+
+.appInfoCommitSha {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.appInfoCommitSubject {
+  min-width: 280px;
 }
 
 .appInfoPath {

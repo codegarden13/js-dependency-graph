@@ -4,11 +4,16 @@ import { spawnSync } from "node:child_process";
 import { normalizeFsPath } from "./fsPaths.js";
 import { findLatestProjectFreeze } from "./analyze/projectFreeze.js";
 
-function runGit(projectRootAbs, args) {
+const DEFAULT_GIT_MAX_BUFFER = 8 * 1024 * 1024;
+const COMMIT_HISTORY_MAX_BUFFER = 64 * 1024 * 1024;
+const GIT_FIELD_SEPARATOR = "\x1f";
+const GIT_RECORD_SEPARATOR = "\x1e";
+
+function runGit(projectRootAbs, args, { maxBuffer = DEFAULT_GIT_MAX_BUFFER } = {}) {
   const res = spawnSync("git", args, {
     cwd: projectRootAbs,
     encoding: "utf8",
-    maxBuffer: 8 * 1024 * 1024
+    maxBuffer
   });
 
   if (res.error) {
@@ -126,7 +131,7 @@ function parseGitStatus(stdout) {
   };
 }
 
-function parseLastCommit(stdout) {
+function buildCommitRecord(fields) {
   const [
     fullSha = "",
     shortSha = "",
@@ -134,7 +139,7 @@ function parseLastCommit(stdout) {
     authorEmail = "",
     authoredAt = "",
     subject = ""
-  ] = String(stdout || "").split(/\r?\n/);
+  ] = fields;
 
   if (!fullSha) return null;
 
@@ -146,6 +151,30 @@ function parseLastCommit(stdout) {
     authoredAt,
     subject
   };
+}
+
+function parseCommitHistory(stdout) {
+  return String(stdout || "")
+    .split(GIT_RECORD_SEPARATOR)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => buildCommitRecord(entry.split(GIT_FIELD_SEPARATOR)))
+    .filter(Boolean);
+}
+
+function readCommitHistory(projectRootAbs) {
+  const res = runGit(
+    projectRootAbs,
+    [
+      "log",
+      "--date=iso-strict",
+      `--format=%H${GIT_FIELD_SEPARATOR}%h${GIT_FIELD_SEPARATOR}%an${GIT_FIELD_SEPARATOR}%ae${GIT_FIELD_SEPARATOR}%aI${GIT_FIELD_SEPARATOR}%s${GIT_RECORD_SEPARATOR}`
+    ],
+    { maxBuffer: COMMIT_HISTORY_MAX_BUFFER }
+  );
+
+  if (!res.ok) return [];
+  return parseCommitHistory(res.stdout);
 }
 
 function collectGitInfo(projectRootAbs) {
@@ -167,12 +196,8 @@ function collectGitInfo(projectRootAbs) {
   const commitCount = toIntegerOrZero(readGitValue(projectRootAbs, ["rev-list", "--count", "HEAD"]));
   const trackedFileCount = readGitTrackedFileCount(projectRootAbs);
   const remoteOriginUrl = readGitValue(projectRootAbs, ["remote", "get-url", "origin"]);
-  const lastCommit = parseLastCommit(
-    readGitValue(
-      projectRootAbs,
-      ["log", "-1", "--date=iso-strict", "--format=%H%n%h%n%an%n%ae%n%aI%n%s"]
-    )
-  );
+  const commits = readCommitHistory(projectRootAbs);
+  const lastCommit = commits[0] || null;
 
   return {
     available: true,
@@ -195,7 +220,8 @@ function collectGitInfo(projectRootAbs) {
       untrackedCount: status.untrackedCount || 0,
       conflictedCount: status.conflictedCount || 0
     },
-    lastCommit
+    lastCommit,
+    commits
   };
 }
 
