@@ -53,6 +53,17 @@ const MEDIA_EXTS = new Set([
   ".3gp"
 ]);
 
+const ARCHIVE_EXTS = new Set([
+  ".zip",
+  ".7z",
+  ".rar",
+  ".tar",
+  ".gz",
+  ".tgz",
+  ".bz2",
+  ".xz"
+]);
+
 function normalizeTimestampToken(timestampIso) {
   return String(timestampIso || new Date().toISOString())
     .replace(/[:.]/g, "-")
@@ -91,6 +102,10 @@ function isMediaRelPath(relPath) {
   return MEDIA_EXTS.has(String(path.extname(relPath || "")).toLowerCase());
 }
 
+function isArchiveRelPath(relPath) {
+  return ARCHIVE_EXTS.has(String(path.extname(relPath || "")).toLowerCase());
+}
+
 function buildExcludedRelPrefixes(projectRootAbs, backupDirAbs) {
   const out = new Set(EXCLUDED_REL_DIR_PREFIXES.map(normalizeRelPathToken));
 
@@ -123,6 +138,7 @@ function shouldSkipDirectory(entryName, relDirPath, excludedPrefixes) {
 function shouldIncludeFile(relFilePath, excludedPrefixes) {
   if (isInsideExcludedPrefix(relFilePath, excludedPrefixes)) return false;
   if (isMediaRelPath(relFilePath)) return false;
+  if (isArchiveRelPath(relFilePath)) return false;
   return true;
 }
 

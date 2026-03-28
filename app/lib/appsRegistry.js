@@ -113,24 +113,6 @@ function readAppRootDir(app) {
 }
 
 /**
- * Read the configured backup target directory from an app record.
- *
- * Why this exists
- * ---------------
- * The scan-freeze feature may evolve across config variants. This helper keeps
- * backward-compatible field handling in one place.
- *
- * @param {object} app
- *   Application config record.
- * @returns {string}
- *   Trimmed configured backup directory, or an empty string.
- */
-function readAppBackupDir(app) {
-  return String(app?.backupDir || app?.backupPath || app?.freezeDir || "").trim();
-}
-
-
-/**
  * Resolve the absolute entry file for one application.
  *
  * Why this exists
@@ -183,12 +165,12 @@ export function resolveAppRootAbs(app) {
  * @param {object} app
  *   Application config record.
  * @returns {string | null}
- *   Normalized absolute backup directory, or `null` when not configured.
+ *   Normalized absolute backup directory, or `null` when the app root is missing.
  */
 export function resolveBackupDirAbs(app) {
-  const backupDir = readAppBackupDir(app);
-  if (!backupDir) return null;
-  return resolveAbsoluteOrProjectPath(backupDir);
+  const appRootAbs = resolveAppRootAbs(app);
+  if (!appRootAbs) return null;
+  return normalizeFsPath(path.join(appRootAbs, "backups"));
 }
 
 

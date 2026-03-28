@@ -25,19 +25,10 @@ function resolveFreezeTarget(app) {
     };
   }
 
-  const backupDirAbs = resolveBackupDirAbs(app);
-  if (!backupDirAbs) {
-    return {
-      ok: false,
-      status: 400,
-      message: "App config is missing backupDir/backupPath/freezeDir."
-    };
-  }
-
   return {
     ok: true,
     appRootAbs,
-    backupDirAbs
+    backupDirAbs: resolveBackupDirAbs(app)
   };
 }
 

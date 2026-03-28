@@ -26,7 +26,7 @@ function listAppPayload(app) {
     rootDir: String(app?.rootDir || app?.root || app?.path || ""),
     entry: String(app?.entry || ""),
     url: String(app?.url || ""),
-    backupDir: String(app?.backupDir || app?.backupPath || app?.freezeDir || "")
+    backupDir: String(resolveBackupDirAbs(app) || "")
   };
 }
 
