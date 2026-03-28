@@ -30,6 +30,7 @@ import appsRoute from "./routes/apps.js";       // GET  /apps    → list known 
 import freezeRoute from "./routes/freeze.js";   // POST /freeze  → create ZIP freeze
 import readmeRoute from "./routes/readme.js";   // GET  /readme  → resolve nearest README
 import helpRoute from "./routes/help.js";       // GET  /help    → UI help markdown
+import portfolioRoute from "./routes/portfolio.js";
 
 // Output routes expose generated analysis artifacts
 import outputRoutes from "./routes/output.js";  // /api/output-files etc.
@@ -84,6 +85,7 @@ app.use(express.json());
  *   GET /api/output-files?appId=xyz&type=code-metrics
  */
 app.use("/api", outputRoutes);
+app.use("/api", portfolioRoute);
 
 
 // -----------------------------------------------------------------------------

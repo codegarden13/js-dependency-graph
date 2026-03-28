@@ -100,6 +100,47 @@ function metricsBaseName(appId, timestampIso) {
   return `${buildArtifactPrefix(appId, timestampIso)}-code-metrics`;
 }
 
+function codeMetricsCsvSuffix() {
+  return "-code-metrics.csv";
+}
+
+function csvArtifactFromFilename(filename) {
+  const csvFilename = String(filename || "").trim();
+  return {
+    csvFilename,
+    csvPath: path.join(outputDirAbs(), csvFilename),
+    csvUrl: `/output/${csvFilename}`
+  };
+}
+
+function listCodeMetricsCsvFilenames(appId) {
+  const safeAppId = normalizeId(appId) || "app";
+  const prefix = `${safeAppId}-`;
+  const suffix = codeMetricsCsvSuffix();
+
+  try {
+    return fs.readdirSync(outputDirAbs())
+      .filter((filename) => filename.startsWith(prefix) && filename.endsWith(suffix))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+function latestCodeMetricsCsvArtifact(appId) {
+  const filenames = listCodeMetricsCsvFilenames(appId);
+  const latestFilename = String(filenames[filenames.length - 1] || "").trim();
+  return latestFilename ? csvArtifactFromFilename(latestFilename) : null;
+}
+
+function readFileUtf8OrNull(filePath) {
+  try {
+    return fs.readFileSync(filePath, "utf8");
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Build the full artifact descriptor for one analysis run.
  *
@@ -140,6 +181,11 @@ export function writeMetricsArtifacts(appId, timestampIso, metrics) {
   ensureOutputDir();
 
   const artifacts = metricsArtifacts(appId, timestampIso);
+  const latestCsvBeforeWrite = latestCodeMetricsCsvArtifact(appId);
+  const csvContent = buildMetricsCsv(metrics);
+  const previousCsvContent = latestCsvBeforeWrite
+    ? readFileUtf8OrNull(latestCsvBeforeWrite.csvPath)
+    : null;
 
   fs.writeFileSync(
     artifacts.jsonPath,
@@ -147,9 +193,28 @@ export function writeMetricsArtifacts(appId, timestampIso, metrics) {
     "utf8"
   );
 
-  fs.writeFileSync(
-    artifacts.csvPath,
-    buildMetricsCsv(metrics),
-    "utf8"
-  );
+  const csvChanged = previousCsvContent !== csvContent;
+  const latestCsvArtifact = csvChanged
+    ? {
+      csvFilename: artifacts.csvFilename,
+      csvPath: artifacts.csvPath,
+      csvUrl: artifacts.csvUrl
+    }
+    : latestCsvBeforeWrite;
+
+  if (csvChanged) {
+    fs.writeFileSync(
+      artifacts.csvPath,
+      csvContent,
+      "utf8"
+    );
+  }
+
+  return {
+    ...artifacts,
+    csvChanged,
+    latestCsvFilename: String(latestCsvArtifact?.csvFilename || artifacts.csvFilename),
+    latestCsvPath: String(latestCsvArtifact?.csvPath || artifacts.csvPath),
+    latestCsvUrl: String(latestCsvArtifact?.csvUrl || artifacts.csvUrl)
+  };
 }

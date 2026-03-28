@@ -20,10 +20,16 @@
 
     <div class="d-flex align-items-center justify-content-between mb-3">
       <div>
-        <h2 class="fs-4 fw-semibold mb-0">NodeAnalyzer</h2>
+        <h2 class="fs-4 fw-semibold mb-0" id="shellTitle">NodeAnalyzer</h2>
         <div class="small text-secondary">Dependency graph and file diagnostics</div>
       </div>
-      <span id="status" class="small text-secondary"></span>
+      <div class="topStatusBlock text-end">
+        <div class="small text-secondary latestCsvName ellipsis" id="latestCsvName">Latest CSV: —</div>
+        <div class="statusRow">
+          <span id="status" class="small text-secondary"></span>
+          <span id="statusSignal" class="statusSignal is-neutral" aria-hidden="true" title="No analysis state yet"></span>
+        </div>
+      </div>
     </div>
 
     <div class="row g-3 g-lg-4 align-items-start">
@@ -118,6 +124,29 @@
             <div class="tab-content" id="workspaceTabsContent">
               <div class="tab-pane fade show active" id="workspace-graph-pane" role="tabpanel"
                 aria-labelledby="workspace-graph-tab" tabindex="0">
+                <div class="graphZoomToolbar px-2 pt-2 pb-1 border-bottom bg-body">
+                  <div class="graphZoomToolbarRow">
+                    <div class="graphZoomToolbarCopy">
+                      <div class="small fw-semibold">Graph zoom</div>
+                      <div class="small text-secondary">
+                        Active view:
+                        <span id="graphZoomTarget">Standard graph</span>
+                      </div>
+                    </div>
+                    <div class="graphZoomToolbarControl">
+                      <div class="d-flex align-items-center justify-content-between gap-2 mb-1">
+                        <label for="graphZoomSlider" class="form-label small fw-semibold mb-0">Zoom</label>
+                        <span class="small text-secondary fw-semibold" id="graphZoomValue">100%</span>
+                      </div>
+                      <input id="graphZoomSlider" class="form-range graphZoomSlider" type="range" min="40"
+                        max="220" step="5" value="100" aria-describedby="graphZoomHelp" disabled />
+                      <div class="form-text small mb-0" id="graphZoomHelp">
+                        Zoom the active graph tab with the slider and drag with the mouse to pan.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
                 <div class="border-bottom bg-body">
                   <ul class="nav nav-tabs workspaceInnerTabs px-2 pt-2" id="graphTabs" role="tablist">
                     <li class="nav-item" role="presentation">
@@ -138,7 +167,14 @@
                       <button class="nav-link small" id="graph-time-tab" data-bs-toggle="tab"
                         data-bs-target="#graph-time-pane" type="button" role="tab" aria-controls="graph-time-pane"
                         aria-selected="false">
-                        Time view
+                        Drift history
+                      </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                      <button class="nav-link small" id="graph-projects-tab" data-bs-toggle="tab"
+                        data-bs-target="#graph-projects-pane" type="button" role="tab" aria-controls="graph-projects-pane"
+                        aria-selected="false">
+                        all Projects
                       </button>
                     </li>
                   </ul>
@@ -160,6 +196,13 @@
                       tabindex="0">
                       <svg id="graphTimeView" width="1200" height="800"></svg>
                     </div>
+
+                    <div class="tab-pane fade" id="graph-projects-pane" role="tabpanel"
+                      aria-labelledby="graph-projects-tab" tabindex="0">
+                      <div class="p-3" id="allProjectsPanel">
+                        <div class="text-secondary small">Loading portfolio view…</div>
+                      </div>
+                    </div>
                   </div>
 
                   <div class="accordion graphToolsAccordion mt-2" id="graphToolsAccordion">
@@ -177,18 +220,6 @@
                         data-bs-parent="#graphToolsAccordion">
                         <div class="accordion-body p-2">
                           <div class="graphToolsGrid">
-                            <section class="graphToolSection">
-                              <div class="d-flex align-items-center justify-content-between gap-2 mb-1">
-                                <label for="graphZoomSlider" class="form-label small fw-semibold mb-0">Graph zoom</label>
-                                <span class="small text-secondary fw-semibold" id="graphZoomValue">100%</span>
-                              </div>
-                              <input id="graphZoomSlider" class="form-range graphZoomSlider" type="range" min="40"
-                                max="220" step="5" value="100" aria-describedby="graphZoomHelp" disabled />
-                              <div class="form-text small mb-0" id="graphZoomHelp">
-                                Zoom the standard graph with the slider instead of wheel or trackpad gestures.
-                              </div>
-                            </section>
-
                             <section class="graphToolSection">
                               <label for="graphTextFilterMode" class="form-label small fw-semibold mb-1">Text filter</label>
                               <select id="graphTextFilterMode" class="form-select form-select-sm"

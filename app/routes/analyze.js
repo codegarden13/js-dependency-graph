@@ -17,7 +17,6 @@ import {
 
 
 import {
-  metricsArtifacts,
   writeMetricsArtifacts
 } from "../lib/analyze/artifacts.js";
 
@@ -785,23 +784,23 @@ function buildUrlInfo(appId, app) {
  *
  * @param {string} runToken
  *   Opaque run identifier.
- * @param {string} appId
- *   Requested application identifier.
- * @param {string} timestampIso
- *   Run timestamp in ISO form.
  * @param {Record<string, unknown>} metrics
  *   Built metrics payload.
- * @returns {{runToken: string, metricsUrl: string, csvUrl: string, summary: {nodes: number, links: number}}}
+ * @param {{jsonUrl?: string, latestCsvUrl?: string, latestCsvFilename?: string, csvChanged?: boolean}} artifacts
+ *   Persisted artifact metadata.
+ * @returns {{runToken: string, metricsUrl: string, csvUrl: string, summary: {nodes: number, links: number}, artifacts: {latestCsvFilename: string, csvChanged: boolean}}}
  *   Response payload sent to the client.
  */
-function buildAnalyzeResponse(runToken, appId, timestampIso, metrics) {
-  const artifacts = metricsArtifacts(appId, timestampIso);
-
+function buildAnalyzeResponse(runToken, metrics, artifacts) {
   return {
     runToken,
-    metricsUrl: artifacts.jsonUrl,
-    csvUrl: artifacts.csvUrl,
-    summary: summaryFromMetrics(metrics)
+    metricsUrl: String(artifacts?.jsonUrl || ""),
+    csvUrl: String(artifacts?.latestCsvUrl || ""),
+    summary: summaryFromMetrics(metrics),
+    artifacts: {
+      latestCsvFilename: String(artifacts?.latestCsvFilename || ""),
+      csvChanged: artifacts?.csvChanged === true
+    }
   };
 }
 
@@ -959,13 +958,11 @@ async function handleAnalyze(req, res) {
 
     const context = buildAnalyzeContext(req, appResult.appId, appResult.app);
     const metrics = await buildAnalyzeMetrics(context, targetResult);
+    const artifacts = writeMetricsArtifacts(context.appId, context.timestampIso, metrics);
 
-    writeMetricsArtifacts(context.appId, context.timestampIso, metrics);
     await activateAnalyzeRun(context, targetResult);
 
-    return res.json(
-      buildAnalyzeResponse(context.runToken, context.appId, context.timestampIso, metrics)
-    );
+    return res.json(buildAnalyzeResponse(context.runToken, metrics, artifacts));
   } catch (e) {
     return sendServerError(res, e, "Analyze failed");
   }

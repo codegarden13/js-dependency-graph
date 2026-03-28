@@ -17,6 +17,7 @@
  */
 import path from "node:path";
 import { parseJsTsAst } from "./parseAst.js";
+import { summarizeLineMetrics } from "./lineMetrics.js";
 
 /* ========================================================================== */
 /* PUBLIC API: parseFile                                                      */
@@ -40,6 +41,9 @@ import { parseJsTsAst } from "./parseAst.js";
  *   functions: Array<{id: string, name: string, exported: boolean, complexity: number, startLine: number, endLine: number, locLines: number}>,
  *   calls: Array<{from: string|null, callee: string}>,
  *   lines: number,
+ *   codeLines: number,
+ *   commentLines: number,
+ *   blankLines: number,
  *   complexity: number,
  *   headerComment: string,
  *   fileRefsAbs: string[],
@@ -55,6 +59,7 @@ export function parseFile(src, filenameAbs) {
   const code = String(src || "");
   const filename = String(filenameAbs || "");
   const ext = String(path.extname(filename)).toLowerCase();
+  const lineMetrics = summarizeLineMetrics(code, ext);
 
   // -----------------------------------------------------------------------
   // 1) Stable output contract (always return this shape)
@@ -66,7 +71,10 @@ export function parseFile(src, filenameAbs) {
     calls: [],
     symbols: [],
 
-    lines: countLines(code),
+    lines: lineMetrics.lines,
+    codeLines: lineMetrics.codeLines,
+    commentLines: lineMetrics.commentLines,
+    blankLines: lineMetrics.blankLines,
     complexity: 0,
     headerComment: extractHeaderComment(code),
 
@@ -110,12 +118,6 @@ export function parseFile(src, filenameAbs) {
 function isJsTsExt(ext) {
   return ext === ".js" || ext === ".mjs" || ext === ".cjs" || ext === ".jsx" ||
     ext === ".ts" || ext === ".tsx";
-}
-
-function countLines(code) {
-  if (!code) return 0;
-  // Count newline occurrences + 1 (handles files without trailing newline)
-  return String(code).split(/\r\n|\r|\n/).length;
 }
 
 function stripUtf8Bom(src) {

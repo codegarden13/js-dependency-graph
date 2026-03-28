@@ -54,6 +54,20 @@ import fs from "node:fs";
 import path from "node:path";
 import { isInsideRoot, normalizeFsPath } from "./fsPaths.js";
 
+const CODE_EXTENSIONS = Object.freeze([".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx"]);
+const DATA_EXTENSIONS = Object.freeze([".json", ".jsonc", ".yml", ".yaml", ".csv", ".tsv", ".sql", ".env"]);
+const STYLE_EXTENSIONS = Object.freeze([".css", ".scss", ".sass", ".less"]);
+const MARKUP_EXTENSIONS = Object.freeze([".html", ".htm"]);
+const IMAGE_EXTENSIONS = Object.freeze([".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico"]);
+
+const ALL_EXTENSIONS = Object.freeze([
+  ...CODE_EXTENSIONS,
+  ...DATA_EXTENSIONS,
+  ...STYLE_EXTENSIONS,
+  ...MARKUP_EXTENSIONS,
+  ...IMAGE_EXTENSIONS
+]);
+
 /**
  * Normalize one raw import specifier into the internal resolver form.
  *

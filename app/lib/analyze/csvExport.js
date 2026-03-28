@@ -33,6 +33,9 @@ export const NODE_ROW_FIELDS = [
   ["group", "group"],
   ["layer", "layer"],
   ["lines", "lines"],
+  ["codeLines", "codeLines"],
+  ["commentLines", "commentLines"],
+  ["blankLines", "blankLines"],
   ["complexity", "complexity"],
   ["exported", "exported"],
   ["imported", "imported"],
@@ -129,6 +132,9 @@ export function buildMetricsCsv(metrics) {
     "group",
     "layer",
     "lines",
+    "codeLines",
+    "commentLines",
+    "blankLines",
     "complexity",
     "exported",
     "imported",
@@ -148,6 +154,5 @@ export function buildMetricsCsv(metrics) {
   const body = rows.map((row) => headers.map((key) => csvEscape(row?.[key])).join(","));
   return [headers.join(","), ...body].join("\n");
 }
-
 
 

@@ -1,5 +1,7 @@
 "use strict";
 
+import { installSvgViewZoom } from "./svgViewZoom.js";
+
 const CODE_FILE_EXT_RE = /\.(js|mjs|cjs|ts|tsx|jsx)$/i;
 
 function coerceNumber(value, fallback = 0) {
@@ -492,6 +494,8 @@ function renderGraph(svg, graph, width, height, file) {
     .style("font-size", "12px")
     .style("font-weight", "700")
     .text(layoutName);
+
+  return installSvgViewZoom(svg);
 }
 
 export async function initGraphMriView(svgId, { appId } = {}) {
@@ -509,7 +513,7 @@ export async function initGraphMriView(svgId, { appId } = {}) {
   } catch (err) {
     console.warn("MRI file list failed", err);
     renderEmpty(svg, width, height, "Could not load MRI file list");
-    return;
+    return null;
   }
 
   const file = (files || [])
@@ -519,7 +523,7 @@ export async function initGraphMriView(svgId, { appId } = {}) {
 
   if (!file) {
     renderEmpty(svg, width, height, "No MRI data found");
-    return;
+    return null;
   }
 
   let rows;
@@ -528,14 +532,14 @@ export async function initGraphMriView(svgId, { appId } = {}) {
   } catch (err) {
     console.warn("MRI CSV load failed", err);
     renderEmpty(svg, width, height, "Could not load MRI CSV");
-    return;
+    return null;
   }
 
   const graph = buildGraph(rows || []);
   if (!graph.nodes.length) {
     renderEmpty(svg, width, height, "No code module nodes found");
-    return;
+    return null;
   }
 
-  renderGraph(svg, graph, width, height, file);
+  return renderGraph(svg, graph, width, height, file);
 }

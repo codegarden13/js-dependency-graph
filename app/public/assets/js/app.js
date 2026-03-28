@@ -57,10 +57,17 @@ let selectedNode = null;
 // - mark changed nodes from SSE (`markChanged`)
 // - read the latest rendered nodes for panel refreshes
 let graphController = null;
+let graphMriController = null;
+let graphTimeController = null;
 let activeGraphAppId = "";
 let appInfoLoadToken = 0;
 let freezeInFlight = false;
 let graphZoomUiBound = false;
+let graphZoomTabsBound = false;
+let latestCsvLoadToken = 0;
+let allProjectsLoadToken = 0;
+
+const SHELL_TITLE_BASE = "NodeAnalyzer";
 
 /* ======================================================================= */
 /* DOM helpers                                                              */
@@ -104,6 +111,102 @@ function setStatus(text) {
   });
 }
 
+function buildShellTitle(appId = "") {
+  const id = String(appId || "").trim();
+  return id ? `${SHELL_TITLE_BASE} - /${id}/` : SHELL_TITLE_BASE;
+}
+
+function updateShellTitle(appId = "") {
+  const title = buildShellTitle(appId);
+  setTextById("shellTitle", title);
+
+  try {
+    document.title = title;
+  } catch { }
+}
+
+function buildLatestCsvLabel(filename = "") {
+  const safe = String(filename || "").trim();
+  return safe ? `Latest CSV: ${safe}` : "Latest CSV: —";
+}
+
+function setLatestCsvName(filename = "") {
+  const label = buildLatestCsvLabel(filename);
+  const el = byId("latestCsvName");
+  if (!el) return;
+
+  el.textContent = label;
+  el.setAttribute("title", label);
+}
+
+function normalizeStatusSignalState(state = "neutral") {
+  const safe = String(state || "").trim().toLowerCase();
+  if (safe === "changed" || safe === "unchanged" || safe === "error") return safe;
+  return "neutral";
+}
+
+function statusSignalTitle(state) {
+  switch (normalizeStatusSignalState(state)) {
+    case "changed":
+      return "Analysis changed the CSV output";
+    case "unchanged":
+      return "Analysis produced no CSV change";
+    case "error":
+      return "Last action failed";
+    default:
+      return "No analysis state yet";
+  }
+}
+
+function setStatusSignal(state = "neutral") {
+  const el = byId("statusSignal");
+  if (!el) return;
+
+  const safe = normalizeStatusSignalState(state);
+  el.className = `statusSignal is-${safe}`;
+  el.setAttribute("title", statusSignalTitle(safe));
+}
+
+function clearAnalyzeStatusUi() {
+  setStatus("");
+  setStatusSignal("neutral");
+}
+
+function latestFilenameFromOutputFiles(files) {
+  const list = Array.isArray(files) ? files : [];
+  return String(list[list.length - 1] || "").trim();
+}
+
+async function fetchLatestCsvFilename(appId) {
+  const id = encodeURIComponent(String(appId || ""));
+  const files = await fetchJson(`/api/output-files?appId=${id}&type=code-metrics`);
+  return latestFilenameFromOutputFiles(files);
+}
+
+async function loadLatestCsvForApp(appId) {
+  const safeAppId = String(appId || "").trim();
+  const requestToken = ++latestCsvLoadToken;
+
+  if (!safeAppId) {
+    setLatestCsvName("");
+    return "";
+  }
+
+  try {
+    const latestFilename = await fetchLatestCsvFilename(safeAppId);
+    if (requestToken !== latestCsvLoadToken) return "";
+
+    setLatestCsvName(latestFilename);
+    return latestFilename;
+  } catch (e) {
+    if (requestToken !== latestCsvLoadToken) return "";
+
+    console.warn("Latest CSV lookup failed:", e);
+    setLatestCsvName("");
+    return "";
+  }
+}
+
 function ensurePanelsExist() {
   const missing = [];
   if (!byId("readmePanel")) missing.push("#readmePanel");
@@ -119,6 +222,43 @@ function getGraphZoomSlider() {
   return /** @type {HTMLInputElement|null} */ (byId("graphZoomSlider"));
 }
 
+function getGraphViewTabs() {
+  return Array.from(document.querySelectorAll("#graphTabs [data-bs-toggle='tab']"));
+}
+
+function getActiveGraphViewKey() {
+  if (byId("graph-MRI-tab")?.classList.contains("active")) return "mri";
+  if (byId("graph-time-tab")?.classList.contains("active")) return "time";
+  if (byId("graph-projects-tab")?.classList.contains("active")) return "projects";
+  return "main";
+}
+
+function getActiveGraphViewLabel() {
+  const activeTab = getGraphViewTabs().find((tab) => tab.classList.contains("active"));
+  return String(activeTab?.textContent || "Standard graph").trim();
+}
+
+function updateGraphZoomTargetLabel() {
+  setTextById("graphZoomTarget", getActiveGraphViewLabel());
+}
+
+function getGraphControllerByView(viewKey = "main") {
+  switch (String(viewKey || "")) {
+    case "mri":
+      return graphMriController;
+    case "time":
+      return graphTimeController;
+    case "projects":
+      return null;
+    default:
+      return graphController;
+  }
+}
+
+function getActiveGraphZoomController() {
+  return getGraphControllerByView(getActiveGraphViewKey());
+}
+
 function getGraphZoomPercent(scale) {
   const numericScale = Number(scale);
   if (!Number.isFinite(numericScale) || numericScale <= 0) return 100;
@@ -129,6 +269,8 @@ function updateGraphZoomUi(scale = 1, disabled = true) {
   const slider = getGraphZoomSlider();
   const percent = getGraphZoomPercent(scale);
 
+  updateGraphZoomTargetLabel();
+
   if (slider) {
     slider.value = String(percent);
     slider.disabled = disabled;
@@ -138,7 +280,7 @@ function updateGraphZoomUi(scale = 1, disabled = true) {
 }
 
 function syncGraphZoomUi() {
-  const scale = graphController?.getZoom?.();
+  const scale = getActiveGraphZoomController()?.getZoom?.();
   if (Number.isFinite(scale)) {
     updateGraphZoomUi(scale, false);
     return;
@@ -151,7 +293,7 @@ function handleGraphZoomInput(ev) {
   const slider = ev?.target;
   if (!(slider instanceof HTMLInputElement)) return;
 
-  const controller = graphController;
+  const controller = getActiveGraphZoomController();
   if (!controller?.setZoom) {
     updateGraphZoomUi(1, true);
     return;
@@ -163,13 +305,19 @@ function handleGraphZoomInput(ev) {
 }
 
 function bindGraphZoomUi() {
-  if (graphZoomUiBound) return;
-
   const slider = getGraphZoomSlider();
-  if (!slider) return;
+  if (slider && !graphZoomUiBound) {
+    slider.addEventListener("input", handleGraphZoomInput);
+    graphZoomUiBound = true;
+  }
 
-  slider.addEventListener("input", handleGraphZoomInput);
-  graphZoomUiBound = true;
+  if (!graphZoomTabsBound) {
+    for (const tab of getGraphViewTabs()) {
+      tab.addEventListener("shown.bs.tab", syncGraphZoomUi);
+    }
+    graphZoomTabsBound = true;
+  }
+
   syncGraphZoomUi();
 }
 
@@ -369,6 +517,25 @@ async function fetchJsonOrNullOn404(url, init) {
   assertJsonResponse(ctx);
 
   return body;
+}
+
+async function renderAllProjectsOverview() {
+  const panel = byId("allProjectsPanel");
+  if (!panel) return;
+
+  const requestToken = ++allProjectsLoadToken;
+  panel.innerHTML = `<div class="text-secondary small">Loading portfolio view…</div>`;
+
+  try {
+    const mod = await import("./graph_allProjectsView.js");
+    if (requestToken !== allProjectsLoadToken) return;
+    await mod.renderAllProjectsView("allProjectsPanel");
+  } catch (e) {
+    if (requestToken !== allProjectsLoadToken) return;
+
+    console.warn("All projects view failed:", e);
+    panel.innerHTML = `<div class="text-danger small">Could not load project portfolio.</div>`;
+  }
 }
 
 function getActiveGraphAppId() {
@@ -799,10 +966,14 @@ function onNodeSelected(node) {
  */
 function setSelectedAppId(appId) {
   const hidden = /** @type {HTMLInputElement|null} */ (byId("appSelect"));
-  if (!hidden) return;
+  if (!hidden) {
+    updateShellTitle(appId);
+    return;
+  }
 
   // Always store a string (defensive). Empty string means "no selection".
   hidden.value = String(appId || "");
+  updateShellTitle(appId);
 }
 
 /**
@@ -977,6 +1148,8 @@ function chooseInitialAppId(apps) {
 function applySelectedApp(listEl, appId) {
   setSelectedAppId(appId);
   if (listEl) setAppActiveRow(listEl, appId);
+  clearAnalyzeStatusUi();
+  loadLatestCsvForApp(appId).catch((e) => console.warn("Latest CSV load failed:", e));
   loadSelectedAppInfo().catch((e) => console.warn("App info load failed:", e));
 }
 
@@ -1205,12 +1378,16 @@ async function loadApps() {
     console.warn("Failed to load apps:", e);
     renderAppListMessage(list, `<div class="text-danger small px-2 py-2">Failed to load apps.</div>`);
     setSelectedAppId("");
+    setLatestCsvName("");
+    clearAnalyzeStatusUi();
     return;
   }
 
   if (!apps.length) {
     renderAppListMessage(list, `<div class="text-secondary small px-2 py-2">No apps configured.</div>`);
     setSelectedAppId("");
+    setLatestCsvName("");
+    clearAnalyzeStatusUi();
     return;
   }
   // Auswahl: gemerkt oder erstes Preset.
@@ -1224,6 +1401,7 @@ async function loadApps() {
   ensureAppsListActionsBound(list);
 
   applySelectedApp(list, current);
+  renderAllProjectsOverview().catch((e) => console.warn("Portfolio refresh failed:", e));
 }
 
 /* ======================================================================= */
@@ -1400,6 +1578,7 @@ function handleUnsupportedAnalysis(data) {
   resetGraphViews();
   showUnsupportedTargetMessage(data);
   setStatus("Unsupported target (see details).");
+  setStatusSignal("error");
 }
 
 
@@ -1454,8 +1633,12 @@ function showWorkspaceGraphTab() {
 
 function resetGraphViews() {
   try { graphController?.destroy?.(); } catch { }
+  try { graphMriController?.destroy?.(); } catch { }
+  try { graphTimeController?.destroy?.(); } catch { }
 
   graphController = null;
+  graphMriController = null;
+  graphTimeController = null;
   activeGraphAppId = "";
   selectedNode = null;
   clearPanels();
@@ -1480,6 +1663,17 @@ function renderGraph(metrics) {
   graphController = initcodeStructureChart("codeStructureSvg", metrics, {
     onNodeSelected
   });
+  syncGraphZoomUi();
+}
+
+function resetSupplementaryGraphViews() {
+  try { graphMriController?.destroy?.(); } catch { }
+  try { graphTimeController?.destroy?.(); } catch { }
+
+  graphMriController = null;
+  graphTimeController = null;
+  clearSvgContent("graphMriView");
+  clearSvgContent("graphTimeView");
   syncGraphZoomUi();
 }
 
@@ -1528,25 +1722,27 @@ async function renderOptionalChart({
       return;
     }
 
-    await renderFn(elementId, { appId, metrics });
+    return await renderFn(elementId, { appId, metrics });
   } catch (e) {
     console.warn(`${warningLabel} render skipped:`, e);
+    return null;
   }
 }
 
 async function renderTimeViewChart(metrics) {
-  await renderOptionalChart({
+  graphTimeController = await renderOptionalChart({
     elementId: "graphTimeView",
     modulePath: "./graph_timeView.js",
     preferredName: "initGraphTimeView",
     fallbackName: "renderGraphTimeView",
-    warningLabel: "Time view",
+    warningLabel: "Drift history",
     metrics,
   });
+  syncGraphZoomUi();
 }
 
 async function renderMriViewChart(metrics) {
-  await renderOptionalChart({
+  graphMriController = await renderOptionalChart({
     elementId: "graphMriView",
     modulePath: "./graph_mriView.js",
     preferredName: "initGraphMriView",
@@ -1554,6 +1750,7 @@ async function renderMriViewChart(metrics) {
     warningLabel: "MRI view",
     metrics,
   });
+  syncGraphZoomUi();
 }
 
 async function renderSupplementaryCharts(metrics) {
@@ -1627,8 +1824,27 @@ function updateCurrentAppSummary(metrics) {
   return setTextById("currentAppSummary", "Apps");
 }
 
+function syncAnalyzeArtifactUi(data) {
+  const changed = data?.artifacts?.csvChanged;
+  setLatestCsvName(data?.artifacts?.latestCsvFilename || "");
+
+  if (changed === true) {
+    setStatusSignal("changed");
+    return;
+  }
+
+  if (changed === false) {
+    setStatusSignal("unchanged");
+    return;
+  }
+
+  setStatusSignal("neutral");
+}
+
 function statusDone(data) {
   setStatus(`Done. Nodes: ${data.summary?.nodes ?? "?"}, Links: ${data.summary?.links ?? "?"}`);
+  syncAnalyzeArtifactUi(data);
+  renderAllProjectsOverview().catch((e) => console.warn("Portfolio refresh failed:", e));
 }
 
 function handleAnalyzeError(e) {
@@ -1644,6 +1860,7 @@ function handleAnalyzeError(e) {
     },
   });
   setStatus("Analysis failed.");
+  setStatusSignal("error");
 }
 
 function handleFreezeError(e) {
@@ -1709,6 +1926,7 @@ async function runAnalysis() {
     if (!appId) return;
 
     setStatus("Running analysis…");
+    setStatusSignal("neutral");
 
 
     const data = await postAnalyze(appId);
@@ -1723,6 +1941,7 @@ async function runAnalysis() {
     // so we intentionally do NOT overwrite `currentRunToken` here.
     const metrics = await fetchJson(data.metricsUrl);
     activeGraphAppId = appId;
+    resetSupplementaryGraphViews();
     renderGraph(metrics);
     await renderSupplementaryCharts(metrics);
 
@@ -1756,9 +1975,13 @@ async function runAnalysis() {
 function init() {
   ensurePanelsExist();
   bindGraphZoomUi();
+  updateShellTitle("");
+  setLatestCsvName("");
+  setStatusSignal("neutral");
   updateCurrentAppSummary(null);
   updateGraphHeader(null);
   startLiveEvents();
+  renderAllProjectsOverview().catch((e) => console.warn("Portfolio init failed:", e));
   loadApps();
 }
 

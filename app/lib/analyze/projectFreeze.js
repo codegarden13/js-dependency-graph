@@ -60,11 +60,7 @@ function normalizeTimestampToken(timestampIso) {
 }
 
 export function normalizeFreezeIdToken(appId) {
-  return String(normalizeId(appId) || "app")
-    .replace(/[^A-Za-z0-9._-]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .trim() || "app";
+  return String(normalizeId(appId) || "app");
 }
 
 function buildFreezeFilename(appId, timestampIso) {

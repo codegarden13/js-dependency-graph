@@ -21,6 +21,8 @@
 // ---------------------------------------------------------------------------
 "use strict";
 
+import { installSvgViewZoom } from "./svgViewZoom.js";
+
 
 
 
@@ -120,7 +122,7 @@ function formatRunValue(value) {
  *   Chart title text.
  */
 function buildSeriesLabel(appId) {
-  return `Time view · module drift history · ${appId}`;
+  return `Drift history · ${appId}`;
 }
 
 /**
@@ -464,7 +466,13 @@ function normalizeModuleName(value) {
  *   Normalized module name.
  */
 function readModuleRowName(row) {
-  return normalizeModuleName(row?.module || row?.file || row?.path || row?.name);
+  return normalizeModuleName(
+    row?.module ||
+    row?.fileName ||
+    row?.file ||
+    row?.path ||
+    row?.name
+  );
 }
 
 /**
@@ -543,10 +551,14 @@ function readSummaryModuleName(row) {
  *   Normalized row metrics.
  */
 function readSummaryRowMetrics(row) {
+  const hasFanIn = String(row?.fanIn ?? "").trim() !== "";
+  const hasFanOut = String(row?.fanOut ?? "").trim() !== "";
+
   return {
     loc: coerceNumber(row?.loc ?? row?.lines, 0),
     fanIn: coerceNumber(row?.fanIn, 0),
     fanOut: coerceNumber(row?.fanOut, 0),
+    hasFanMetrics: hasFanIn || hasFanOut,
   };
 }
 
@@ -560,6 +572,10 @@ function readSummaryRowMetrics(row) {
  */
 function applySummaryRowMetrics(metrics, rowMetrics) {
   metrics.loc += rowMetrics.loc;
+
+  if (!rowMetrics.hasFanMetrics) return;
+
+  metrics.hasFanMetrics = true;
   metrics.fanIn += rowMetrics.fanIn;
   metrics.fanOut += rowMetrics.fanOut;
 }
@@ -606,7 +622,13 @@ function logSummarizeRunResult({ inputRows, codeRows, scopedRows, modules }) {
  *   `true` when the row resolves to a code-module filename.
  */
 function isCodeModuleRow(row) {
-  return isCodeModuleName(readModuleRowName(row));
+  const moduleName = readModuleRowName(row);
+  if (!isCodeModuleName(moduleName)) return false;
+
+  const kind = String(row?.kind || "").trim().toLowerCase();
+  if (kind) return kind === "file";
+
+  return true;
 }
 
 /**
@@ -636,7 +658,7 @@ function summarizeRun(rows) {
  *   Empty module metrics object.
  */
 function emptyModuleMetrics() {
-  return { loc: 0, fanIn: 0, fanOut: 0 };
+  return { loc: 0, fanIn: 0, fanOut: 0, hasFanMetrics: false };
 }
 
 /**
@@ -787,8 +809,9 @@ function readModuleMetrics(modules, moduleName) {
  */
 function computeModuleDriftDetails(currentMetrics, previousMetrics, isBaselineRun) {
   const deltaLoc = currentMetrics.loc - previousMetrics.loc;
-  const deltaFanIn = currentMetrics.fanIn - previousMetrics.fanIn;
-  const deltaFanOut = currentMetrics.fanOut - previousMetrics.fanOut;
+  const compareFanMetrics = currentMetrics.hasFanMetrics && previousMetrics.hasFanMetrics;
+  const deltaFanIn = compareFanMetrics ? currentMetrics.fanIn - previousMetrics.fanIn : 0;
+  const deltaFanOut = compareFanMetrics ? currentMetrics.fanOut - previousMetrics.fanOut : 0;
 
   return {
     currentMetrics,
@@ -1466,10 +1489,18 @@ function renderStackedOverviewChart(svg, { width, height, margin, runs, appId })
   const series = buildStackSeries(runs);
   if (!series.length) {
     renderEmpty(svg, width, height, "No module drift history found.");
-    return;
+    return null;
   }
 
   STACK_KEYS = selectStackKeys(series);
+  const hasDrift = series.some((row) =>
+    STACK_KEYS.some((key) => coerceNumber(row?.[key], 0) > 0)
+  );
+  if (!hasDrift) {
+    renderEmpty(svg, width, height, "No module drift across available runs.");
+    return null;
+  }
+
   logStackedOverviewRender(appId, runs, series, STACK_KEYS);
 
   const colorByKey = buildModulePalette(STACK_KEYS);
@@ -1498,6 +1529,8 @@ function renderStackedOverviewChart(svg, { width, height, margin, runs, appId })
     stackKeys: STACK_KEYS,
     colorByKey,
   });
+
+  return installSvgViewZoom(svg);
 }
 
 /**
@@ -1539,12 +1572,12 @@ export async function initGraphTimeView(svgId, { appId, metrics } = {}) {
   } catch (err) {
     logError("Failed to load time-view series", err);
     renderEmpty(svg, width, height, "Could not load code-metrics history.");
-    return;
+    return null;
   }
 
   if (!runs.length) {
     renderEmpty(svg, width, height, "No code-metrics history found for current app.");
-    return;
+    return null;
   }
 
   logInfo("Rendering time view with loaded runs", {
@@ -1552,7 +1585,7 @@ export async function initGraphTimeView(svgId, { appId, metrics } = {}) {
     runCount: runs.length,
   });
 
-  renderStackedOverviewChart(svg, {
+  return renderStackedOverviewChart(svg, {
     width,
     height,
     margin,

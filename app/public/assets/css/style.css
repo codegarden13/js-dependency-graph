@@ -12,6 +12,47 @@ body {
   margin: 0;
 }
 
+.topStatusBlock {
+  min-width: min(46vw, 640px);
+}
+
+.latestCsvName {
+  max-width: min(46vw, 640px);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.statusRow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.statusSignal {
+  inline-size: 10px;
+  block-size: 10px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+  background: #94a3b8;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.12);
+}
+
+.statusSignal.is-unchanged {
+  background: #2563eb;
+}
+
+.statusSignal.is-changed {
+  background: #16a34a;
+}
+
+.statusSignal.is-error {
+  background: #dc2626;
+}
+
+.statusSignal.is-neutral {
+  background: #94a3b8;
+}
+
 /* --------------------------------------------------------------------------
    Main graph SVG sizing
    -------------------------------------------------------------------------- */
@@ -56,6 +97,21 @@ body {
 
 .graphToolsAccordion .accordion-button {
   align-items: center;
+}
+
+.graphZoomToolbarRow {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(280px, 460px);
+  gap: 16px;
+  align-items: center;
+}
+
+.graphZoomToolbarCopy {
+  min-width: 0;
+}
+
+.graphZoomToolbarControl {
+  min-width: 0;
 }
 
 .graphToolsSummary {
@@ -151,10 +207,178 @@ body {
   flex-shrink: 0;
 }
 
+.portfolioView {
+  display: grid;
+  gap: 12px;
+}
+
+.portfolioSummaryBar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.portfolioSummaryNote {
+  max-width: 420px;
+}
+
+.portfolioCard {
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 14px;
+  padding: 12px;
+  background: #fff;
+}
+
+.portfolioRiskMap {
+  width: 100%;
+  height: 320px;
+  display: block;
+}
+
+.portfolioAxisLabel,
+.portfolioRiskLabel {
+  fill: #6c757d;
+  font-size: 11px;
+}
+
+.portfolioRiskBubble {
+  stroke: rgba(15, 23, 42, 0.18);
+  stroke-width: 1;
+  fill-opacity: 0.78;
+}
+
+.portfolioRiskBubble.tone-stable {
+  fill: rgba(22, 163, 74, 0.45);
+}
+
+.portfolioRiskBubble.tone-watch {
+  fill: rgba(245, 158, 11, 0.55);
+}
+
+.portfolioRiskBubble.tone-critical {
+  fill: rgba(220, 38, 38, 0.58);
+}
+
+.portfolioProjectsList {
+  display: grid;
+  gap: 10px;
+}
+
+.portfolioProjectCard {
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 14px;
+  padding: 12px;
+  background: #fff;
+}
+
+.portfolioProjectCard.tone-stable {
+  box-shadow: inset 4px 0 0 rgba(22, 163, 74, 0.7);
+}
+
+.portfolioProjectCard.tone-watch {
+  box-shadow: inset 4px 0 0 rgba(245, 158, 11, 0.8);
+}
+
+.portfolioProjectCard.tone-critical {
+  box-shadow: inset 4px 0 0 rgba(220, 38, 38, 0.85);
+}
+
+.portfolioProjectHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.portfolioProjectName {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.portfolioProjectScore {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.portfolioScoreBadge {
+  min-width: 3.1rem;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #111827;
+  color: #fff;
+  font-size: 0.95rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.portfolioMetricGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.portfolioMetricTile {
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(248, 249, 250, 0.82);
+  min-width: 0;
+}
+
+.portfolioMetricHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.portfolioSparkline {
+  width: 100%;
+  height: 38px;
+  display: block;
+}
+
+.portfolioSparkline path {
+  fill: none;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.portfolioSparkline.tone-code path {
+  stroke: #2563eb;
+}
+
+.portfolioSparkline.tone-comment path {
+  stroke: #0f766e;
+}
+
+.portfolioSparkline.tone-hotness path {
+  stroke: #dc2626;
+}
+
+.portfolioSparkline.tone-cc path {
+  stroke: #92400e;
+}
+
+.portfolioSparklineEmpty,
+.portfolioMetricNote {
+  font-size: 11px;
+  color: #6c757d;
+}
+
 @media (max-width: 991.98px) {
+  .graphZoomToolbarRow,
   .graphToolsGrid,
   .legendPanelToolbar,
-  .legendPanelSections {
+  .legendPanelSections,
+  .portfolioMetricGrid {
     grid-template-columns: 1fr;
   }
 }
