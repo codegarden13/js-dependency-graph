@@ -1,5 +1,7 @@
 "use strict";
 
+import { getSelectedAppId } from "./uiState.js";
+
 const SCORE_WEIGHTS = Object.freeze({
   hotness: 0.45,
   cc: 0.35,
@@ -54,7 +56,7 @@ function decoratePortfolioPayload(payload) {
 }
 
 function readSelectedAppId() {
-  return String(document.getElementById("appSelect")?.value || "").trim();
+  return getSelectedAppId();
 }
 
 function decorateAppMetrics(app) {

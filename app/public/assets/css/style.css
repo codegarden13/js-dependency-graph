@@ -1,9 +1,4 @@
 
-
-:root {
-  --panelTop: 16px;
-}
-
 body {
   background: #fff;
 }
@@ -68,31 +63,11 @@ body {
 
 
 
-/* --------------------------------------------------------------------------
-   Right column panels
-   -------------------------------------------------------------------------- */
-.sidePanels {
-  position: sticky;
-  top: var(--panelTop);
-  max-height: calc(100vh - (var(--panelTop) * 2));
-  overflow: auto;
-  padding-right: 6px; /* keeps scrollbar off content */
-  display: grid;
-  gap: 12px;
-}
-
 /* Each panel scrolls on its own (support both class spellings used in UI) */
 .panelScroll,
 .panel-scroll {
   max-height: 32vh;
   overflow: auto;
-}
-
-/* The legend/filter column should use the full available column height.
-   It must not inherit the generic panelScroll clamp used by README/selection panels. */
-.legendPanelBody {
-  max-height: none;
-  overflow: visible;
 }
 
 .graphToolsAccordion .accordion-button {
@@ -674,197 +649,11 @@ body {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-/* --------------------------------------------------------------------------
-   App list
-   -------------------------------------------------------------------------- */
-.appsScroll {
-  max-height: none;
-  overflow: visible;
-}
-
-.app-item {
-  text-align: left;
-  padding-top: 0.45rem !important;
-  padding-bottom: 0.45rem !important;
-  line-height: 1.1;
-}
-
-.app-item .app-name {
-  font-weight: 600;
-  font-size: 0.85rem;
-}
-
-.app-item .app-meta {
-  font-size: 0.75rem;
-  color: #6c757d;
-  line-height: 1.25;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.app-title {
-  font-size: 0.85rem;
-  font-weight: 600;
-  margin: 0;
-  display: flex;
-  gap: 0.5rem;
-  align-items: baseline;
-}
-
-.app-sub {
-  font-size: 0.75rem;
-  color: #6c757d;
-  margin: 0;
-  display: flex;
-  gap: 0.5rem;
-}
-
-.app-pill {
-  font-size: 0.7rem;
-  padding: 0.1rem 0.4rem;
-  border: 1px solid rgba(0, 0, 0, 0.1);
-  border-radius: 999px;
-  color: #6c757d;
-  background: #fff;
-}
-
 .ellipsis {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
-}
-
-.app-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 0.2rem;
-}
-
-/* Make active selection very clear */
-.list-group-item.active .app-sub,
-.list-group-item.active .app-pill {
-  color: rgba(255, 255, 255, 0.85);
-  border-color: rgba(255, 255, 255, 0.35);
-  background: transparent;
-}
-
-/* Compact app list: dense rows, grid columns */
-.appsList {
-  display: grid;
-  gap: 6px;
-}
-
-/* One row per app */
-.appRow {
-  display: grid;
-  /* ● | name | actions */
-  grid-template-columns: 14px 1fr auto;
-  gap: 8px;
-  align-items: center;
-
-  padding: 6px 8px;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 10px;
-  background: #fff;
-  cursor: pointer;
-}
-
-.appRow:hover {
-  background: rgba(0, 0, 0, 0.02);
-}
-
-.appRow.isActive {
-  border-color: rgba(13, 110, 253, 0.35);
-  box-shadow: 0 0 0 2px rgba(13, 110, 253, 0.12);
-}
-
-.appDot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.25);
-}
-
-.appRow.isActive .appDot {
-  background: rgba(13, 110, 253, 0.9);
-}
-
-.appName {
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.appMeta {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-  line-height: 1.1;
-  color: rgba(0, 0, 0, 0.65);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.appPrimary {
-  min-width: 0;
-}
-
-/* Rightmost actions column (e.g. Restart / Show) */
-.appActions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 6px;
-  align-items: center;
-  flex-wrap: wrap;
-  /* Avoid row click interference: buttons handle their own click */
-  pointer-events: auto;
-}
-
-/* Keep buttons compact (works with and without Bootstrap) */
-.appActions .appBtn {
-  font-size: 11px;
-  line-height: 1;
-  padding: 6px 10px;
-  border-radius: 8px;
-  border: 1px solid rgba(0, 0, 0, 0.18);
-  background: #fff;
-}
-
-.appActions .appBtn:hover {
-  background: rgba(0, 0, 0, 0.03);
-}
-
-.appActions .appBtnPrimary {
-  border-color: rgba(13, 110, 253, 0.35);
-}
-
-.appActions .appBtnPrimary:hover {
-  background: rgba(13, 110, 253, 0.06);
-}
-
-.appHdr {
-  display: grid;
-  grid-template-columns: 14px 1fr auto;
-  gap: 8px;
-  padding: 0 8px 6px 8px;
-  font-size: 10px;
-  color: rgba(0, 0, 0, 0.5);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-/* Header placeholder cell for the actions column */
-.appHdr .appActionsHdr {
-  text-align: right;
-}
-
-.workspaceInnerTabs {
-  margin-bottom: -1px;
 }
 
 .workspaceAppPanel {

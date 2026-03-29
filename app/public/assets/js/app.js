@@ -7,7 +7,7 @@
  * instead it orchestrates the backend + graph renderer:
  *
  * - loads configured apps from `/apps`
- * - stores the current selection in hidden DOM state (`#appSelect`)
+ * - stores the current selection in a shared UI state module
  * - lets the user explicitly trigger `/analyze` or `/freeze` for the selected app
  * - fetches the produced metrics JSON
  * - renders the main D3 graph via `initcodeStructureChart(...)`
@@ -18,15 +18,13 @@
  * Design notes
  * ------------
  * - No window namespace bridge is used for the main graph callback.
- * - The selected app is intentionally stored in the DOM, not in a separate
- *   global variable, so UI state stays inspectable and resilient to re-renders.
+ * - The selected app lives in a tiny shared state module so multiple views can
+ *   reuse it without hidden DOM adapters.
  * - The graph renderer is treated like a controller object that can be replaced
  *   after each analyze run.
  *
  * Expected DOM
  * ------------
- * - #appList
- * - #appSelect (hidden input)
  * - #status
  * - #appInfoPanel
  * - #codeStructureSvg
@@ -35,6 +33,13 @@
 "use strict";
 
 import { initcodeStructureChart } from "./d3_codeStructure.js";
+import {
+  getApps,
+  getSelectedAppId as getSelectedAppIdState,
+  hasApp,
+  setApps,
+  setSelectedAppId as setSelectedAppIdState,
+} from "./uiState.js";
 
 
 
@@ -1160,40 +1165,12 @@ function onNodeSelected(node) {
 }
 
 /* ======================================================================= */
-/* Apps list + Actions (Restart / Show Website)                             */
+/* App selection + Actions (Restart / Show Website)                         */
 /* ======================================================================= */
 
-/**
- * Persist currently selected app id in the hidden `#appSelect` input.
- *
- * Why this exists
- * ---------------
- * We deliberately keep the selected app as DOM state (a hidden input) instead of
- * relying on a module-global variable. This makes selection:
- * - stable across re-renders,
- * - easy to inspect in DevTools,
- * - the single source of truth for `runAnalysis()`.
- *
- * Contract
- * --------
- * - `#appSelect` MUST exist in index.html:
- *     <input type="hidden" id="appSelect" value="">
- * - The value stored here is the *app id* from `/apps` (config id), e.g. "vscode".
- *
- * @param {string} appId Config id of the selected app.
- */
 function setSelectedAppId(appId) {
-  const nextId = String(appId || "").trim();
-  const hidden = /** @type {HTMLInputElement|null} */ (byId("appSelect"));
-  if (!hidden) {
-    updateShellTitle(nextId);
-    emitActiveAppChanged(nextId);
-    return;
-  }
-
-  // Always store a string (defensive). Empty string means "no selection".
-  const previousId = String(hidden.value || "").trim();
-  hidden.value = nextId;
+  const previousId = getSelectedAppIdState();
+  const nextId = setSelectedAppIdState(appId);
   updateShellTitle(nextId);
 
   if (nextId !== previousId) {
@@ -1201,46 +1178,8 @@ function setSelectedAppId(appId) {
   }
 }
 
-/**
- * Read the currently selected app id from `#appSelect`.
- *
- * Note
- * ----
- * Keep this as a helper even though it's one line: it prevents copy/paste
- * mistakes and makes it obvious where selection is sourced from.
- *
- * @returns {string} Current selected app id (trimmed). Empty string if none.
- */
 function getSelectedAppId() {
-  const hidden = /** @type {HTMLInputElement} */ (byId("appSelect"));
-  return String(hidden?.value || "").trim();
-}
-
-/**
- * Visually mark the active app row in the internal app list.
- *
- * Implementation
- * --------------
- * - Rows are created by `loadApps()` with:
- *     - class `.appRow`
- *     - `data-app-id="..."`
- * - We toggle `.isActive` purely for styling (CSS), *not* for behavior.
- * - Selection behavior is driven by `#appSelect` + `runAnalysis()`.
- *
- * @param {HTMLElement} listEl Container element that holds the `.appRow` elements.
- * @param {string} appId App id that should be shown as selected.
- */
-function setAppActiveRow(listEl, appId) {
-  const id = String(appId || "");
-  listEl.querySelectorAll(".appRow").forEach((el) => {
-    el.classList.toggle("isActive", el.dataset.appId === id);
-  });
-}
-
-function isActionClick(ev) {
-  const t = /** @type {HTMLElement|null} */ (ev?.target || null);
-  if (!t) return false;
-  return !!t.closest?.("[data-action], .appActions");
+  return getSelectedAppIdState();
 }
 
 function openWebsite(url) {
@@ -1341,15 +1280,6 @@ async function restartApp(appId) {
   setRestartStatus(id, res);
 }
 
-/* ----------------------------------------------------------------------- */
-/* Apps list helpers                                                       */
-/* ----------------------------------------------------------------------- */
-
-/** Render a compact status/placeholder message inside the apps list. */
-function renderAppListMessage(list, html) {
-  list.innerHTML = String(html || "");
-}
-
 /** Fetch `/apps` and return its `apps` array (throws on HTTP errors). */
 async function fetchAppsOrThrow() {
   const data = await fetchJson("/apps");
@@ -1357,12 +1287,12 @@ async function fetchAppsOrThrow() {
 }
 
 /**
- * Choose the app id that should be selected after loading the list.
+ * Choose the app id that should be selected after loading the app config.
  * Priority:
- *  1) previously selected app stored in the hidden `#appSelect`
+ *  1) previously selected app stored in shared UI state
  *  2) first app from the backend
  */
-function chooseInitialAppId(apps) {
+function chooseInitialAppId(apps = getApps()) {
   const remembered = getSelectedAppId();
   if (remembered && (apps || []).some((app) => String(app?.id || "") === remembered)) {
     return remembered;
@@ -1370,117 +1300,25 @@ function chooseInitialAppId(apps) {
   return String(apps?.[0]?.id || "");
 }
 
-function applySelectedApp(listEl, appId) {
-  setSelectedAppId(appId);
-  if (listEl) setAppActiveRow(listEl, appId);
+function resolveSelectedAppId(appId) {
+  const nextId = normalizeAppId(appId);
+  if (!nextId) return "";
+  return hasApp(nextId) ? nextId : "";
+}
+
+function applySelectedApp(appId) {
+  const nextId = resolveSelectedAppId(appId);
+  setSelectedAppId(nextId);
   selectedNode = null;
   renderInfoPanel(null);
-  requestDefaultReadmeForApp(appId);
+  requestDefaultReadmeForApp(nextId);
   clearAnalyzeStatusUi();
-  loadLatestCsvForApp(appId).catch((e) => console.warn("Latest CSV load failed:", e));
+  loadLatestCsvForApp(nextId).catch((e) => console.warn("Latest CSV load failed:", e));
   loadSelectedAppInfo().catch((e) => console.warn("App info load failed:", e));
-}
-
-/** Render the static header row (column labels). */
-function renderAppsHeader(list) {
-  list.innerHTML = `
-      <div class="appHdr">
-        <div></div>
-        <div>Name</div>
-        <div class="appActionsHdr">Actions</div>
-      </div>
-    `;
-}
-
-/**
- * Build one `.appRow` element.
- * - Stores app id + url as data-* for delegated click handling.
- * - Escapes all user-visible values used in innerHTML.
- */
-function buildAppRow(app, currentId) {
-  const a = app || {};
-
-  const id = String(a.id || "");
-  const name = String(a.name || a.id || "");
-  const url = String(a.url || "");
-
-  const row = document.createElement("div");
-  row.className = "appRow" + (id === currentId ? " isActive" : "");
-  row.setAttribute("role", "listitem");
-
-  row.dataset.appId = id;
-  row.dataset.appUrl = url;
-
-  row.innerHTML = `
-      <span class="appDot" aria-hidden="true"></span>
-      <div class="appPrimary">
-        <div class="appName" title="${esc(name)}">${esc(name)}</div>
-        <div class="appMeta" title="${esc(id)}">${esc(id)}</div>
-      </div>
-
-      <div class="appActions">
-        <button type="button" class="btn btn-sm btn-outline-secondary"
-                data-action="restart" data-app-id="${esc(id)}">
-          Restart
-        </button>
-        <button type="button" class="btn btn-sm btn-outline-primary"
-                data-action="open" data-url="${esc(url)}">
-          Show
-        </button>
-        <button type="button" class="btn btn-sm btn-primary"
-                data-action="analyze" data-app-id="${esc(id)}">
-          Analyze
-        </button>
-        <button type="button" class="btn btn-sm btn-outline-primary"
-                data-action="freeze" data-app-id="${esc(id)}">
-          Freeze
-        </button>
-      </div>
-    `;
-
-  return row;
-}
-
-/** Render all apps below the header. */
-function renderAppRows(list, apps, currentId) {
-  for (const a of apps || []) {
-    list.appendChild(buildAppRow(a, currentId));
-  }
-}
-
-/* ----------------------------------------------------------------------- */
-/* Delegated click handling (defined once, not recreated per loadApps run)  */
-/* ----------------------------------------------------------------------- */
-
-function getClosestActionButton(target) {
-  return /** @type {HTMLElement|null} */ (target?.closest?.("[data-action]") || null);
-}
-
-function getClosestAppRow(target) {
-  return /** @type {HTMLElement|null} */ (target?.closest?.(".appRow") || null);
-}
-
-function getAttr(el, name) {
-  return String(el?.getAttribute?.(name) || "");
-}
-
-function getDataset(el, key) {
-  return String(el?.dataset?.[key] || "");
 }
 
 function safeRunAnalysis() {
   runAnalysis().catch((e) => console.error(e));
-}
-
-function getActionContext(btn) {
-  const action = getAttr(btn, "data-action");
-  const row = getClosestAppRow(btn);
-  const list = /** @type {HTMLElement|null} */ (row?.parentElement || null);
-
-  const appId = getAttr(btn, "data-app-id") || getDataset(row, "appId");
-  const url = getAttr(btn, "data-url") || getDataset(row, "appUrl");
-
-  return { action, appId, url, list };
 }
 
 function showRestartFailed(e) {
@@ -1505,13 +1343,13 @@ function handleRestartAction(appId) {
     .catch(showRestartFailed);
 }
 
-function handleAnalyzeAction(listEl, appId) {
-  applySelectedApp(listEl, appId);
+function handleAnalyzeAction(appId) {
+  applySelectedApp(appId);
   safeRunAnalysis();
 }
 
-function handleFreezeAction(listEl, appId) {
-  applySelectedApp(listEl, appId);
+function handleFreezeAction(appId) {
+  applySelectedApp(appId);
   runFreeze().catch((e) => console.error(e));
 }
 
@@ -1520,31 +1358,16 @@ function handlePortfolioAppActionEvent(ev) {
   const action = String(detail.action || "");
   const appId = normalizeAppId(detail.appId);
   const url = String(detail.url || "");
-  const listEl = byId("appList");
 
-  if (action === "select") {
-    applySelectedApp(listEl, appId);
-    return;
-  }
+  const handlers = {
+    select: () => applySelectedApp(appId),
+    open: () => handleOpenAction(url),
+    restart: () => handleRestartAction(appId),
+    analyze: () => handleAnalyzeAction(appId),
+    freeze: () => handleFreezeAction(appId),
+  };
 
-  if (action === "open") {
-    handleOpenAction(url);
-    return;
-  }
-
-  if (action === "restart") {
-    handleRestartAction(appId);
-    return;
-  }
-
-  if (action === "analyze") {
-    handleAnalyzeAction(listEl, appId);
-    return;
-  }
-
-  if (action === "freeze") {
-    handleFreezeAction(listEl, appId);
-  }
+  handlers[action]?.();
 }
 
 function handleActiveAppChangedEvent() {
@@ -1559,129 +1382,58 @@ function bindCrossViewEvents() {
   document.addEventListener(ACTIVE_APP_CHANGED_EVENT, handleActiveAppChangedEvent);
 }
 
-function tryHandleAppActionClick(ev, target) {
-  const btn = getClosestActionButton(target);
-  if (!btn) return false;
-
-  // Button click: consume the event so the row doesn't get selected.
-  ev.preventDefault();
-  ev.stopPropagation();
-
-  const ctx = getActionContext(btn);
-
-  if (ctx.action === "open") {
-    handleOpenAction(ctx.url);
-    return true;
-  }
-
-  if (ctx.action === "restart") {
-    handleRestartAction(ctx.appId);
-    return true;
-  }
-
-  if (ctx.action === "analyze") {
-    handleAnalyzeAction(ctx.list, ctx.appId);
-    return true;
-  }
-
-  if (ctx.action === "freeze") {
-    handleFreezeAction(ctx.list, ctx.appId);
-    return true;
-  }
-
-  // Unknown action: ignore but consume.
-  return true;
-}
-
-function handleAppRowSelectionClick(ev, target, listEl) {
-  // Row selection: ignore clicks inside the actions area.
-  if (isActionClick(ev)) return;
-
-  const row = getClosestAppRow(target);
-  if (!row) return;
-
-  const newId = String(row.dataset.appId || "").trim();
-  if (!newId) return;
-
-  applySelectedApp(listEl, newId);
-}
-
-/**
- * Bind one delegated click handler to the list.
- * This is important because `loadApps()` may re-render the list multiple times.
- */
-function ensureAppsListActionsBound(list) {
-  if (list.__actionsBound) return;
-  Object.defineProperty(list, "__actionsBound", { value: true });
-
-  list.addEventListener("click", (ev) => {
-    const target = /** @type {HTMLElement|null} */ (ev?.target || null);
-    if (!target) return;
-
-    if (tryHandleAppActionClick(ev, target)) return;
-    handleAppRowSelectionClick(ev, target, list);
-  });
-}
-
 function requestInitialAnalysis() {
   runAnalysis().catch((e) => console.error(e));
 }
 
 /**
- * Lädt die App-Presets vom Backend (`/apps`) und rendert den internen App-Zustand.
+ * Lädt die App-Presets vom Backend (`/apps`) und synchronisiert den Shared State.
  *
  * Ablauf
  * ------
- * 1) DOM-Elemente finden (#appList, #appSelect)
- * 2) `/apps` laden
+ * 1) `/apps` laden
+ * 2) In den Shared State schreiben
  * 3) Auswahl festlegen (gemerkte Auswahl oder erstes Preset)
- * 4) Liste rendern (Header + Rows)
- * 5) Delegierten Click-Handler einmalig binden (open/restart/select)
- * 6) App-Info für die Auswahl laden
+ * 4) App-Zustand und abhängige Panels synchronisieren
+ * 5) Optional direkt Analyze starten
  */
-async function loadApps({ autoAnalyze = false } = {}) {
-  const list = byId("appList");
-  const hidden = /** @type {HTMLInputElement|null} */ (byId("appSelect"));
-  if (!list || !hidden) return;
+async function fetchAndStoreApps() {
+  const apps = await fetchAppsOrThrow();
+  setApps(apps);
+  return apps;
+}
 
-  // Sofortiges UI-Feedback.
-  renderAppListMessage(list, `<div class="text-secondary small px-2 py-2">Loading…</div>`);
+function applyEmptyAppsState() {
+  setApps([]);
+  applySelectedApp("");
+}
 
-  let apps = [];
-  try {
-    apps = await fetchAppsOrThrow();
-  } catch (e) {
-    console.warn("Failed to load apps:", e);
-    renderAppListMessage(list, `<div class="text-danger small px-2 py-2">Failed to load apps.</div>`);
-    setSelectedAppId("");
-    setLatestCsvName("");
-    clearAnalyzeStatusUi();
-    return;
-  }
-
-  if (!apps.length) {
-    renderAppListMessage(list, `<div class="text-secondary small px-2 py-2">No apps configured.</div>`);
-    setSelectedAppId("");
-    setLatestCsvName("");
-    clearAnalyzeStatusUi();
-    return;
-  }
-  // Auswahl: gemerkt oder erstes Preset.
+function applyInitialAppSelection(apps, { autoAnalyze = false } = {}) {
   const current = chooseInitialAppId(apps);
-
-  // Rendern: Header + Rows.
-  renderAppsHeader(list);
-  renderAppRows(list, apps, current);
-
-  // Delegierter Click-Handler (nur 1x binden).
-  ensureAppsListActionsBound(list);
-
-  applySelectedApp(list, current);
-  renderAllProjectsOverview().catch((e) => console.warn("Portfolio refresh failed:", e));
+  applySelectedApp(current);
 
   if (autoAnalyze) {
     requestInitialAnalysis();
   }
+}
+
+async function loadApps({ autoAnalyze = false } = {}) {
+  let apps = [];
+
+  try {
+    apps = await fetchAndStoreApps();
+  } catch (e) {
+    console.warn("Failed to load apps:", e);
+    applyEmptyAppsState();
+    return;
+  }
+
+  if (!apps.length) {
+    applyEmptyAppsState();
+    return;
+  }
+
+  applyInitialAppSelection(apps, { autoAnalyze });
 }
 
 /* ======================================================================= */
