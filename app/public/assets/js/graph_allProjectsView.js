@@ -5,12 +5,12 @@ const SCORE_WEIGHTS = Object.freeze({
   cc: 0.35,
   volatility: 0.20
 });
-const REVIEW_QUEUE_WEIGHTS = Object.freeze({
-  hotness: 0.5,
-  ccDensity: 0.3,
-  codeLines: 0.2
-});
-const REVIEW_QUEUE_LIMIT = 18;
+const PORTFOLIO_APP_ACTION_EVENT = "nodeanalyzer:portfolio-app-action";
+const PROJECT_REVIEW_LIMIT = 6;
+let expandedProjectAppId = "";
+let latestPortfolioState = null;
+const projectReadmeCache = new Map();
+const projectReadmePending = new Map();
 
 export async function renderAllProjectsView(elementId) {
   const root = document.getElementById(String(elementId || ""));
@@ -48,9 +48,13 @@ function decoratePortfolioPayload(payload) {
   return {
     generatedAt: String(payload?.generatedAt || ""),
     apps,
-    reviewQueue: buildReviewQueue(apps),
+    selectedAppId: readSelectedAppId(),
     totalRuns: apps.reduce((sum, app) => sum + Number(app?.runCount || 0), 0)
   };
+}
+
+function readSelectedAppId() {
+  return String(document.getElementById("appSelect")?.value || "").trim();
 }
 
 function decorateAppMetrics(app) {
@@ -160,62 +164,27 @@ function compactSeries(history, readValue) {
   return values;
 }
 
-function buildReviewQueue(apps) {
-  const modules = (apps || [])
-    .flatMap((app) => Array.isArray(app?.latestModules) ? app.latestModules : []);
-  const maxima = collectReviewQueueMaxima(modules);
-
-  return modules
-    .map((module) => attachReviewQueuePriority(module, maxima))
-    .sort(compareReviewQueueItems)
-    .slice(0, REVIEW_QUEUE_LIMIT);
-}
-
-function collectReviewQueueMaxima(modules) {
-  return {
-    hotness: maxMetric(modules, (module) => module.hotness),
-    ccDensity: maxMetric(modules, (module) => module.ccDensity),
-    codeLines: maxMetric(modules, (module) => module.codeLines)
-  };
-}
-
-function attachReviewQueuePriority(module, maxima) {
-  const hotnessNorm = normalizeMetric(module?.hotness, maxima.hotness);
-  const ccDensityNorm = normalizeMetric(module?.ccDensity, maxima.ccDensity);
-  const codeLinesNorm = normalizeMetric(module?.codeLines, maxima.codeLines);
-  const priority =
-    hotnessNorm * REVIEW_QUEUE_WEIGHTS.hotness +
-    ccDensityNorm * REVIEW_QUEUE_WEIGHTS.ccDensity +
-    codeLinesNorm * REVIEW_QUEUE_WEIGHTS.codeLines;
-
-  return {
-    ...module,
-    priority,
-    priorityPct: Math.round(priority * 100)
-  };
-}
-
-function compareReviewQueueItems(a, b) {
-  return (
-    (Number(b?.priority) || 0) - (Number(a?.priority) || 0) ||
-    (Number(b?.hotness) || 0) - (Number(a?.hotness) || 0) ||
-    (Number(b?.ccDensity) || 0) - (Number(a?.ccDensity) || 0) ||
-    (Number(b?.codeLines) || 0) - (Number(a?.codeLines) || 0) ||
-    String(a?.module || "").localeCompare(String(b?.module || ""))
-  );
-}
-
 function renderPortfolioView(root, state) {
   if (!state.apps.length) {
     root.innerHTML = `<div class="text-secondary small">No project history available yet.</div>`;
     return;
   }
 
+  latestPortfolioState = state;
+  syncExpandedProjectApp(state.apps);
   root.innerHTML = buildPortfolioMarkup(state);
-  bindReviewNoteButtons(root);
+  ensurePortfolioInteractionsBound(root);
+  hydrateExpandedProjectReadme(root);
 
   const riskMapSvg = root.querySelector("[data-role='portfolio-risk-map']");
   if (riskMapSvg) renderRiskMap(riskMapSvg, state.apps);
+}
+
+function syncExpandedProjectApp(apps) {
+  const ids = new Set((apps || []).map((app) => String(app?.appId || "")));
+  if (!ids.has(expandedProjectAppId)) {
+    expandedProjectAppId = "";
+  }
 }
 
 function buildPortfolioMarkup(state) {
@@ -242,10 +211,8 @@ function buildPortfolioMarkup(state) {
         </section>
       </div>
 
-      ${buildReviewQueueMarkup(state.reviewQueue)}
-
       <section class="portfolioProjectsList">
-        ${state.apps.map(buildProjectRowMarkup).join("")}
+        ${state.apps.map((app) => buildProjectRowMarkup(app, state.selectedAppId)).join("")}
       </section>
     </div>
   `;
@@ -278,26 +245,35 @@ function buildRiskLegendMarkup() {
   `;
 }
 
-function buildReviewQueueMarkup(reviewQueue) {
-  if (!Array.isArray(reviewQueue) || !reviewQueue.length) {
+function getProjectReviewItems(app) {
+  return Array.isArray(app?.latestModules)
+    ? app.latestModules.slice(0, PROJECT_REVIEW_LIMIT)
+    : [];
+}
+
+function buildProjectReviewQueueMarkup(app) {
+  const reviewItems = getProjectReviewItems(app);
+
+  if (!reviewItems.length) {
     return `
-      <section class="portfolioCard">
-        <div class="text-secondary small">No module-level review queue available yet.</div>
+      <section class="portfolioProjectQueue">
+        <div class="text-secondary small">No file-level review queue available yet.</div>
       </section>
     `;
   }
 
   return `
-    <section class="portfolioCard portfolioReviewQueue">
-      <div class="portfolioReviewQueueHeader">
+    <section class="portfolioProjectQueue">
+      <div class="portfolioProjectQueueHeader">
         <div class="small fw-semibold">Next files to revise</div>
-        <div class="small text-secondary">Sorted globally by hotspot, CC density and size.</div>
+        <div class="small text-secondary">
+          Top ${reviewItems.length} files for ${escapeHtml(app.appId)} by hotspot, CC density and size.
+        </div>
       </div>
-      <div class="table-responsive portfolioReviewTableWrap">
+      <div class="table-responsive portfolioProjectReviewTableWrap">
         <table class="table table-sm portfolioReviewTable align-middle">
           <thead>
             <tr>
-              <th scope="col">App</th>
               <th scope="col">Module</th>
               <th scope="col">Hotness</th>
               <th scope="col">CC density</th>
@@ -307,7 +283,7 @@ function buildReviewQueueMarkup(reviewQueue) {
             </tr>
           </thead>
           <tbody>
-            ${reviewQueue.map(buildReviewQueueRow).join("")}
+            ${reviewItems.map((item) => buildProjectReviewRow(app, item)).join("")}
           </tbody>
         </table>
       </div>
@@ -315,8 +291,8 @@ function buildReviewQueueMarkup(reviewQueue) {
   `;
 }
 
-function buildReviewQueueRow(item) {
-  const appId = String(item?.appId || "");
+function buildProjectReviewRow(app, item) {
+  const appId = String(item?.appId || app?.appId || "");
   const moduleName = String(item?.module || "");
   const hotness = Number(item?.hotness || 0);
   const ccDensity = Number(item?.ccDensity || 0);
@@ -325,7 +301,6 @@ function buildReviewQueueRow(item) {
 
   return `
     <tr>
-      <td class="portfolioReviewApp">${escapeHtml(appId)}</td>
       <td class="portfolioReviewModule">${escapeHtml(moduleName)}</td>
       <td>${escapeHtml(formatMetricValue(hotness))}</td>
       <td>${escapeHtml(formatMetricValue(ccDensity))}</td>
@@ -356,32 +331,186 @@ function formatIntegerMetric(value) {
   return String(Math.round(numeric));
 }
 
-function buildProjectRowMarkup(app) {
+function buildProjectRowMarkup(app, selectedAppId) {
+  const isActiveApp = String(app?.appId || "") === String(selectedAppId || "");
+  const isExpanded = String(app?.appId || "") === String(expandedProjectAppId || "");
+  const detailsId = buildProjectDetailsId(app?.appId);
+
+  return `
+    <article class="portfolioProjectCard tone-${app.criticality?.tone || "stable"}${isActiveApp ? " is-active-app" : ""}">
+      <div class="portfolioProjectShell">
+        <button
+          type="button"
+          class="portfolioProjectToggle"
+          data-portfolio-toggle-details="true"
+          data-app-id="${escapeHtml(app.appId)}"
+          aria-expanded="${isExpanded ? "true" : "false"}"
+          aria-controls="${escapeHtml(detailsId)}"
+        >
+          ${buildProjectToggleContentMarkup(app, isActiveApp, isExpanded)}
+        </button>
+
+        <div class="portfolioProjectActions" aria-label="Project actions">
+          ${buildProjectActionButtonsMarkup(app, isActiveApp)}
+        </div>
+      </div>
+
+      ${isExpanded ? buildProjectDetailsMarkup(app, detailsId) : ""}
+    </article>
+  `;
+}
+
+function buildProjectDetailsId(appId) {
+  return `portfolio-project-details-${noteFilenameToken(appId)}`;
+}
+
+function buildProjectToggleContentMarkup(app, isActiveApp, isExpanded) {
+  return `
+    <div class="portfolioProjectHeader">
+      ${buildProjectHeaderMetaMarkup(app, isActiveApp)}
+      <div class="portfolioProjectHeaderAside">
+        ${buildProjectScoreMarkup(app)}
+        <span class="portfolioProjectToggleBadge">${isExpanded ? "Collapse" : "Expand"}</span>
+      </div>
+    </div>
+    <div class="portfolioMetricGrid portfolioMetricGridInteractive">
+      ${buildProjectMetricTilesMarkup(app)}
+    </div>
+  `;
+}
+
+function buildProjectHeaderMetaMarkup(app, isActiveApp) {
   const latest = app.latest || {};
+
+  return `
+    <div>
+      <div class="portfolioProjectNameRow">
+        <div class="portfolioProjectName">${escapeHtml(app.name || app.appId)}</div>
+        ${isActiveApp ? `<span class="portfolioActiveBadge">active app</span>` : ""}
+      </div>
+      <div class="small text-secondary">
+        ${escapeHtml(app.appId)} · ${app.runCount} runs · latest ${formatTimestamp(latest.timestamp)}
+      </div>
+    </div>
+  `;
+}
+
+function buildProjectScoreMarkup(app) {
   const score = app.criticality?.scorePct ?? 0;
 
   return `
-    <article class="portfolioProjectCard tone-${app.criticality?.tone || "stable"}">
-      <div class="portfolioProjectHeader">
-        <div>
-          <div class="portfolioProjectName">${escapeHtml(app.name || app.appId)}</div>
-          <div class="small text-secondary">
-            ${escapeHtml(app.appId)} · ${app.runCount} runs · latest ${formatTimestamp(latest.timestamp)}
-          </div>
-        </div>
-        <div class="portfolioProjectScore">
-          <span class="portfolioScoreBadge">${score}</span>
-          <span class="small text-secondary">criticality</span>
-        </div>
-      </div>
+    <div class="portfolioProjectScore">
+      <span class="portfolioScoreBadge">${score}</span>
+      <span class="small text-secondary">criticality</span>
+    </div>
+  `;
+}
 
-      <div class="portfolioMetricGrid">
-        ${buildMetricTile("Code lines", latest.codeLinesTotal ?? latest.locTotal, buildSparklineSvg(app.history, (run) => run?.codeLinesTotal ?? run?.locTotal, "code"))}
-        ${buildMetricTile("Comment lines", latest.commentLinesTotal, buildSparklineSvg(app.history, (run) => run?.commentLinesTotal, "comment"), coverageLabel(latest.commentCoverage))}
-        ${buildMetricTile("Hotness", latest.hotnessDensity ?? latest.hotnessTotal, buildSparklineSvg(app.history, (run) => run?.hotnessDensity ?? run?.hotnessTotal, "hotness"), coverageLabel(latest.hotnessCoverage))}
-        ${buildMetricTile("CC", latest.ccDensity ?? latest.ccTotal, buildSparklineSvg(app.history, (run) => run?.ccDensity ?? run?.ccTotal, "cc"), coverageLabel(latest.ccCoverage))}
+function buildProjectMetricTilesMarkup(app) {
+  const latest = app.latest || {};
+
+  return [
+    buildMetricTile(
+      "Code lines",
+      latest.codeLinesTotal ?? latest.locTotal,
+      buildSparklineSvg(app.history, (run) => run?.codeLinesTotal ?? run?.locTotal, "code")
+    ),
+    buildMetricTile(
+      "Comment lines",
+      latest.commentLinesTotal,
+      buildSparklineSvg(app.history, (run) => run?.commentLinesTotal, "comment"),
+      coverageLabel(latest.commentCoverage)
+    ),
+    buildMetricTile(
+      "Hotness",
+      latest.hotnessDensity ?? latest.hotnessTotal,
+      buildSparklineSvg(app.history, (run) => run?.hotnessDensity ?? run?.hotnessTotal, "hotness"),
+      coverageLabel(latest.hotnessCoverage)
+    ),
+    buildMetricTile(
+      "CC",
+      latest.ccDensity ?? latest.ccTotal,
+      buildSparklineSvg(app.history, (run) => run?.ccDensity ?? run?.ccTotal, "cc"),
+      coverageLabel(latest.ccCoverage)
+    )
+  ].join("");
+}
+
+function buildProjectActionButtonsMarkup(app, isActiveApp) {
+  const selectBtnClass = isActiveApp ? "btn btn-sm btn-primary" : "btn btn-sm btn-outline-primary";
+
+  return `
+    <button
+      type="button"
+      class="${selectBtnClass}"
+      data-portfolio-action="select"
+      data-app-id="${escapeHtml(app.appId)}"
+    >
+      ${isActiveApp ? "active app" : "select app"}
+    </button>
+    <button
+      type="button"
+      class="btn btn-sm btn-outline-secondary"
+      data-portfolio-action="restart"
+      data-app-id="${escapeHtml(app.appId)}"
+    >
+      Restart
+    </button>
+    <button
+      type="button"
+      class="btn btn-sm btn-outline-primary"
+      data-portfolio-action="open"
+      data-app-id="${escapeHtml(app.appId)}"
+      data-url="${escapeHtml(app.url || "")}"
+    >
+      Show
+    </button>
+    <button
+      type="button"
+      class="btn btn-sm btn-primary"
+      data-portfolio-action="analyze"
+      data-app-id="${escapeHtml(app.appId)}"
+    >
+      Analyze
+    </button>
+    <button
+      type="button"
+      class="btn btn-sm btn-outline-primary"
+      data-portfolio-action="freeze"
+      data-app-id="${escapeHtml(app.appId)}"
+    >
+      Freeze
+    </button>
+  `;
+}
+
+function buildProjectDetailsMarkup(app, detailsId) {
+  return `
+    <section
+      class="portfolioProjectAccordionBody"
+      id="${escapeHtml(detailsId)}"
+      role="region"
+      aria-label="Project details for ${escapeHtml(app.appId)}"
+    >
+      ${buildProjectReviewQueueMarkup(app)}
+      ${buildProjectReadmeMarkup(app)}
+    </section>
+  `;
+}
+
+function buildProjectReadmeMarkup(app) {
+  const appId = String(app?.appId || "");
+
+  return `
+    <section class="portfolioProjectReadme">
+      <div class="portfolioProjectReadmeHeader">
+        <div class="small fw-semibold">README</div>
+        <div class="small text-secondary">App root context for ${escapeHtml(appId)}</div>
       </div>
-    </article>
+      <div class="portfolioProjectReadmeBody" data-project-readme="${escapeHtml(appId)}">
+        ${buildProjectReadmeBodyMarkup(appId)}
+      </div>
+    </section>
   `;
 }
 
@@ -396,6 +525,108 @@ function buildMetricTile(label, value, sparklineSvg, note = "") {
       ${note ? `<div class="portfolioMetricNote">${escapeHtml(note)}</div>` : ""}
     </section>
   `;
+}
+
+function buildProjectReadmeUrl(appId) {
+  const a = encodeURIComponent(String(appId || ""));
+  return `/readme?appId=${a}&file=.`;
+}
+
+function markdownToHtml(md) {
+  const text = String(md || "");
+  return window.marked?.parse ? window.marked.parse(text) : `<pre>${escapeHtml(text)}</pre>`;
+}
+
+function sanitizeHtml(rawHtml) {
+  return window.DOMPurify?.sanitize ? window.DOMPurify.sanitize(rawHtml) : rawHtml;
+}
+
+function buildProjectReadmeBodyMarkup(appId) {
+  const entry = projectReadmeCache.get(String(appId || ""));
+
+  if (!entry) {
+    return `<div class="text-secondary small">Loading README…</div>`;
+  }
+
+  if (entry.status === "missing") {
+    return `<div class="text-secondary small">No README found in the app root.</div>`;
+  }
+
+  if (entry.status === "error") {
+    return `<div class="text-danger small">${escapeHtml(entry.message || "README could not be loaded.")}</div>`;
+  }
+
+  const rawHtml = markdownToHtml(entry.markdown || "");
+  const safeHtml = sanitizeHtml(rawHtml);
+
+  return `
+    <div class="small text-secondary mb-2">${escapeHtml(entry.readmePath || "")}</div>
+    <div class="content markdown">${safeHtml}</div>
+  `;
+}
+
+async function loadProjectReadme(appId) {
+  const safeAppId = String(appId || "").trim();
+  if (!safeAppId) return { status: "missing" };
+
+  if (projectReadmePending.has(safeAppId)) {
+    return projectReadmePending.get(safeAppId);
+  }
+
+  const promise = fetchJson(buildProjectReadmeUrl(safeAppId))
+    .then((data) => {
+      const entry = !data || data.found === false
+        ? { status: "missing" }
+        : {
+            status: "ready",
+            readmePath: String(data.readmePath || ""),
+            markdown: String(data.markdown || "")
+          };
+
+      projectReadmeCache.set(safeAppId, entry);
+      return entry;
+    })
+    .catch((error) => {
+      const entry = {
+        status: "error",
+        message: String(error?.message || error || "README could not be loaded.")
+      };
+
+      projectReadmeCache.set(safeAppId, entry);
+      return entry;
+    })
+    .finally(() => {
+      projectReadmePending.delete(safeAppId);
+    });
+
+  projectReadmePending.set(safeAppId, promise);
+  return promise;
+}
+
+function getProjectReadmeContainer(root, appId) {
+  return Array.from(root.querySelectorAll("[data-project-readme]"))
+    .find((element) => String(element?.dataset?.projectReadme || "") === String(appId || "")) || null;
+}
+
+function hydrateExpandedProjectReadme(root) {
+  const appId = String(expandedProjectAppId || "");
+  if (!appId) return;
+
+  if (projectReadmeCache.has(appId)) return;
+
+  loadProjectReadme(appId).then(() => {
+    if (String(expandedProjectAppId || "") !== appId) return;
+    const container = getProjectReadmeContainer(root, appId);
+    if (!container) return;
+    container.innerHTML = buildProjectReadmeBodyMarkup(appId);
+  });
+}
+
+function toggleProjectDetails(root, appId) {
+  const safeAppId = String(appId || "").trim();
+  expandedProjectAppId = expandedProjectAppId === safeAppId ? "" : safeAppId;
+  if (!latestPortfolioState) return;
+  renderPortfolioView(root, latestPortfolioState);
 }
 
 function coverageLabel(coverage) {
@@ -532,10 +763,34 @@ function renderRiskMap(svgElement, apps) {
     .text((app) => app.appId);
 }
 
-function bindReviewNoteButtons(root) {
-  root.querySelectorAll("[data-action='create-review-note']").forEach((button) => {
-    button.addEventListener("click", () => createReviewNote(button));
+function ensurePortfolioInteractionsBound(root) {
+  if (root.__portfolioInteractionsBound) return;
+  Object.defineProperty(root, "__portfolioInteractionsBound", { value: true });
+
+  root.addEventListener("click", (event) => {
+    const target = event?.target?.closest?.("[data-portfolio-action], [data-action='create-review-note'], [data-portfolio-toggle-details]");
+    if (!target || !root.contains(target)) return;
+
+    if (target.dataset.portfolioToggleDetails === "true") {
+      toggleProjectDetails(root, String(target.dataset.appId || ""));
+      return;
+    }
+
+    if (target.dataset.action === "create-review-note") {
+      createReviewNote(target);
+      return;
+    }
+
+    dispatchPortfolioAppAction({
+      action: String(target.dataset.portfolioAction || ""),
+      appId: String(target.dataset.appId || ""),
+      url: String(target.dataset.url || "")
+    });
   });
+}
+
+function dispatchPortfolioAppAction(detail) {
+  document.dispatchEvent(new CustomEvent(PORTFOLIO_APP_ACTION_EVENT, { detail }));
 }
 
 function createReviewNote(button) {

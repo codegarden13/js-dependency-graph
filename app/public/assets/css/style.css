@@ -314,16 +314,6 @@ body {
   gap: 2px;
 }
 
-.portfolioReviewQueue {
-  display: grid;
-  gap: 10px;
-}
-
-.portfolioReviewTableWrap {
-  max-height: 320px;
-  overflow: auto;
-}
-
 .portfolioReviewTable {
   margin-bottom: 0;
 }
@@ -335,7 +325,6 @@ body {
   font-weight: 600;
 }
 
-.portfolioReviewApp,
 .portfolioReviewAction {
   white-space: nowrap;
 }
@@ -362,6 +351,11 @@ body {
   background: #fff;
 }
 
+.portfolioProjectCard.is-active-app {
+  border-color: rgba(13, 110, 253, 0.35);
+  background: rgba(248, 251, 255, 0.95);
+}
+
 .portfolioProjectCard.tone-stable {
   box-shadow: inset 4px 0 0 rgba(22, 163, 74, 0.7);
 }
@@ -374,12 +368,39 @@ body {
   box-shadow: inset 4px 0 0 rgba(220, 38, 38, 0.85);
 }
 
+.portfolioProjectShell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+}
+
+.portfolioProjectToggle {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.portfolioProjectToggle:hover .portfolioMetricTile,
+.portfolioProjectToggle:focus-visible .portfolioMetricTile {
+  border-color: rgba(13, 110, 253, 0.22);
+}
+
+.portfolioProjectToggle:focus-visible {
+  outline: 2px solid rgba(13, 110, 253, 0.35);
+  outline-offset: 4px;
+  border-radius: 12px;
+}
+
 .portfolioProjectHeader {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
   gap: 12px;
-  margin-bottom: 12px;
 }
 
 .portfolioProjectName {
@@ -387,11 +408,38 @@ body {
   font-weight: 700;
 }
 
+.portfolioProjectNameRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.portfolioActiveBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(13, 110, 253, 0.12);
+  color: #0b5ed7;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-transform: lowercase;
+}
+
 .portfolioProjectScore {
   display: inline-flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 4px;
+}
+
+.portfolioProjectHeaderAside {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
 }
 
 .portfolioScoreBadge {
@@ -405,19 +453,92 @@ body {
   text-align: center;
 }
 
+.portfolioProjectToggleBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  color: rgba(0, 0, 0, 0.66);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.portfolioProjectActions {
+  display: flex;
+  justify-content: flex-start;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.portfolioProjectActions .btn {
+  white-space: nowrap;
+}
+
 .portfolioMetricGrid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
 }
 
+.portfolioMetricGridInteractive {
+  cursor: pointer;
+}
+
+.portfolioProjectQueue {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.portfolioProjectAccordionBody {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.portfolioProjectQueueHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.portfolioProjectReviewTableWrap {
+  overflow: auto;
+}
+
+.portfolioProjectReadme {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 12px;
+  background: rgba(248, 249, 250, 0.7);
+}
+
+.portfolioProjectReadmeHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.portfolioProjectReadmeBody {
+  min-width: 0;
+}
+
 @media (max-width: 1199.98px) {
   .portfolioTopGrid {
     grid-template-columns: 1fr;
-  }
-
-  .portfolioReviewTableWrap {
-    max-height: none;
   }
 }
 
@@ -479,6 +600,23 @@ body {
   .legendPanelSections,
   .portfolioMetricGrid {
     grid-template-columns: 1fr;
+  }
+
+  .portfolioProjectShell {
+    grid-template-columns: 1fr;
+  }
+
+  .portfolioProjectHeader {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .portfolioProjectHeaderAside {
+    align-items: flex-start;
+  }
+
+  .portfolioProjectActions {
+    justify-content: flex-start;
   }
 }
 

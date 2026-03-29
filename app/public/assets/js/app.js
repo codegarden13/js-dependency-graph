@@ -11,7 +11,7 @@
  * - lets the user explicitly trigger `/analyze` or `/freeze` for the selected app
  * - fetches the produced metrics JSON
  * - renders the main D3 graph via `initcodeStructureChart(...)`
- * - keeps side panels (node info + README) in sync with graph selection
+ * - keeps workspace views in sync with graph selection and app state
  * - listens to SSE live events from `/events`
  * - forwards fs-change events into the active graph instance
  *
@@ -28,8 +28,6 @@
  * - #appList
  * - #appSelect (hidden input)
  * - #status
- * - #graphInfoPanel
- * - #readmePanel
  * - #appInfoPanel
  * - #codeStructureSvg
  */
@@ -45,7 +43,7 @@ import { initcodeStructureChart } from "./d3_codeStructure.js";
 
 // Currently selected graph node.
 //
-// Source of truth for the side panels. The value is updated from the graph
+// Source of truth for the graph-detail state. The value is updated from the graph
 // renderer callback (`onNodeSelected`) and occasionally refreshed from the
 // latest rendered node instance after SSE updates.
 let selectedNode = null;
@@ -66,8 +64,11 @@ let graphZoomUiBound = false;
 let graphZoomTabsBound = false;
 let latestCsvLoadToken = 0;
 let allProjectsLoadToken = 0;
+let crossViewEventsBound = false;
 
 const SHELL_TITLE_BASE = "NodeAnalyzer";
+const PORTFOLIO_APP_ACTION_EVENT = "nodeanalyzer:portfolio-app-action";
+const ACTIVE_APP_CHANGED_EVENT = "nodeanalyzer:active-app-changed";
 
 /* ======================================================================= */
 /* DOM helpers                                                              */
@@ -80,6 +81,10 @@ function byId(id) {
     console.warn(`Expected exactly 1 #${id}, found ${list.length}`, list);
   }
   return /** @type {HTMLElement|null} */ (list[0] || null);
+}
+
+function maybeById(id) {
+  return /** @type {HTMLElement|null} */ (document.getElementById(String(id || "")));
 }
 
 /** Minimal HTML escape for safe innerHTML templating. */
@@ -137,6 +142,12 @@ function setLatestCsvName(filename = "") {
 
   el.textContent = label;
   el.setAttribute("title", label);
+}
+
+function emitActiveAppChanged(appId = "") {
+  document.dispatchEvent(new CustomEvent(ACTIVE_APP_CHANGED_EVENT, {
+    detail: { appId: String(appId || "").trim() }
+  }));
 }
 
 function normalizeStatusSignalState(state = "neutral") {
@@ -208,13 +219,6 @@ async function loadLatestCsvForApp(appId) {
 }
 
 function ensurePanelsExist() {
-  const missing = [];
-  if (!byId("readmePanel")) missing.push("#readmePanel");
-  if (!byId("graphInfoPanel")) missing.push("#graphInfoPanel");
-  if (missing.length) {
-    console.warn("Panels missing in DOM:", missing.join(", "));
-    return false;
-  }
   return true;
 }
 
@@ -223,10 +227,11 @@ function getGraphZoomSlider() {
 }
 
 function getGraphViewTabs() {
-  return Array.from(document.querySelectorAll("#graphTabs [data-bs-toggle='tab']"));
+  return Array.from(document.querySelectorAll("#workspaceTabs [data-bs-toggle='tab']"));
 }
 
 function getActiveGraphViewKey() {
+  if (byId("workspace-app-tab")?.classList.contains("active")) return "app";
   if (byId("graph-MRI-tab")?.classList.contains("active")) return "mri";
   if (byId("graph-time-tab")?.classList.contains("active")) return "time";
   if (byId("graph-projects-tab")?.classList.contains("active")) return "projects";
@@ -242,6 +247,37 @@ function updateGraphZoomTargetLabel() {
   setTextById("graphZoomTarget", getActiveGraphViewLabel());
 }
 
+function getGraphZoomToolbar() {
+  return byId("graphZoomToolbar");
+}
+
+function getGraphToolsAccordion() {
+  return byId("graphToolsAccordion");
+}
+
+function viewSupportsZoom(viewKey = "main") {
+  return viewKey === "main" || viewKey === "mri" || viewKey === "time";
+}
+
+function viewSupportsGraphTools(viewKey = "main") {
+  return viewKey === "main";
+}
+
+function syncWorkspaceChrome(viewKey = getActiveGraphViewKey()) {
+  const zoomToolbar = getGraphZoomToolbar();
+  const graphTools = getGraphToolsAccordion();
+
+  if (zoomToolbar) {
+    zoomToolbar.classList.toggle("d-none", !viewSupportsZoom(viewKey));
+  }
+
+  if (graphTools) {
+    graphTools.classList.toggle("d-none", !viewSupportsGraphTools(viewKey));
+  }
+
+  updateWorkspaceHintForView(viewKey);
+}
+
 function getGraphControllerByView(viewKey = "main") {
   switch (String(viewKey || "")) {
     case "mri":
@@ -249,6 +285,7 @@ function getGraphControllerByView(viewKey = "main") {
     case "time":
       return graphTimeController;
     case "projects":
+    case "app":
       return null;
     default:
       return graphController;
@@ -268,18 +305,26 @@ function getGraphZoomPercent(scale) {
 function updateGraphZoomUi(scale = 1, disabled = true) {
   const slider = getGraphZoomSlider();
   const percent = getGraphZoomPercent(scale);
+  const viewKey = getActiveGraphViewKey();
 
   updateGraphZoomTargetLabel();
+  syncWorkspaceChrome(viewKey);
 
   if (slider) {
     slider.value = String(percent);
-    slider.disabled = disabled;
+    slider.disabled = disabled || !viewSupportsZoom(viewKey);
   }
 
   setTextById("graphZoomValue", `${percent}%`);
 }
 
 function syncGraphZoomUi() {
+  const viewKey = getActiveGraphViewKey();
+  if (!viewSupportsZoom(viewKey)) {
+    updateGraphZoomUi(1, true);
+    return;
+  }
+
   const scale = getActiveGraphZoomController()?.getZoom?.();
   if (Number.isFinite(scale)) {
     updateGraphZoomUi(scale, false);
@@ -837,9 +882,12 @@ async function loadSelectedAppInfo() {
 /* ======================================================================= */
 
 function clearPanels() {
-  const rp = byId("readmePanel");
-  const ip = byId("graphInfoPanel");
-  if (rp) rp.innerHTML = "";
+  const rp = maybeById("readmePanel");
+  const ip = maybeById("graphInfoPanel");
+  if (rp) {
+    rp.innerHTML = "";
+    setReadmeSummary("none");
+  }
   if (ip) ip.innerHTML = "";
 }
 
@@ -848,7 +896,7 @@ function clearPanels() {
  * @param {any} node
  */
 function renderInfoPanel(node) {
-  const root = byId("graphInfoPanel");
+  const root = maybeById("graphInfoPanel");
   if (!root) return;
 
   if (!node) {
@@ -892,7 +940,18 @@ function renderInfoPanel(node) {
 }
 
 function getReadmeRoot() {
-  return byId("readmePanel");
+  const root = maybeById("readmePanel");
+  if (!root) return null;
+  if (root.closest(".d-none")) return null;
+  return root;
+}
+
+function setReadmeSummary(text = "none") {
+  const summary = String(text || "").trim();
+  const el = maybeById("readmeSummary");
+  if (!el) return false;
+  el.textContent = summary || "none";
+  return true;
 }
 
 function getNodeRelPath(node) {
@@ -900,25 +959,33 @@ function getNodeRelPath(node) {
 }
 
 function clearReadme(root) {
+  setReadmeSummary("none");
   root.innerHTML = "";
 }
 
 function showReadmeSearching(root) {
+  setReadmeSummary("searching...");
   root.innerHTML = `<div class="text-muted small">Searching…</div>`;
 }
 
 function showReadmeSelectApp(root) {
-  root.innerHTML = `<div class="text-muted small">Run Analyze to load README context for the active graph.</div>`;
+  setReadmeSummary("none");
+  root.innerHTML = `<div class="text-muted small">Select an app to load its root README.</div>`;
 }
 
-function showReadmeNotFound(root) {
-  root.innerHTML = `<div class="text-muted small">No README found for this node.</div>`;
+function showReadmeNotFound(root, message = "No README found for this context.") {
+  setReadmeSummary("none");
+  root.innerHTML = `<div class="text-muted small">${esc(message)}</div>`;
 }
 
 function buildReadmeUrl(appId, fileRel) {
   const a = encodeURIComponent(String(appId || ""));
   const f = encodeURIComponent(String(fileRel || ""));
   return `/readme?appId=${a}&file=${f}`;
+}
+
+function buildAppRootReadmeUrl(appId) {
+  return buildReadmeUrl(appId, ".");
 }
 
 function isAbortError(e) {
@@ -952,11 +1019,39 @@ function renderReadmeMarkdown(root, data) {
   const md = String(data?.markdown || "");
   const rawHtml = markdownToHtml(md);
   const safeHtml = sanitizeHtml(rawHtml);
+  const readmePath = String(data?.readmePath || "").trim();
+
+  setReadmeSummary(readmePath || "README");
 
   root.innerHTML = `
-      <div class="small text-secondary mb-2">${esc(data?.readmePath || "")}</div>
+      <div class="small text-secondary mb-2">${esc(readmePath)}</div>
       <div class="content markdown">${safeHtml}</div>
     `;
+}
+
+async function renderDefaultReadmeForApp(appId, signal) {
+  const root = getReadmeRoot();
+  if (!root) return;
+
+  const safeAppId = String(appId || "").trim();
+  if (!safeAppId) {
+    showReadmeSelectApp(root);
+    return;
+  }
+
+  showReadmeSearching(root);
+
+  const url = buildAppRootReadmeUrl(safeAppId);
+  const data = await fetchReadmeDataOrNull(url, signal);
+
+  if (isAborted(signal)) return;
+
+  if (!data || data.found === false) {
+    showReadmeNotFound(root, "No README found in the app root.");
+    return;
+  }
+
+  renderReadmeMarkdown(root, data);
 }
 
 async function renderReadmeForNode(node, signal) {
@@ -990,6 +1085,29 @@ async function renderReadmeForNode(node, signal) {
   renderReadmeMarkdown(root, data);
 }
 
+function createFreshReadmeController() {
+  if (activeReadmeController) activeReadmeController.abort();
+  activeReadmeController = new AbortController();
+  return activeReadmeController;
+}
+
+function handleReadmeRenderFailure(e) {
+  if (e?.name === "AbortError") return;
+  console.warn("README render failed:", e);
+  const root = getReadmeRoot();
+  if (root) {
+    setReadmeSummary("none");
+    root.innerHTML = `<div class="text-muted small">Could not load README.</div>`;
+  }
+}
+
+function requestDefaultReadmeForApp(appId = getSelectedAppId()) {
+  if (!ensurePanelsExist()) return;
+  const controller = createFreshReadmeController();
+
+  renderDefaultReadmeForApp(appId, controller.signal).catch(handleReadmeRenderFailure);
+}
+
 /* ======================================================================= */
 /* Graph state helpers                                                     */
 /* ======================================================================= */
@@ -1009,10 +1127,8 @@ function refreshSelectedPanels() {
 
   if (ensurePanelsExist()) {
     renderInfoPanel(latest);
-
-    if (activeReadmeController) activeReadmeController.abort();
-    activeReadmeController = new AbortController();
-    renderReadmeForNode(latest, activeReadmeController.signal).catch(() => { });
+    const controller = createFreshReadmeController();
+    renderReadmeForNode(latest, controller.signal).catch(handleReadmeRenderFailure);
   }
 }
 
@@ -1033,16 +1149,14 @@ function onNodeSelected(node) {
   if (!ensurePanelsExist()) return;
 
   renderInfoPanel(node);
+  const controller = createFreshReadmeController();
 
-  if (activeReadmeController) activeReadmeController.abort();
-  activeReadmeController = new AbortController();
+  if (!node) {
+    renderDefaultReadmeForApp(getSelectedAppId(), controller.signal).catch(handleReadmeRenderFailure);
+    return;
+  }
 
-  renderReadmeForNode(node, activeReadmeController.signal).catch((e) => {
-    if (e?.name === "AbortError") return;
-    console.warn("README render failed:", e);
-    const root = byId("readmePanel");
-    if (root) root.innerHTML = "";
-  });
+  renderReadmeForNode(node, controller.signal).catch(handleReadmeRenderFailure);
 }
 
 /* ======================================================================= */
@@ -1069,15 +1183,22 @@ function onNodeSelected(node) {
  * @param {string} appId Config id of the selected app.
  */
 function setSelectedAppId(appId) {
+  const nextId = String(appId || "").trim();
   const hidden = /** @type {HTMLInputElement|null} */ (byId("appSelect"));
   if (!hidden) {
-    updateShellTitle(appId);
+    updateShellTitle(nextId);
+    emitActiveAppChanged(nextId);
     return;
   }
 
   // Always store a string (defensive). Empty string means "no selection".
-  hidden.value = String(appId || "");
-  updateShellTitle(appId);
+  const previousId = String(hidden.value || "").trim();
+  hidden.value = nextId;
+  updateShellTitle(nextId);
+
+  if (nextId !== previousId) {
+    emitActiveAppChanged(nextId);
+  }
 }
 
 /**
@@ -1096,7 +1217,7 @@ function getSelectedAppId() {
 }
 
 /**
- * Visually mark the active app row in the sidebar list.
+ * Visually mark the active app row in the internal app list.
  *
  * Implementation
  * --------------
@@ -1252,6 +1373,9 @@ function chooseInitialAppId(apps) {
 function applySelectedApp(listEl, appId) {
   setSelectedAppId(appId);
   if (listEl) setAppActiveRow(listEl, appId);
+  selectedNode = null;
+  renderInfoPanel(null);
+  requestDefaultReadmeForApp(appId);
   clearAnalyzeStatusUi();
   loadLatestCsvForApp(appId).catch((e) => console.warn("Latest CSV load failed:", e));
   loadSelectedAppInfo().catch((e) => console.warn("App info load failed:", e));
@@ -1391,6 +1515,50 @@ function handleFreezeAction(listEl, appId) {
   runFreeze().catch((e) => console.error(e));
 }
 
+function handlePortfolioAppActionEvent(ev) {
+  const detail = ev?.detail || {};
+  const action = String(detail.action || "");
+  const appId = normalizeAppId(detail.appId);
+  const url = String(detail.url || "");
+  const listEl = byId("appList");
+
+  if (action === "select") {
+    applySelectedApp(listEl, appId);
+    return;
+  }
+
+  if (action === "open") {
+    handleOpenAction(url);
+    return;
+  }
+
+  if (action === "restart") {
+    handleRestartAction(appId);
+    return;
+  }
+
+  if (action === "analyze") {
+    handleAnalyzeAction(listEl, appId);
+    return;
+  }
+
+  if (action === "freeze") {
+    handleFreezeAction(listEl, appId);
+  }
+}
+
+function handleActiveAppChangedEvent() {
+  renderAllProjectsOverview().catch((e) => console.warn("Portfolio refresh failed:", e));
+}
+
+function bindCrossViewEvents() {
+  if (crossViewEventsBound) return;
+  crossViewEventsBound = true;
+
+  document.addEventListener(PORTFOLIO_APP_ACTION_EVENT, handlePortfolioAppActionEvent);
+  document.addEventListener(ACTIVE_APP_CHANGED_EVENT, handleActiveAppChangedEvent);
+}
+
 function tryHandleAppActionClick(ev, target) {
   const btn = getClosestActionButton(target);
   if (!btn) return false;
@@ -1460,7 +1628,7 @@ function requestInitialAnalysis() {
 }
 
 /**
- * Lädt die App-Presets vom Backend (`/apps`) und rendert sie in die Sidebar.
+ * Lädt die App-Presets vom Backend (`/apps`) und rendert den internen App-Zustand.
  *
  * Ablauf
  * ------
@@ -1722,14 +1890,31 @@ function buildGraphHeaderText(appId, metrics) {
   });
 }
 
+function buildWorkspaceHintText(viewKey = getActiveGraphViewKey()) {
+  const hasGraphApp = Boolean(getActiveGraphAppId());
+  const hasSelectedApp = Boolean(getSelectedAppId());
+
+  switch (String(viewKey || "")) {
+    case "app":
+      return hasSelectedApp ? "Repository details, Git state and freeze history." : "Select an app to inspect details.";
+    case "projects":
+      return "Portfolio trends and app-level review priorities.";
+    default:
+      if (hasGraphApp) return "Click a node to inspect.";
+      if (hasSelectedApp) return "Run Analyze to inspect the graph.";
+      return "Select an app, then run Analyze.";
+  }
+}
+
+function updateWorkspaceHintForView(viewKey = getActiveGraphViewKey()) {
+  setTextById("workspaceHint", buildWorkspaceHintText(viewKey));
+}
+
 function updateGraphHeader(metrics) {
   const graphAppId = getActiveGraphAppId();
 
   setTextById("graphInfoHeader", buildGraphHeaderText(graphAppId, metrics));
-  setTextById(
-    "workspaceHint",
-    graphAppId ? "Click a node to inspect" : "Select an app, then run Analyze."
-  );
+  updateWorkspaceHintForView();
 }
 
 function activateTabById(id) {
@@ -1740,7 +1925,7 @@ function activateTabById(id) {
 }
 
 function showWorkspaceGraphTab() {
-  activateTabById("workspace-graph-tab");
+  activateTabById("graph-main-tab");
 }
 
 function resetGraphViews() {
@@ -1757,9 +1942,10 @@ function resetGraphViews() {
   clearSvgContent("codeStructureSvg");
   clearSvgContent("graphMriView");
   clearSvgContent("graphTimeView");
-  updateCurrentAppSummary(null);
   updateGraphHeader(null);
   syncGraphZoomUi();
+  renderInfoPanel(null);
+  requestDefaultReadmeForApp(getSelectedAppId());
 }
 
 function renderGraph(metrics) {
@@ -1776,6 +1962,8 @@ function renderGraph(metrics) {
     onNodeSelected
   });
   syncGraphZoomUi();
+  renderInfoPanel(null);
+  requestDefaultReadmeForApp(getSelectedAppId());
 }
 
 function resetSupplementaryGraphViews() {
@@ -1931,11 +2119,6 @@ function updateTextSummary(targetId, buildText) {
   }
 }
 
-function updateCurrentAppSummary(metrics) {
-  void metrics;
-  return setTextById("currentAppSummary", "Apps");
-}
-
 function syncAnalyzeArtifactUi(data) {
   const changed = data?.artifacts?.csvChanged;
   setLatestCsvName(data?.artifacts?.latestCsvFilename || "");
@@ -2057,8 +2240,6 @@ async function runAnalysis() {
     renderGraph(metrics);
     await renderSupplementaryCharts(metrics);
 
-    // Best-effort summary update for the current app accordion header.
-    updateCurrentAppSummary(metrics);
     updateGraphHeader(metrics);
     showWorkspaceGraphTab();
 
@@ -2087,10 +2268,10 @@ async function runAnalysis() {
 function init() {
   ensurePanelsExist();
   bindGraphZoomUi();
+  bindCrossViewEvents();
   updateShellTitle("");
   setLatestCsvName("");
   setStatusSignal("neutral");
-  updateCurrentAppSummary(null);
   updateGraphHeader(null);
   startLiveEvents();
   renderAllProjectsOverview().catch((e) => console.warn("Portfolio init failed:", e));

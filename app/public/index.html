@@ -32,69 +32,13 @@
       </div>
     </div>
 
+    <div class="d-none" aria-hidden="true">
+      <div id="appList" class="appsList appsScroll" role="list"></div>
+      <input type="hidden" id="appSelect" value="" />
+    </div>
+
     <div class="row g-3 g-lg-4 align-items-start">
-      <!-- LEFT: apps + readme + selection -->
-      <aside class="col-12 col-xl-3 order-1 order-xl-1">
-        <div class="d-flex flex-column gap-3">
-          <div class="accordion" id="leftTopAccordion">
-            <div class="accordion-item">
-              <h2 class="accordion-header" id="accAppsHdr">
-                <button class="accordion-button py-2" type="button" data-bs-toggle="collapse"
-                  data-bs-target="#accApps" aria-expanded="true" aria-controls="accApps">
-                  <span class="small fw-semibold" id="currentAppSummary">Apps</span>
-                </button>
-              </h2>
-              <div id="accApps" class="accordion-collapse collapse show" aria-labelledby="accAppsHdr"
-                data-bs-parent="#leftTopAccordion">
-                <div class="accordion-body p-2">
-                  <div id="appList" class="appsList appsScroll" role="list">
-                    <div class="text-secondary small px-2 py-2">Loading…</div>
-                  </div>
-
-                  <!-- Hidden state used by runAnalysis() -->
-                  <input type="hidden" id="appSelect" value="" />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="border rounded shadow-sm bg-body overflow-hidden">
-            <div
-              class="px-3 py-2 border-bottom bg-body-tertiary d-flex align-items-center justify-content-between gap-2">
-              <div>
-                <div class="small fw-semibold">README</div>
-                <div class="small text-secondary" id="readmeSummary">none</div>
-              </div>
-            </div>
-            <div class="p-3 panelScroll" id="readmePanel"></div>
-          </div>
-
-          <div class="border rounded shadow-sm bg-body overflow-hidden">
-            <div
-              class="px-3 py-2 border-bottom bg-body-tertiary d-flex align-items-center justify-content-between gap-2">
-              <div>
-                <div class="small fw-semibold">Selection</div>
-                <div class="small text-secondary" id="selectionSummary">none</div>
-              </div>
-            </div>
-            <div class="p-3 panelScroll" id="graphInfoPanel"></div>
-          </div>
-
-          <div class="border rounded shadow-sm bg-body overflow-hidden">
-            <div
-              class="px-3 py-2 border-bottom bg-body-tertiary d-flex align-items-center justify-content-between gap-2">
-              <div>
-                <div class="small fw-semibold">Recommendations</div>
-                <span class="badge bg-secondary ms-2" id="recoCountBadge">0</span>
-              </div>
-            </div>
-            <div class="p-3 panelScroll" id="recommendationsPanel"></div>
-          </div>
-        </div>
-      </aside>
-
-      <!-- CENTER: graph -->
-      <main class="col-12 col-xl-9 order-2 order-xl-2">
+      <main class="col-12">
         <div class="card shadow-sm">
           <div class="card-header py-2 d-flex align-items-center justify-content-between">
             <span class="small fw-semibold" id="graphInfoHeader">Workspace</span>
@@ -104,10 +48,31 @@
           <div class="card-header py-0 border-top-0 bg-body">
             <ul class="nav nav-tabs card-header-tabs" id="workspaceTabs" role="tablist">
               <li class="nav-item" role="presentation">
-                <button class="nav-link active small" id="workspace-graph-tab" data-bs-toggle="tab"
-                  data-bs-target="#workspace-graph-pane" type="button" role="tab" aria-controls="workspace-graph-pane"
+                <button class="nav-link active small" id="graph-main-tab" data-bs-toggle="tab"
+                  data-bs-target="#graph-main-pane" type="button" role="tab" aria-controls="graph-main-pane"
                   aria-selected="true">
-                  Graph
+                  Standard graph
+                </button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link small" id="graph-MRI-tab" data-bs-toggle="tab"
+                  data-bs-target="#graph-MRI-pane" type="button" role="tab" aria-controls="graph-MRI-pane"
+                  aria-selected="false">
+                  MRI
+                </button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link small" id="graph-time-tab" data-bs-toggle="tab"
+                  data-bs-target="#graph-time-pane" type="button" role="tab" aria-controls="graph-time-pane"
+                  aria-selected="false">
+                  Drift history
+                </button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link small" id="graph-projects-tab" data-bs-toggle="tab"
+                  data-bs-target="#graph-projects-pane" type="button" role="tab" aria-controls="graph-projects-pane"
+                  aria-selected="false">
+                  Portfolio
                 </button>
               </li>
               <li class="nav-item" role="presentation">
@@ -121,139 +86,100 @@
           </div>
 
           <div class="card-body p-0">
-            <div class="tab-content" id="workspaceTabsContent">
-              <div class="tab-pane fade show active" id="workspace-graph-pane" role="tabpanel"
-                aria-labelledby="workspace-graph-tab" tabindex="0">
-                <div class="graphZoomToolbar px-2 pt-2 pb-1 border-bottom bg-body">
-                  <div class="graphZoomToolbarRow">
-                    <div class="graphZoomToolbarCopy">
-                      <div class="small fw-semibold">Graph zoom</div>
-                      <div class="small text-secondary">
-                        Active view:
-                        <span id="graphZoomTarget">Standard graph</span>
-                      </div>
-                    </div>
-                    <div class="graphZoomToolbarControl">
-                      <div class="d-flex align-items-center justify-content-between gap-2 mb-1">
-                        <label for="graphZoomSlider" class="form-label small fw-semibold mb-0">Zoom</label>
-                        <span class="small text-secondary fw-semibold" id="graphZoomValue">100%</span>
-                      </div>
-                      <input id="graphZoomSlider" class="form-range graphZoomSlider" type="range" min="40"
-                        max="220" step="5" value="100" aria-describedby="graphZoomHelp" disabled />
-                      <div class="form-text small mb-0" id="graphZoomHelp">
-                        Zoom the active graph tab with the slider and drag with the mouse to pan.
-                      </div>
-                    </div>
+            <div class="graphZoomToolbar px-2 pt-2 pb-1 border-bottom bg-body" id="graphZoomToolbar">
+              <div class="graphZoomToolbarRow">
+                <div class="graphZoomToolbarCopy">
+                  <div class="small fw-semibold">Graph zoom</div>
+                  <div class="small text-secondary">
+                    Active view:
+                    <span id="graphZoomTarget">Standard graph</span>
+                  </div>
+                </div>
+                <div class="graphZoomToolbarControl">
+                  <div class="d-flex align-items-center justify-content-between gap-2 mb-1">
+                    <label for="graphZoomSlider" class="form-label small fw-semibold mb-0">Zoom</label>
+                    <span class="small text-secondary fw-semibold" id="graphZoomValue">100%</span>
+                  </div>
+                  <input id="graphZoomSlider" class="form-range graphZoomSlider" type="range" min="40"
+                    max="220" step="5" value="100" aria-describedby="graphZoomHelp" disabled />
+                  <div class="form-text small mb-0" id="graphZoomHelp">
+                    Zoom the active graph tab with the slider and drag with the mouse to pan.
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="p-2">
+              <div class="tab-content" id="workspaceTabsContent">
+                <div class="tab-pane fade show active" id="graph-main-pane" role="tabpanel"
+                  aria-labelledby="graph-main-tab" tabindex="0">
+                  <svg id="codeStructureSvg" width="1200" height="800"></svg>
+                </div>
+
+                <div class="tab-pane fade" id="graph-MRI-pane" role="tabpanel" aria-labelledby="graph-MRI-tab"
+                  tabindex="0">
+                  <svg id="graphMriView" width="1200" height="800"></svg>
+                </div>
+
+                <div class="tab-pane fade" id="graph-time-pane" role="tabpanel" aria-labelledby="graph-time-tab"
+                  tabindex="0">
+                  <svg id="graphTimeView" width="1200" height="800"></svg>
+                </div>
+
+                <div class="tab-pane fade" id="graph-projects-pane" role="tabpanel"
+                  aria-labelledby="graph-projects-tab" tabindex="0">
+                  <div class="p-3" id="allProjectsPanel">
+                    <div class="text-secondary small">Loading portfolio view…</div>
                   </div>
                 </div>
 
-                <div class="border-bottom bg-body">
-                  <ul class="nav nav-tabs workspaceInnerTabs px-2 pt-2" id="graphTabs" role="tablist">
-                    <li class="nav-item" role="presentation">
-                      <button class="nav-link active small" id="graph-main-tab" data-bs-toggle="tab"
-                        data-bs-target="#graph-main-pane" type="button" role="tab" aria-controls="graph-main-pane"
-                        aria-selected="true">
-                        Standard graph
-                      </button>
-                    </li>
-                    <li class="nav-item" role="presentation">
-                      <button class="nav-link small" id="graph-MRI-tab" data-bs-toggle="tab"
-                        data-bs-target="#graph-MRI-pane" type="button" role="tab" aria-controls="graph-MRI-pane"
-                        aria-selected="false">
-                        MRI
-                      </button>
-                    </li>
-                    <li class="nav-item" role="presentation">
-                      <button class="nav-link small" id="graph-time-tab" data-bs-toggle="tab"
-                        data-bs-target="#graph-time-pane" type="button" role="tab" aria-controls="graph-time-pane"
-                        aria-selected="false">
-                        Drift history
-                      </button>
-                    </li>
-                    <li class="nav-item" role="presentation">
-                      <button class="nav-link small" id="graph-projects-tab" data-bs-toggle="tab"
-                        data-bs-target="#graph-projects-pane" type="button" role="tab" aria-controls="graph-projects-pane"
-                        aria-selected="false">
-                        all Projects
-                      </button>
-                    </li>
-                  </ul>
-                </div>
-
-                <div class="p-2">
-                  <div class="tab-content" id="graphTabsContent">
-                    <div class="tab-pane fade show active" id="graph-main-pane" role="tabpanel"
-                      aria-labelledby="graph-main-tab" tabindex="0">
-                      <svg id="codeStructureSvg" width="1200" height="800"></svg>
-                    </div>
-
-                    <div class="tab-pane fade" id="graph-MRI-pane" role="tabpanel" aria-labelledby="graph-MRI-tab"
-                      tabindex="0">
-                      <svg id="graphMriView" width="1200" height="800"></svg>
-                    </div>
-
-                    <div class="tab-pane fade" id="graph-time-pane" role="tabpanel" aria-labelledby="graph-time-tab"
-                      tabindex="0">
-                      <svg id="graphTimeView" width="1200" height="800"></svg>
-                    </div>
-
-                    <div class="tab-pane fade" id="graph-projects-pane" role="tabpanel"
-                      aria-labelledby="graph-projects-tab" tabindex="0">
-                      <div class="p-3" id="allProjectsPanel">
-                        <div class="text-secondary small">Loading portfolio view…</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="accordion graphToolsAccordion mt-2" id="graphToolsAccordion">
-                    <div class="accordion-item">
-                      <h2 class="accordion-header" id="graphToolsHeader">
-                        <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse"
-                          data-bs-target="#graphToolsBody" aria-expanded="false" aria-controls="graphToolsBody">
-                          <span class="graphToolsSummary">
-                            <span class="small fw-semibold">Legend &amp; Filter</span>
-                            <span class="small text-secondary d-block" id="filterSummary">architecture</span>
-                          </span>
-                        </button>
-                      </h2>
-                      <div id="graphToolsBody" class="accordion-collapse collapse" aria-labelledby="graphToolsHeader"
-                        data-bs-parent="#graphToolsAccordion">
-                        <div class="accordion-body p-2">
-                          <div class="graphToolsGrid">
-                            <section class="graphToolSection">
-                              <label for="graphTextFilterMode" class="form-label small fw-semibold mb-1">Text filter</label>
-                              <select id="graphTextFilterMode" class="form-select form-select-sm"
-                                aria-label="Text filter mode">
-                                <option value="comments_readme">Kommentare und readme</option>
-                                <option value="functions">Funktionsnamen und Funktionsinhalte</option>
-                              </select>
-                              <div class="form-text small mb-0">
-                                Bereitet textbasierte Filter für unterschiedliche Analysemodi vor.
-                              </div>
-                            </section>
-                          </div>
-
-                          <div id="legendFilterPanel">
-                            <div class="text-secondary small">Run Analyze to load graph filters.</div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
+                <div class="tab-pane fade" id="workspace-app-pane" role="tabpanel"
+                  aria-labelledby="workspace-app-tab" tabindex="0">
+                  <div class="p-3 workspaceAppPanel panelScroll" id="appInfoPanel">
+                    <div class="text-secondary small">Select an app to inspect details.</div>
                   </div>
                 </div>
               </div>
 
-              <div class="tab-pane fade" id="workspace-app-pane" role="tabpanel"
-                aria-labelledby="workspace-app-tab" tabindex="0">
-                <div class="p-3 workspaceAppPanel panelScroll" id="appInfoPanel">
-                  <div class="text-secondary small">Select an app to inspect details.</div>
+              <div class="accordion graphToolsAccordion mt-2" id="graphToolsAccordion">
+                <div class="accordion-item">
+                  <h2 class="accordion-header" id="graphToolsHeader">
+                    <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse"
+                      data-bs-target="#graphToolsBody" aria-expanded="false" aria-controls="graphToolsBody">
+                      <span class="graphToolsSummary">
+                        <span class="small fw-semibold">Legend &amp; Filter</span>
+                        <span class="small text-secondary d-block" id="filterSummary">architecture</span>
+                      </span>
+                    </button>
+                  </h2>
+                  <div id="graphToolsBody" class="accordion-collapse collapse" aria-labelledby="graphToolsHeader"
+                    data-bs-parent="#graphToolsAccordion">
+                    <div class="accordion-body p-2">
+                      <div class="graphToolsGrid">
+                        <section class="graphToolSection">
+                          <label for="graphTextFilterMode" class="form-label small fw-semibold mb-1">Text filter</label>
+                          <select id="graphTextFilterMode" class="form-select form-select-sm"
+                            aria-label="Text filter mode">
+                            <option value="comments_readme">Kommentare und readme</option>
+                            <option value="functions">Funktionsnamen und Funktionsinhalte</option>
+                          </select>
+                          <div class="form-text small mb-0">
+                            Bereitet textbasierte Filter für unterschiedliche Analysemodi vor.
+                          </div>
+                        </section>
+                      </div>
+
+                      <div id="legendFilterPanel">
+                        <div class="text-secondary small">Run Analyze to load graph filters.</div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         </div>
       </main>
-
     </div>
   </div>
 
@@ -268,33 +194,11 @@
   <!-- App entry (ESM) -->
   <script type="module" src="/assets/js/main.js"></script>
 
-  <!-- clear panels button (optional; only wired if the button exists) -->
   <script>
-    (function () {
-      const btn = document.getElementById("clearPanelsBtn");
-      if (!btn) return;
-
-      btn.addEventListener("click", () => {
-        document.getElementById("graphInfoPanel")?.replaceChildren();
-        document.getElementById("readmePanel")?.replaceChildren();
-      });
-    })();
-  </script>
-
-  <script>
-  window.addEventListener("load", ()=> {
+    window.addEventListener("load", () => {
       document.body.style.zoom = "100%";
     });
-
   </script>
-
-
-
-
-
-
-
-
   <div id="helpPanel" class="help-panel d-none" role="dialog" aria-label="Help">
     <div class="help-panel__header" id="helpPanelHeader">
       <div class="help-panel__title">Help</div>
