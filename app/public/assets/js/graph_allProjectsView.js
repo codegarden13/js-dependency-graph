@@ -9,7 +9,6 @@ const SCORE_WEIGHTS = Object.freeze({
 });
 const PORTFOLIO_APP_ACTION_EVENT = "nodeanalyzer:portfolio-app-action";
 const PROJECT_REVIEW_LIMIT = 6;
-let expandedProjectAppId = "";
 let latestPortfolioState = null;
 const projectReadmeCache = new Map();
 const projectReadmePending = new Map();
@@ -23,6 +22,19 @@ export async function renderAllProjectsView(elementId) {
   const payload = await fetchJson("/api/projects-overview");
   const state = decoratePortfolioPayload(payload);
   renderPortfolioView(root, state);
+}
+
+export function syncPortfolioSelection(elementId, appId) {
+  const root = document.getElementById(String(elementId || ""));
+  if (!root || !latestPortfolioState?.apps?.length) return false;
+
+  const nextState = {
+    ...latestPortfolioState,
+    selectedAppId: String(appId || "").trim()
+  };
+
+  latestPortfolioState = nextState;
+  return renderPortfolioProjectList(root, nextState);
 }
 
 async function fetchJson(url) {
@@ -173,20 +185,21 @@ function renderPortfolioView(root, state) {
   }
 
   latestPortfolioState = state;
-  syncExpandedProjectApp(state.apps);
   root.innerHTML = buildPortfolioMarkup(state);
   ensurePortfolioInteractionsBound(root);
-  hydrateExpandedProjectReadme(root);
+  renderPortfolioProjectList(root, state);
 
   const riskMapSvg = root.querySelector("[data-role='portfolio-risk-map']");
   if (riskMapSvg) renderRiskMap(riskMapSvg, state.apps);
 }
 
-function syncExpandedProjectApp(apps) {
-  const ids = new Set((apps || []).map((app) => String(app?.appId || "")));
-  if (!ids.has(expandedProjectAppId)) {
-    expandedProjectAppId = "";
-  }
+function renderPortfolioProjectList(root, state) {
+  const list = root.querySelector(".portfolioProjectsList");
+  if (!list) return false;
+
+  list.innerHTML = buildProjectRowsMarkup(state);
+  hydrateExpandedProjectReadme(root);
+  return true;
 }
 
 function buildPortfolioMarkup(state) {
@@ -209,15 +222,19 @@ function buildPortfolioMarkup(state) {
 
         <section class="portfolioCard">
           <div class="small fw-semibold mb-2">Risk map</div>
-          <svg class="portfolioRiskMap" data-role="portfolio-risk-map" viewBox="0 0 920 320" preserveAspectRatio="xMidYMid meet"></svg>
+          <svg class="portfolioRiskMap" data-role="portfolio-risk-map" viewBox="0 0 920 320" preserveAspectRatio="none"></svg>
         </section>
       </div>
 
-      <section class="portfolioProjectsList">
-        ${state.apps.map((app) => buildProjectRowMarkup(app, state.selectedAppId)).join("")}
-      </section>
+      <section class="portfolioProjectsList"></section>
     </div>
   `;
+}
+
+function buildProjectRowsMarkup(state) {
+  return (state.apps || [])
+    .map((app) => buildProjectRowMarkup(app, state.selectedAppId))
+    .join("");
 }
 
 function buildRiskLegendMarkup() {
@@ -335,7 +352,6 @@ function formatIntegerMetric(value) {
 
 function buildProjectRowMarkup(app, selectedAppId) {
   const isActiveApp = String(app?.appId || "") === String(selectedAppId || "");
-  const isExpanded = String(app?.appId || "") === String(expandedProjectAppId || "");
   const detailsId = buildProjectDetailsId(app?.appId);
 
   return `
@@ -346,18 +362,18 @@ function buildProjectRowMarkup(app, selectedAppId) {
           class="portfolioProjectToggle"
           data-portfolio-toggle-details="true"
           data-app-id="${escapeHtml(app.appId)}"
-          aria-expanded="${isExpanded ? "true" : "false"}"
+          aria-expanded="${isActiveApp ? "true" : "false"}"
           aria-controls="${escapeHtml(detailsId)}"
         >
-          ${buildProjectToggleContentMarkup(app, isActiveApp, isExpanded)}
+          ${buildProjectToggleContentMarkup(app)}
         </button>
 
         <div class="portfolioProjectActions" aria-label="Project actions">
-          ${buildProjectActionButtonsMarkup(app, isActiveApp)}
+          ${buildProjectActionButtonsMarkup(app)}
         </div>
       </div>
 
-      ${isExpanded ? buildProjectDetailsMarkup(app, detailsId) : ""}
+      ${isActiveApp ? buildProjectDetailsMarkup(app, detailsId) : ""}
     </article>
   `;
 }
@@ -366,14 +382,11 @@ function buildProjectDetailsId(appId) {
   return `portfolio-project-details-${noteFilenameToken(appId)}`;
 }
 
-function buildProjectToggleContentMarkup(app, isActiveApp, isExpanded) {
+function buildProjectToggleContentMarkup(app) {
   return `
     <div class="portfolioProjectHeader">
-      ${buildProjectHeaderMetaMarkup(app, isActiveApp)}
-      <div class="portfolioProjectHeaderAside">
-        ${buildProjectScoreMarkup(app)}
-        <span class="portfolioProjectToggleBadge">${isExpanded ? "Collapse" : "Expand"}</span>
-      </div>
+      ${buildProjectHeaderMetaMarkup(app)}
+      <div class="portfolioProjectHeaderAside">${buildProjectScoreMarkup(app)}</div>
     </div>
     <div class="portfolioMetricGrid portfolioMetricGridInteractive">
       ${buildProjectMetricTilesMarkup(app)}
@@ -381,14 +394,13 @@ function buildProjectToggleContentMarkup(app, isActiveApp, isExpanded) {
   `;
 }
 
-function buildProjectHeaderMetaMarkup(app, isActiveApp) {
+function buildProjectHeaderMetaMarkup(app) {
   const latest = app.latest || {};
 
   return `
     <div>
       <div class="portfolioProjectNameRow">
         <div class="portfolioProjectName">${escapeHtml(app.name || app.appId)}</div>
-        ${isActiveApp ? `<span class="portfolioActiveBadge">active app</span>` : ""}
       </div>
       <div class="small text-secondary">
         ${escapeHtml(app.appId)} · ${app.runCount} runs · latest ${formatTimestamp(latest.timestamp)}
@@ -438,18 +450,8 @@ function buildProjectMetricTilesMarkup(app) {
   ].join("");
 }
 
-function buildProjectActionButtonsMarkup(app, isActiveApp) {
-  const selectBtnClass = isActiveApp ? "btn btn-sm btn-primary" : "btn btn-sm btn-outline-primary";
-
+function buildProjectActionButtonsMarkup(app) {
   return `
-    <button
-      type="button"
-      class="${selectBtnClass}"
-      data-portfolio-action="select"
-      data-app-id="${escapeHtml(app.appId)}"
-    >
-      ${isActiveApp ? "active app" : "select app"}
-    </button>
     <button
       type="button"
       class="btn btn-sm btn-outline-secondary"
@@ -543,6 +545,65 @@ function sanitizeHtml(rawHtml) {
   return window.DOMPurify?.sanitize ? window.DOMPurify.sanitize(rawHtml) : rawHtml;
 }
 
+function findPortfolioApp(appId) {
+  const safeAppId = String(appId || "").trim();
+  if (!safeAppId) return null;
+  return latestPortfolioState?.apps?.find((app) => String(app?.appId || "").trim() === safeAppId) || null;
+}
+
+function normalizeProjectBaseUrl(url) {
+  const safeUrl = String(url || "").trim();
+  if (!safeUrl) return "";
+  return safeUrl.endsWith("/") ? safeUrl : `${safeUrl}/`;
+}
+
+function isProjectAssetLink(rawValue) {
+  const safeValue = String(rawValue || "").trim();
+  if (!safeValue) return false;
+  if (safeValue.startsWith("#")) return false;
+  if (safeValue.startsWith("//")) return false;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(safeValue)) return false;
+  return /^\.?\/?assets\//i.test(safeValue);
+}
+
+function resolveProjectAssetUrl(appId, rawValue) {
+  const appUrl = normalizeProjectBaseUrl(findPortfolioApp(appId)?.url || "");
+  if (!appUrl || !isProjectAssetLink(rawValue)) return rawValue;
+
+  const relPath = String(rawValue || "")
+    .trim()
+    .replace(/^\.\//, "")
+    .replace(/^\/+/, "");
+
+  try {
+    return new URL(relPath, appUrl).toString();
+  } catch {
+    return rawValue;
+  }
+}
+
+function rewriteProjectAssetLinks(rawHtml, appId) {
+  const safeHtml = String(rawHtml || "");
+  if (!safeHtml) return safeHtml;
+
+  const template = document.createElement("template");
+  template.innerHTML = safeHtml;
+
+  for (const element of template.content.querySelectorAll("[href], [src]")) {
+    if (element.hasAttribute("href")) {
+      const href = String(element.getAttribute("href") || "");
+      element.setAttribute("href", resolveProjectAssetUrl(appId, href));
+    }
+
+    if (element.hasAttribute("src")) {
+      const src = String(element.getAttribute("src") || "");
+      element.setAttribute("src", resolveProjectAssetUrl(appId, src));
+    }
+  }
+
+  return template.innerHTML;
+}
+
 function buildProjectReadmeBodyMarkup(appId) {
   const entry = projectReadmeCache.get(String(appId || ""));
 
@@ -560,10 +621,11 @@ function buildProjectReadmeBodyMarkup(appId) {
 
   const rawHtml = markdownToHtml(entry.markdown || "");
   const safeHtml = sanitizeHtml(rawHtml);
+  const linkedHtml = rewriteProjectAssetLinks(safeHtml, appId);
 
   return `
     <div class="small text-secondary mb-2">${escapeHtml(entry.readmePath || "")}</div>
-    <div class="content markdown">${safeHtml}</div>
+    <div class="content markdown">${linkedHtml}</div>
   `;
 }
 
@@ -611,13 +673,13 @@ function getProjectReadmeContainer(root, appId) {
 }
 
 function hydrateExpandedProjectReadme(root) {
-  const appId = String(expandedProjectAppId || "");
+  const appId = String(latestPortfolioState?.selectedAppId || "");
   if (!appId) return;
 
   if (projectReadmeCache.has(appId)) return;
 
   loadProjectReadme(appId).then(() => {
-    if (String(expandedProjectAppId || "") !== appId) return;
+    if (String(latestPortfolioState?.selectedAppId || "") !== appId) return;
     const container = getProjectReadmeContainer(root, appId);
     if (!container) return;
     container.innerHTML = buildProjectReadmeBodyMarkup(appId);
@@ -626,9 +688,15 @@ function hydrateExpandedProjectReadme(root) {
 
 function toggleProjectDetails(root, appId) {
   const safeAppId = String(appId || "").trim();
-  expandedProjectAppId = expandedProjectAppId === safeAppId ? "" : safeAppId;
-  if (!latestPortfolioState) return;
-  renderPortfolioView(root, latestPortfolioState);
+  if (!safeAppId) return;
+  const selectedAppId = String(latestPortfolioState?.selectedAppId || "");
+  const nextAppId = selectedAppId === safeAppId ? "" : safeAppId;
+
+  dispatchPortfolioAppAction({
+    action: "select",
+    appId: nextAppId,
+    url: ""
+  });
 }
 
 function coverageLabel(coverage) {

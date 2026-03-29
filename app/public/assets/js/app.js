@@ -70,6 +70,7 @@ let graphZoomTabsBound = false;
 let latestCsvLoadToken = 0;
 let allProjectsLoadToken = 0;
 let crossViewEventsBound = false;
+let graphZoomScale = 1;
 
 const SHELL_TITLE_BASE = "NodeAnalyzer";
 const PORTFOLIO_APP_ACTION_EVENT = "nodeanalyzer:portfolio-app-action";
@@ -237,15 +238,13 @@ function getGraphViewTabs() {
 
 function getActiveGraphViewKey() {
   if (byId("workspace-app-tab")?.classList.contains("active")) return "app";
-  if (byId("graph-MRI-tab")?.classList.contains("active")) return "mri";
-  if (byId("graph-time-tab")?.classList.contains("active")) return "time";
   if (byId("graph-projects-tab")?.classList.contains("active")) return "projects";
   return "main";
 }
 
 function getActiveGraphViewLabel() {
   const activeTab = getGraphViewTabs().find((tab) => tab.classList.contains("active"));
-  return String(activeTab?.textContent || "Standard graph").trim();
+  return String(activeTab?.textContent || "Graphs").trim();
 }
 
 function updateGraphZoomTargetLabel() {
@@ -257,15 +256,16 @@ function getGraphZoomToolbar() {
 }
 
 function getGraphToolsAccordion() {
-  return byId("graphToolsAccordion");
+  return maybeById("graphToolsAccordion");
 }
 
 function viewSupportsZoom(viewKey = "main") {
-  return viewKey === "main" || viewKey === "mri" || viewKey === "time";
+  return viewKey === "main";
 }
 
 function viewSupportsGraphTools(viewKey = "main") {
-  return viewKey === "main";
+  void viewKey;
+  return false;
 }
 
 function syncWorkspaceChrome(viewKey = getActiveGraphViewKey()) {
@@ -283,22 +283,32 @@ function syncWorkspaceChrome(viewKey = getActiveGraphViewKey()) {
   updateWorkspaceHintForView(viewKey);
 }
 
-function getGraphControllerByView(viewKey = "main") {
-  switch (String(viewKey || "")) {
-    case "mri":
-      return graphMriController;
-    case "time":
-      return graphTimeController;
-    case "projects":
-    case "app":
-      return null;
-    default:
-      return graphController;
-  }
+function getGraphZoomControllers() {
+  return [graphController, graphMriController, graphTimeController]
+    .filter((controller) => typeof controller?.setZoom === "function");
 }
 
-function getActiveGraphZoomController() {
-  return getGraphControllerByView(getActiveGraphViewKey());
+function normalizeGraphZoomScale(scale = 1) {
+  const numericScale = Number(scale);
+  if (!Number.isFinite(numericScale) || numericScale <= 0) return 1;
+  return numericScale;
+}
+
+function applyGraphsZoom(scale = graphZoomScale) {
+  const controllers = getGraphZoomControllers();
+  let appliedScale = normalizeGraphZoomScale(scale);
+
+  for (const controller of controllers) {
+    try {
+      const nextScale = controller.setZoom(appliedScale);
+      if (Number.isFinite(nextScale) && nextScale > 0) {
+        appliedScale = nextScale;
+      }
+    } catch { }
+  }
+
+  graphZoomScale = appliedScale;
+  return appliedScale;
 }
 
 function getGraphZoomPercent(scale) {
@@ -326,32 +336,25 @@ function updateGraphZoomUi(scale = 1, disabled = true) {
 function syncGraphZoomUi() {
   const viewKey = getActiveGraphViewKey();
   if (!viewSupportsZoom(viewKey)) {
-    updateGraphZoomUi(1, true);
+    updateGraphZoomUi(graphZoomScale, true);
     return;
   }
 
-  const scale = getActiveGraphZoomController()?.getZoom?.();
-  if (Number.isFinite(scale)) {
-    updateGraphZoomUi(scale, false);
-    return;
-  }
-
-  updateGraphZoomUi(1, true);
+  updateGraphZoomUi(graphZoomScale, getGraphZoomControllers().length === 0);
 }
 
 function handleGraphZoomInput(ev) {
   const slider = ev?.target;
   if (!(slider instanceof HTMLInputElement)) return;
 
-  const controller = getActiveGraphZoomController();
-  if (!controller?.setZoom) {
-    updateGraphZoomUi(1, true);
+  if (!viewSupportsZoom(getActiveGraphViewKey())) {
+    updateGraphZoomUi(graphZoomScale, true);
     return;
   }
 
   const requestedScale = Number(slider.value) / 100;
-  const appliedScale = controller.setZoom(requestedScale);
-  updateGraphZoomUi(appliedScale, false);
+  const appliedScale = applyGraphsZoom(requestedScale);
+  updateGraphZoomUi(appliedScale, getGraphZoomControllers().length === 0);
 }
 
 function bindGraphZoomUi() {
@@ -586,6 +589,22 @@ async function renderAllProjectsOverview() {
     console.warn("All projects view failed:", e);
     panel.innerHTML = `<div class="text-danger small">Could not load project portfolio.</div>`;
   }
+}
+
+async function syncPortfolioSelectionUi(appId) {
+  const panel = byId("allProjectsPanel");
+  if (!panel) return;
+
+  try {
+    const mod = await import("./graph_allProjectsView.js");
+    const synced = typeof mod.syncPortfolioSelection === "function" &&
+      mod.syncPortfolioSelection("allProjectsPanel", appId);
+    if (synced) return;
+  } catch (e) {
+    console.warn("Portfolio selection sync failed:", e);
+  }
+
+  await renderAllProjectsOverview();
 }
 
 function getActiveGraphAppId() {
@@ -1020,17 +1039,77 @@ function sanitizeHtml(rawHtml) {
   return window.DOMPurify?.sanitize ? window.DOMPurify.sanitize(rawHtml) : rawHtml;
 }
 
-function renderReadmeMarkdown(root, data) {
+function findAppConfig(appId) {
+  const safeAppId = normalizeAppId(appId);
+  if (!safeAppId) return null;
+  return getApps().find((app) => normalizeAppId(app?.id) === safeAppId) || null;
+}
+
+function normalizeProjectBaseUrl(url) {
+  const safeUrl = String(url || "").trim();
+  if (!safeUrl) return "";
+  return safeUrl.endsWith("/") ? safeUrl : `${safeUrl}/`;
+}
+
+function isProjectAssetLink(rawValue) {
+  const safeValue = String(rawValue || "").trim();
+  if (!safeValue) return false;
+  if (safeValue.startsWith("#")) return false;
+  if (safeValue.startsWith("//")) return false;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(safeValue)) return false;
+  return /^\.?\/?assets\//i.test(safeValue);
+}
+
+function resolveProjectAssetUrl(appId, rawValue) {
+  const appUrl = normalizeProjectBaseUrl(findAppConfig(appId)?.url || "");
+  if (!appUrl || !isProjectAssetLink(rawValue)) return rawValue;
+
+  const relPath = String(rawValue || "")
+    .trim()
+    .replace(/^\.\//, "")
+    .replace(/^\/+/, "");
+
+  try {
+    return new URL(relPath, appUrl).toString();
+  } catch {
+    return rawValue;
+  }
+}
+
+function rewriteProjectAssetLinks(rawHtml, appId) {
+  const safeHtml = String(rawHtml || "");
+  if (!safeHtml) return safeHtml;
+
+  const template = document.createElement("template");
+  template.innerHTML = safeHtml;
+
+  for (const element of template.content.querySelectorAll("[href], [src]")) {
+    if (element.hasAttribute("href")) {
+      const href = String(element.getAttribute("href") || "");
+      element.setAttribute("href", resolveProjectAssetUrl(appId, href));
+    }
+
+    if (element.hasAttribute("src")) {
+      const src = String(element.getAttribute("src") || "");
+      element.setAttribute("src", resolveProjectAssetUrl(appId, src));
+    }
+  }
+
+  return template.innerHTML;
+}
+
+function renderReadmeMarkdown(root, data, appId = "") {
   const md = String(data?.markdown || "");
   const rawHtml = markdownToHtml(md);
   const safeHtml = sanitizeHtml(rawHtml);
+  const linkedHtml = rewriteProjectAssetLinks(safeHtml, appId);
   const readmePath = String(data?.readmePath || "").trim();
 
   setReadmeSummary(readmePath || "README");
 
   root.innerHTML = `
       <div class="small text-secondary mb-2">${esc(readmePath)}</div>
-      <div class="content markdown">${safeHtml}</div>
+      <div class="content markdown">${linkedHtml}</div>
     `;
 }
 
@@ -1056,7 +1135,7 @@ async function renderDefaultReadmeForApp(appId, signal) {
     return;
   }
 
-  renderReadmeMarkdown(root, data);
+  renderReadmeMarkdown(root, data, safeAppId);
 }
 
 async function renderReadmeForNode(node, signal) {
@@ -1087,7 +1166,7 @@ async function renderReadmeForNode(node, signal) {
     return;
   }
 
-  renderReadmeMarkdown(root, data);
+  renderReadmeMarkdown(root, data, appId);
 }
 
 function createFreshReadmeController() {
@@ -1370,8 +1449,9 @@ function handlePortfolioAppActionEvent(ev) {
   handlers[action]?.();
 }
 
-function handleActiveAppChangedEvent() {
-  renderAllProjectsOverview().catch((e) => console.warn("Portfolio refresh failed:", e));
+function handleActiveAppChangedEvent(ev) {
+  const appId = normalizeAppId(ev?.detail?.appId);
+  syncPortfolioSelectionUi(appId).catch((e) => console.warn("Portfolio refresh failed:", e));
 }
 
 function bindCrossViewEvents() {
@@ -1652,7 +1732,7 @@ function buildWorkspaceHintText(viewKey = getActiveGraphViewKey()) {
     case "projects":
       return "Portfolio trends and app-level review priorities.";
     default:
-      if (hasGraphApp) return "Click a node to inspect.";
+      if (hasGraphApp) return "Three synchronized graph views: structure, MRI and drift.";
       if (hasSelectedApp) return "Run Analyze to inspect the graph.";
       return "Select an app, then run Analyze.";
   }
@@ -1713,6 +1793,7 @@ function renderGraph(metrics) {
   graphController = initcodeStructureChart("codeStructureSvg", metrics, {
     onNodeSelected
   });
+  applyGraphsZoom(graphZoomScale);
   syncGraphZoomUi();
   renderInfoPanel(null);
   requestDefaultReadmeForApp(getSelectedAppId());
@@ -1783,13 +1864,14 @@ async function renderOptionalChart({
 
 async function renderTimeViewChart(metrics) {
   graphTimeController = await renderOptionalChart({
-    elementId: "graphTimeView",
+    elementId: "graphTimePanel",
     modulePath: "./graph_timeView.js",
     preferredName: "initGraphTimeView",
     fallbackName: "renderGraphTimeView",
     warningLabel: "Drift history",
     metrics,
   });
+  applyGraphsZoom(graphZoomScale);
   syncGraphZoomUi();
 }
 
@@ -1802,6 +1884,7 @@ async function renderMriViewChart(metrics) {
     warningLabel: "MRI view",
     metrics,
   });
+  applyGraphsZoom(graphZoomScale);
   syncGraphZoomUi();
 }
 
@@ -1831,7 +1914,7 @@ function sumLoc(nodes) {
 }
 
 function setTextById(id, text) {
-  const el = byId(id);
+  const el = maybeById(id);
   if (!el) return false;
   el.textContent = String(text || "");
   return true;

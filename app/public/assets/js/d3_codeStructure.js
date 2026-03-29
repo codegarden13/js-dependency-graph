@@ -164,6 +164,25 @@ export function initcodeStructureChart(svgId, metrics, opts = {}) {
       .attr("preserveAspectRatio", "xMidYMid meet");
   }
 
+  function measureSvgViewport(svg) {
+    const svgNode = svg?.node?.();
+    const host = svgNode?.parentElement;
+
+    const width = Math.max(
+      host?.clientWidth || 0,
+      svgNode?.clientWidth || 0,
+      360
+    );
+
+    const height = Math.max(
+      host?.clientHeight || 0,
+      width,
+      360
+    );
+
+    return { width, height };
+  }
+
   /**
    * Build the ordered SVG layer stack used by the renderer.
    */
@@ -797,8 +816,7 @@ export function initcodeStructureChart(svgId, metrics, opts = {}) {
   const svg = selectAndResetSvg(svgId);
   if (!svg) return;
 
-  const width = 1200;
-  const height = 800;
+  const { width, height } = measureSvgViewport(svg);
   applyViewBox(svg, width, height);
 
   const layers = buildLayers(svg);

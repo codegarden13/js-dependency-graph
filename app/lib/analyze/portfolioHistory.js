@@ -14,22 +14,21 @@ const MODULE_PRIORITY_WEIGHTS = Object.freeze({
 
 export function buildPortfolioHistory(apps) {
   const configuredApps = Array.isArray(apps) ? apps : [];
+  const historyFilesByAppId = groupHistoryFilesByAppId(listAllHistoryFiles());
 
   return {
     generatedAt: new Date().toISOString(),
     apps: configuredApps
-      .map(buildConfiguredAppHistory)
+      .map((app) => buildConfiguredAppHistory(app, historyFilesByAppId))
       .filter(Boolean)
   };
 }
 
-function buildConfiguredAppHistory(app) {
+function buildConfiguredAppHistory(app, historyFilesByAppId) {
   const appId = normalizeId(app?.id);
   if (!appId) return null;
 
-  const history = listAppHistoryFiles(appId)
-    .map((fileName) => buildHistoryRun(appId, fileName))
-    .filter((run) => run !== null);
+  const { history, latestModules } = buildAppHistory(appId, historyFilesByAppId.get(appId) || []);
   const latest = history[history.length - 1] || null;
 
   return {
@@ -40,23 +39,67 @@ function buildConfiguredAppHistory(app) {
     runCount: history.length,
     latest,
     history,
-    latestModules: latest ? buildLatestModules(appId, latest.file) : []
+    latestModules
   };
 }
 
-function listAppHistoryFiles(appId) {
+function listAllHistoryFiles() {
   try {
     return fs.readdirSync(OUTPUT_DIR)
-      .filter((name) => isAppHistoryFile(name, appId))
+      .filter(isCodeMetricsFile)
       .sort();
   } catch {
     return [];
   }
 }
 
-function isAppHistoryFile(fileName, appId) {
-  return String(fileName || "").startsWith(`${appId}-`) &&
-    String(fileName || "").endsWith(CODE_METRICS_SUFFIX);
+function isCodeMetricsFile(fileName) {
+  return String(fileName || "").endsWith(CODE_METRICS_SUFFIX);
+}
+
+function groupHistoryFilesByAppId(fileNames) {
+  const grouped = new Map();
+
+  for (const fileName of fileNames || []) {
+    const appId = extractAppIdFromHistoryFileName(fileName);
+    if (!appId) continue;
+
+    const existing = grouped.get(appId);
+    if (existing) {
+      existing.push(fileName);
+      continue;
+    }
+
+    grouped.set(appId, [fileName]);
+  }
+
+  return grouped;
+}
+
+function extractAppIdFromHistoryFileName(fileName) {
+  const match = String(fileName || "")
+    .match(/^(.*)-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z)-code-metrics\.csv$/);
+  return normalizeId(match?.[1]);
+}
+
+function buildAppHistory(appId, fileNames) {
+  const history = [];
+  let latestRows = [];
+
+  for (const fileName of fileNames || []) {
+    const run = buildHistoryRun(appId, fileName);
+    if (!run) continue;
+
+    history.push(run.historyEntry);
+    latestRows = run.rows;
+  }
+
+  return {
+    history,
+    latestModules: latestRows.length
+      ? rankLatestModules(extractLatestModules(latestRows, appId))
+      : []
+  };
 }
 
 function buildHistoryRun(appId, fileName) {
@@ -65,19 +108,15 @@ function buildHistoryRun(appId, fileName) {
 
   const rows = readCsvRows(path.join(OUTPUT_DIR, fileName));
   if (!isSupportedHistoryRows(rows)) return null;
-  const summary = summarizeHistoryRows(rows);
 
   return {
-    file: fileName,
-    timestamp,
-    ...summary
+    historyEntry: {
+      file: fileName,
+      timestamp,
+      ...summarizeHistoryRows(rows)
+    },
+    rows
   };
-}
-
-function buildLatestModules(appId, fileName) {
-  const rows = readCsvRows(path.join(OUTPUT_DIR, fileName));
-  if (!isSupportedHistoryRows(rows)) return [];
-  return rankLatestModules(extractLatestModules(rows, appId));
 }
 
 function extractRunDate(fileName, appId) {

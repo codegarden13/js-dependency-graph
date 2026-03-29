@@ -34,6 +34,39 @@ const STACK_COLOR_TOKENS = {
 };
 
 const TIME_VIEW_LOG_PREFIX = "[timeView]";
+const TIME_VIEW_UI_DEFAULTS = Object.freeze({
+  spacingMode: "time",
+  chartMode: "lines",
+});
+
+let timeViewUiState = { ...TIME_VIEW_UI_DEFAULTS };
+let latestTimeViewContext = null;
+let activeTimeViewZoomController = createNullZoomController();
+
+function createNullZoomController() {
+  return {
+    getZoom() {
+      return 1;
+    },
+    setZoom() {
+      return 1;
+    },
+    destroy() { }
+  };
+}
+
+const timeViewControllerProxy = {
+  getZoom() {
+    return activeTimeViewZoomController?.getZoom?.() ?? 1;
+  },
+  setZoom(value) {
+    return activeTimeViewZoomController?.setZoom?.(value) ?? 1;
+  },
+  destroy() {
+    destroyTimeViewZoomController();
+    latestTimeViewContext = null;
+  }
+};
 
 /**
  * Write an informational log entry for the time-view module.
@@ -406,16 +439,367 @@ function getSvgRenderSize(svgSelection) {
   const svgNode = svgSelection?.node?.();
   const host = svgNode?.parentElement;
 
-  const measuredWidth = Math.max(
+  const width = Math.max(
     host?.clientWidth || 0,
     svgNode?.clientWidth || 0,
-    640
+    360
   );
 
   return {
-    width: measuredWidth,
-    height: 560,
+    width,
+    height: Math.max(host?.clientHeight || 0, width, 360),
   };
+}
+
+/**
+ * Resolve the drift-card container, target SVG, and auxiliary UI elements.
+ *
+ * @param {string} hostId
+ *   DOM id of either the panel container or the SVG itself.
+ * @returns {{container: HTMLElement | null, svgNode: SVGSVGElement, svg: d3.Selection, summaryRoot: HTMLElement | null, metaEl: HTMLElement | null, legendRoot: HTMLElement | null} | null}
+ *   Resolved time-view elements or `null` when not found.
+ */
+function resolveTimeViewElements(hostId) {
+  const host = document.getElementById(String(hostId || ""));
+  if (!host) return null;
+
+  const svgNode = host instanceof SVGSVGElement
+    ? host
+    : host.querySelector("svg[data-role='drift-chart'], svg");
+
+  if (!(svgNode instanceof SVGSVGElement)) {
+    return null;
+  }
+
+  const container = host instanceof SVGSVGElement
+    ? host.closest("#graphTimePanel") || host.parentElement
+    : host;
+
+  return {
+    container: container instanceof HTMLElement ? container : null,
+    svgNode,
+    svg: d3.select(svgNode),
+    summaryRoot: container?.querySelector?.("[data-role='drift-summary']") || null,
+    metaEl: container?.querySelector?.("[data-role='drift-meta']") || null,
+    legendRoot: container?.querySelector?.("[data-role='drift-legend']") || null,
+  };
+}
+
+/**
+ * Tear down the active zoom controller and reset to a no-op proxy target.
+ */
+function destroyTimeViewZoomController() {
+  try { activeTimeViewZoomController?.destroy?.(); } catch { }
+  activeTimeViewZoomController = createNullZoomController();
+}
+
+/**
+ * Replace the active zoom controller and restore the previous zoom scale.
+ *
+ * @param {{getZoom?: Function, setZoom?: Function, destroy?: Function} | null} nextController
+ *   Newly installed zoom controller.
+ * @param {number} [zoomScale=1]
+ *   Desired zoom scale to re-apply after replacement.
+ * @returns {{getZoom?: Function, setZoom?: Function, destroy?: Function}}
+ *   Active controller instance.
+ */
+function replaceTimeViewZoomController(nextController, zoomScale = 1) {
+  destroyTimeViewZoomController();
+  activeTimeViewZoomController = nextController || createNullZoomController();
+
+  try {
+    activeTimeViewZoomController?.setZoom?.(zoomScale);
+  } catch { }
+
+  return activeTimeViewZoomController;
+}
+
+function isTimeViewSpacingMode(value) {
+  return value === "time" || value === "run";
+}
+
+function isTimeViewChartMode(value) {
+  return value === "stacked" || value === "lines";
+}
+
+function formatTimeViewSpacingLabel(mode) {
+  return mode === "run" ? "run spacing" : "real time spacing";
+}
+
+function formatTimeViewChartModeLabel(mode) {
+  return mode === "stacked" ? "stacked view" : "line comparison";
+}
+
+function formatTimeViewRange(series) {
+  const runs = Array.isArray(series) ? series : [];
+  const first = runs[0]?.timestamp;
+  const last = runs[runs.length - 1]?.timestamp;
+
+  if (!(first instanceof Date) || !(last instanceof Date)) {
+    return "time range unavailable";
+  }
+
+  const label = d3.utcFormat("%d.%m %H:%M");
+  if (first.getTime() === last.getTime()) {
+    return `${label(first)} UTC`;
+  }
+
+  return `${label(first)} -> ${label(last)} UTC`;
+}
+
+function formatModuleLabel(moduleName) {
+  const normalized = normalizeModuleName(moduleName);
+  const parts = normalized.split("/").filter(Boolean);
+  return parts.slice(-2).join("/") || normalized || "(unknown)";
+}
+
+function createTimeViewSummaryCard(label, value) {
+  const card = document.createElement("div");
+  card.className = "graphTimeSummaryCard";
+
+  const labelEl = document.createElement("div");
+  labelEl.className = "graphTimeSummaryLabel";
+  labelEl.textContent = label;
+
+  const valueEl = document.createElement("div");
+  valueEl.className = "graphTimeSummaryValue";
+  valueEl.textContent = String(value || "-");
+  valueEl.title = valueEl.textContent;
+
+  card.append(labelEl, valueEl);
+  return card;
+}
+
+function renderTimeViewSummary(summaryRoot, summary = null) {
+  if (!summaryRoot?.replaceChildren) return;
+
+  const view = summary || {
+    runs: "-",
+    latestDrift: "-",
+    largestSpike: "-",
+    mostUnstable: "-",
+  };
+
+  summaryRoot.replaceChildren(
+    createTimeViewSummaryCard("Runs", view.runs),
+    createTimeViewSummaryCard("Latest drift", view.latestDrift),
+    createTimeViewSummaryCard("Largest spike", view.largestSpike),
+    createTimeViewSummaryCard("Most unstable", view.mostUnstable),
+  );
+}
+
+function createTimeViewLegendItem(color, label) {
+  const item = document.createElement("div");
+  item.className = "graphLegendItem";
+
+  const swatch = document.createElement("span");
+  swatch.className = "graphLegendSwatch swatch-drift-line";
+  swatch.style.background = String(color || "#64748b");
+
+  const text = document.createElement("span");
+  text.className = "small";
+  text.textContent = String(label || "");
+
+  item.append(swatch, text);
+  return item;
+}
+
+function renderTimeViewLegend(legendRoot, stackKeys = [], colorByKey = new Map()) {
+  if (!legendRoot?.replaceChildren) return;
+
+  const keys = Array.isArray(stackKeys) ? stackKeys : [];
+  if (!keys.length) {
+    const empty = document.createElement("div");
+    empty.className = "text-secondary small";
+    empty.textContent = "Legend appears with loaded drift data.";
+    legendRoot.replaceChildren(empty);
+    return;
+  }
+
+  legendRoot.replaceChildren(
+    ...keys.map((key) => createTimeViewLegendItem(colorByKey.get(key), formatModuleLabel(key)))
+  );
+}
+
+function renderTimeViewMeta(metaEl, { series, spacingMode, chartMode } = {}) {
+  if (!metaEl) return;
+
+  const runs = Array.isArray(series) ? series : [];
+  if (!runs.length) {
+    metaEl.textContent = "No history loaded.";
+    return;
+  }
+
+  metaEl.textContent = [
+    `${runs.length} runs`,
+    formatTimeViewRange(runs),
+    formatTimeViewSpacingLabel(spacingMode),
+    formatTimeViewChartModeLabel(chartMode),
+    "drift = delta LOC + 10*delta fanIn + 10*delta fanOut",
+  ].join(" · ");
+}
+
+function computeRowTotalDrift(row, keys) {
+  return (keys || []).reduce(
+    (sum, key) => sum + coerceNumber(row?.[key], 0),
+    0
+  );
+}
+
+function listModuleDriftDrivers(row, keys) {
+  return (keys || [])
+    .map((key) => ({
+      key,
+      driftValue: coerceNumber(row?.[key], 0),
+    }))
+    .sort((a, b) => b.driftValue - a.driftValue);
+}
+
+function formatSignedInteger(value) {
+  return d3.format("+,d")(coerceNumber(value, 0));
+}
+
+function buildModuleDriftSnapshot(row, key) {
+  return `${formatModuleLabel(key)}: drift ${formatRunValue(row?.[key] || 0)}, loc ${formatRunValue(row?.[`${key}_loc`] || 0)} (delta ${formatSignedInteger(row?.[`${key}_deltaLoc`])}), fanIn ${formatRunValue(row?.[`${key}_fanIn`] || 0)} (delta ${formatSignedInteger(row?.[`${key}_deltaFanIn`])}), fanOut ${formatRunValue(row?.[`${key}_fanOut`] || 0)} (delta ${formatSignedInteger(row?.[`${key}_deltaFanOut`])})`;
+}
+
+function buildRunMarkerTitle(row, totalRuns, keys) {
+  const total = computeRowTotalDrift(row, keys);
+  const topDrivers = listModuleDriftDrivers(row, keys)
+    .filter((entry) => entry.driftValue > 0)
+    .slice(0, 3)
+    .map((entry) => buildModuleDriftSnapshot(row, entry.key));
+
+  const lines = [
+    buildRunLabel(coerceNumber(row?.runIndex, 0), totalRuns),
+    String(row?.file || ""),
+    formatUtcTimestamp(row?.timestamp),
+    `total drift: ${formatRunValue(total)}`,
+  ];
+
+  if (topDrivers.length) {
+    lines.push("top drivers:");
+    lines.push(...topDrivers);
+  } else {
+    lines.push("baseline run");
+  }
+
+  return lines.join("\n");
+}
+
+function buildModulePointTitle(row, key, totalRuns, keys) {
+  return [
+    buildRunLabel(coerceNumber(row?.runIndex, 0), totalRuns),
+    String(row?.file || ""),
+    formatUtcTimestamp(row?.timestamp),
+    buildModuleDriftSnapshot(row, key),
+    `run total: ${formatRunValue(computeRowTotalDrift(row, keys))}`,
+  ].join("\n");
+}
+
+function buildTimeViewSummary(series, keys) {
+  const rows = Array.isArray(series) ? series : [];
+  if (!rows.length) {
+    return {
+      runs: "-",
+      latestDrift: "-",
+      largestSpike: "-",
+      mostUnstable: "-",
+    };
+  }
+
+  const totalsByKey = new Map();
+  rows.forEach((row) => {
+    keys.forEach((key) => {
+      totalsByKey.set(key, (totalsByKey.get(key) ?? 0) + coerceNumber(row?.[key], 0));
+    });
+  });
+
+  const latestRow = rows[rows.length - 1];
+  const latestDrift = computeRowTotalDrift(latestRow, keys);
+  const largestSpike = rows.length <= 1
+    ? null
+    : rows
+      .slice(1)
+      .map((row) => ({
+        row,
+        total: computeRowTotalDrift(row, keys),
+      }))
+      .sort((a, b) => b.total - a.total)[0];
+
+  const mostUnstable = [...totalsByKey.entries()]
+    .sort((a, b) => b[1] - a[1])[0];
+
+  return {
+    runs: formatRunValue(rows.length),
+    latestDrift: formatRunValue(latestDrift),
+    largestSpike: largestSpike
+      ? `${buildRunLabel(coerceNumber(largestSpike.row?.runIndex, 0), rows.length)} · ${formatRunValue(largestSpike.total)}`
+      : "baseline only",
+    mostUnstable: mostUnstable
+      ? `${formatModuleLabel(mostUnstable[0])} · ${formatRunValue(mostUnstable[1])}`
+      : "-",
+  };
+}
+
+function syncTimeViewControls(container) {
+  if (!container?.querySelectorAll) return;
+
+  const spacingButtons = container.querySelectorAll("[data-graph-time-spacing]");
+  spacingButtons.forEach((button) => {
+    const isActive = button.getAttribute("data-graph-time-spacing") === timeViewUiState.spacingMode;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-pressed", isActive ? "true" : "false");
+  });
+
+  const modeButtons = container.querySelectorAll("[data-graph-time-mode]");
+  modeButtons.forEach((button) => {
+    const isActive = button.getAttribute("data-graph-time-mode") === timeViewUiState.chartMode;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-pressed", isActive ? "true" : "false");
+  });
+}
+
+function rerenderLatestTimeView() {
+  if (!latestTimeViewContext) return;
+  renderPreparedTimeView(latestTimeViewContext);
+}
+
+function bindTimeViewControls(container) {
+  if (!container || container.dataset.timeViewControlsBound === "true") {
+    syncTimeViewControls(container);
+    return;
+  }
+
+  container.addEventListener("click", (event) => {
+    const target = event?.target;
+    if (!(target instanceof Element)) return;
+
+    const button = target.closest("[data-graph-time-spacing], [data-graph-time-mode]");
+    if (!(button instanceof HTMLElement) || !container.contains(button)) return;
+
+    let changed = false;
+    const spacingMode = button.getAttribute("data-graph-time-spacing");
+    const chartMode = button.getAttribute("data-graph-time-mode");
+
+    if (isTimeViewSpacingMode(spacingMode) && spacingMode !== timeViewUiState.spacingMode) {
+      timeViewUiState.spacingMode = spacingMode;
+      changed = true;
+    }
+
+    if (isTimeViewChartMode(chartMode) && chartMode !== timeViewUiState.chartMode) {
+      timeViewUiState.chartMode = chartMode;
+      changed = true;
+    }
+
+    if (!changed) return;
+
+    syncTimeViewControls(container);
+    rerenderLatestTimeView();
+  });
+
+  container.dataset.timeViewControlsBound = "true";
+  syncTimeViewControls(container);
 }
 
 /**
@@ -929,46 +1313,28 @@ function renderYGrid(g, y, innerW) {
  *
  * @param {d3.Selection} g
  *   Plot group selection.
- * @param {{series: Array<object>, x: Function, innerH: number}} args
+ * @param {{series: Array<object>, x: Function, innerH: number, xRead: Function}} args
  *   Run-guide render context.
  */
-function renderRunGuides(g, { series, x, innerH }) {
+function renderRunGuides(g, { series, x, innerH, xRead }) {
   g.append("g")
     .attr("class", "time-run-guides")
     .selectAll("line")
     .data(series)
     .enter()
     .append("line")
-    .attr("x1", (d, index) => x(index))
-    .attr("x2", (d, index) => x(index))
+    .attr("x1", (d) => x(xRead(d)))
+    .attr("x2", (d) => x(xRead(d)))
     .attr("y1", 0)
     .attr("y2", innerH)
     .attr("stroke", "rgba(31,41,55,0.08)")
     .attr("stroke-dasharray", "3 4");
 }
 
-/**
- * Compute the total number of runs available to the X axis.
- *
- * @param {unknown} series
- *   Stacked-series rows.
- * @returns {number}
- *   Total run count.
- */
 function getXAxisTotalRuns(series) {
   return Array.isArray(series) ? series.length : 0;
 }
 
-/**
- * Build the run indexes displayed as X-axis ticks.
- *
- * @param {number} totalRuns
- *   Total number of runs.
- * @param {number} tickCount
- *   Desired tick count hint.
- * @returns {number[]}
- *   Selected run indexes for the X axis.
- */
 function buildXAxisTickIndexes(totalRuns, tickCount) {
   if (totalRuns <= 6) {
     return d3.range(totalRuns);
@@ -981,57 +1347,45 @@ function buildXAxisTickIndexes(totalRuns, tickCount) {
   ].filter((value) => value >= 0 && value < totalRuns)));
 }
 
-/**
- * Format one X-axis tick label for a run.
- *
- * @param {Array<{timestamp: Date}>} series
- *   Stacked-series rows.
- * @param {number} index
- *   Run index.
- * @param {number} totalRuns
- *   Total number of runs.
- * @returns {string}
- *   Formatted tick label.
- */
 function formatXAxisTick(series, index, totalRuns) {
   const run = series[index];
   if (!run) return "";
   return `${buildRunLabel(index, totalRuns)} · ${d3.utcFormat("%d.%m %H:%M")(run.timestamp)}`;
 }
 
-/**
- * Render the X axis for the stacked overview chart.
- *
- * @param {d3.Selection} g
- *   Plot group selection.
- * @param {{x: Function, innerH: number, tickCount: number, series: Array<object>}} args
- *   X-axis render context.
- */
-function renderXAxis(g, { x, innerH, tickCount, series }) {
+function styleXAxisLabels(axisGroup) {
+  axisGroup.selectAll("text")
+    .style("font-size", "10px")
+    .attr("transform", "rotate(-20)")
+    .style("text-anchor", "end");
+}
+
+function renderXAxis(g, { x, innerH, tickCount, series, spacingMode }) {
+  const axisGroup = g.append("g")
+    .attr("transform", `translate(0,${innerH})`);
+
+  if (spacingMode === "time") {
+    axisGroup.call(
+      d3.axisBottom(x)
+        .ticks(Math.min(Math.max(series.length, 2), 5))
+        .tickFormat(d3.utcFormat("%d.%m %H:%M"))
+    );
+    styleXAxisLabels(axisGroup);
+    return;
+  }
+
   const totalRuns = getXAxisTotalRuns(series);
   const tickIndexes = buildXAxisTickIndexes(totalRuns, tickCount);
 
-  g.append("g")
-    .attr("transform", `translate(0,${innerH})`)
-    .call(
-      d3.axisBottom(x)
-        .tickValues(tickIndexes)
-        .tickFormat((index) => formatXAxisTick(series, index, totalRuns))
-    )
-    .call((sel) => sel.selectAll("text")
-      .style("font-size", "10px")
-      .attr("transform", "rotate(-20)")
-      .style("text-anchor", "end"));
+  axisGroup.call(
+    d3.axisBottom(x)
+      .tickValues(tickIndexes)
+      .tickFormat((index) => formatXAxisTick(series, index, totalRuns))
+  );
+
+  styleXAxisLabels(axisGroup);
 }
 
-/**
- * Render the numeric Y axis for the overview chart.
- *
- * @param {d3.Selection} g
- *   Plot group selection.
- * @param {d3.ScaleLinear<number, number>} y
- *   Y scale.
- */
 function renderYAxis(g, y) {
   g.append("g")
     .call(
@@ -1042,18 +1396,10 @@ function renderYAxis(g, y) {
     .call((sel) => sel.selectAll("text").style("font-size", "11px"));
 }
 
-/**
- * Build the high-level stacked-series data model from prepared runs.
- *
- * @param {Array<{modules: Map<string, object>}>} runs
- *   Prepared time-series runs.
- * @returns {Array<object>}
- *   Stacked-series rows.
- */
 function buildStackSeries(runs) {
   const topModules = selectTopModulesForStack(runs, 6);
 
-  logInfo("Selected top modules for stacked series", {
+  logInfo("Selected top modules for drift series", {
     runCount: runs.length,
     topModules,
   });
@@ -1061,14 +1407,6 @@ function buildStackSeries(runs) {
   return buildStackSeriesRows(runs, topModules);
 }
 
-/**
- * Build a stable color map for module stack keys.
- *
- * @param {string[]} keys
- *   Module stack keys.
- * @returns {Map<string, string>}
- *   Color lookup by module key.
- */
 function buildModulePalette(keys) {
   const palette = d3.schemeTableau10;
   const map = new Map();
@@ -1080,26 +1418,10 @@ function buildModulePalette(keys) {
   return map;
 }
 
-/**
- * Check whether a stacked-series field is metadata rather than stack data.
- *
- * @param {string} key
- *   Row field name.
- * @returns {boolean}
- *   `true` when the field is chart metadata.
- */
 function isStackSeriesMetaKey(key) {
   return key === "timestamp" || key === "file" || key === "runIndex";
 }
 
-/**
- * Check whether a stacked-series field is a detail field excluded from stacking.
- *
- * @param {string} key
- *   Row field name.
- * @returns {boolean}
- *   `true` when the field is an auxiliary detail field.
- */
 function isStackSeriesDetailKey(key) {
   return key.endsWith("_loc") ||
     key.endsWith("_fanIn") ||
@@ -1109,14 +1431,6 @@ function isStackSeriesDetailKey(key) {
     key.endsWith("_deltaFanOut");
 }
 
-/**
- * Select the data fields used as stack layers in the overview chart.
- *
- * @param {Array<object>} series
- *   Stacked-series rows.
- * @returns {string[]}
- *   Stack-layer keys.
- */
 function selectStackKeys(series) {
   const firstRow = series[0] || {};
 
@@ -1127,39 +1441,23 @@ function selectStackKeys(series) {
   });
 }
 
-/**
- * Log the render context for the stacked overview chart.
- *
- * @param {string} appId
- *   Current application identifier.
- * @param {Array<object>} runs
- *   Prepared runs.
- * @param {Array<object>} series
- *   Stacked-series rows.
- * @param {string[]} stackKeys
- *   Stack-layer keys.
- */
-function logStackedOverviewRender(appId, runs, series, stackKeys) {
-  logInfo("Rendering stacked overview chart", {
+function hasDriftSeriesValues(series, stackKeys) {
+  return series.some((row) =>
+    stackKeys.some((key) => coerceNumber(row?.[key], 0) > 0)
+  );
+}
+
+function logTimeViewRender(appId, runs, series, stackKeys) {
+  logInfo("Rendering drift overview chart", {
     appId,
     runCount: runs.length,
     seriesCount: series.length,
     stackKeys,
+    spacingMode: timeViewUiState.spacingMode,
+    chartMode: timeViewUiState.chartMode,
   });
 }
 
-/**
- * Compute the inner plot dimensions from the outer chart box.
- *
- * @param {number} width
- *   Outer chart width.
- * @param {number} height
- *   Outer chart height.
- * @param {{top: number, right: number, bottom: number, left: number}} margin
- *   Chart margins.
- * @returns {{innerW: number, innerH: number}}
- *   Inner plot dimensions.
- */
 function getChartInnerSize(width, height, margin) {
   return {
     innerW: width - margin.left - margin.right,
@@ -1167,16 +1465,6 @@ function getChartInnerSize(width, height, margin) {
   };
 }
 
-/**
- * Create the root and translated plot groups for the chart.
- *
- * @param {d3.Selection} svg
- *   Target SVG selection.
- * @param {{top: number, left: number}} margin
- *   Chart margins.
- * @returns {{root: d3.Selection, g: d3.Selection}}
- *   Root group and translated plot group.
- */
 function createChartRoot(svg, margin) {
   const root = svg.append("g");
   const g = root.append("g")
@@ -1185,25 +1473,64 @@ function createChartRoot(svg, margin) {
   return { root, g };
 }
 
-/**
- * Build the X and Y scales for the stacked overview chart.
- *
- * @param {Array<object>} series
- *   Stacked-series rows.
- * @param {string[]} stackKeys
- *   Stack-layer keys.
- * @param {number} innerW
- *   Inner plot width.
- * @param {number} innerH
- *   Inner plot height.
- * @returns {{x: any, y: any}}
- *   D3 scales for chart rendering.
- */
-function buildStackedOverviewScales(series, stackKeys, innerW, innerH) {
-  const x = d3.scaleLinear()
-    .domain([0, Math.max(series.length - 1, 0)])
-    .range([0, innerW]);
+function buildTimeViewMargin(width) {
+  return {
+    top: 24,
+    right: Math.max(86, Math.min(132, width * 0.16)),
+    bottom: 70,
+    left: Math.max(58, Math.min(76, width * 0.11)),
+  };
+}
 
+function readSeriesXValue(row, spacingMode) {
+  if (spacingMode === "run") {
+    return coerceNumber(row?.runIndex, 0);
+  }
+
+  return row?.timestamp instanceof Date ? row.timestamp : new Date(0);
+}
+
+function buildTimeScaleDomain(series) {
+  const [start, end] = d3.extent(
+    series,
+    (row) => row?.timestamp instanceof Date ? row.timestamp : null
+  );
+
+  if (!(start instanceof Date) || !(end instanceof Date)) {
+    const now = new Date();
+    return [new Date(now.getTime() - 60 * 60 * 1000), now];
+  }
+
+  if (start.getTime() === end.getTime()) {
+    return [
+      new Date(start.getTime() - 30 * 60 * 1000),
+      new Date(end.getTime() + 30 * 60 * 1000),
+    ];
+  }
+
+  return [start, end];
+}
+
+function buildOverviewXScale(series, innerW, spacingMode) {
+  if (spacingMode === "run") {
+    return {
+      x: d3.scaleLinear()
+        .domain([0, Math.max(series.length - 1, 0)])
+        .range([0, innerW]),
+      xRead: (row) => readSeriesXValue(row, "run"),
+    };
+  }
+
+  return {
+    x: d3.scaleUtc()
+      .domain(buildTimeScaleDomain(series))
+      .range([0, innerW]),
+    xRead: (row) => readSeriesXValue(row, "time"),
+  };
+}
+
+function buildStackedOverviewScales(series, stackKeys, innerW, innerH, spacingMode) {
+  const { x, xRead } = buildOverviewXScale(series, innerW, spacingMode);
   const y = d3.scaleLinear()
     .domain([0, d3.max(series, (row) => stackKeys.reduce(
       (sum, key) => sum + coerceNumber(row[key], 0),
@@ -1212,160 +1539,54 @@ function buildStackedOverviewScales(series, stackKeys, innerW, innerH) {
     .nice()
     .range([innerH, 0]);
 
-  return { x, y };
+  return { x, y, xRead };
 }
 
-/**
- * Render all overview-chart axes and guide infrastructure.
- *
- * @param {d3.Selection} g
- *   Plot group selection.
- * @param {{series: Array<object>, x: any, y: any, innerW: number, innerH: number}} args
- *   Axis render context.
- */
-function renderStackedOverviewAxes(g, { series, x, y, innerW, innerH }) {
+function buildLineOverviewScales(series, stackKeys, innerW, innerH, spacingMode) {
+  const { x, xRead } = buildOverviewXScale(series, innerW, spacingMode);
+  const y = d3.scaleLinear()
+    .domain([0, d3.max(series, (row) => d3.max(
+      stackKeys,
+      (key) => coerceNumber(row?.[key], 0)
+    )) || 1])
+    .nice()
+    .range([innerH, 0]);
+
+  return { x, y, xRead };
+}
+
+function renderOverviewAxes(g, { series, x, y, innerW, innerH, xRead, spacingMode }) {
   renderYGrid(g, y, innerW);
-  renderRunGuides(g, { series, x, innerH });
+  renderRunGuides(g, { series, x, innerH, xRead });
   renderXAxis(g, {
     x,
     innerH,
     tickCount: Math.min(series.length, 6),
     series,
+    spacingMode,
   });
   renderYAxis(g, y);
 }
 
-/**
- * Build the D3 stack layers from stacked-series rows.
- *
- * @param {Array<object>} series
- *   Stacked-series rows.
- * @param {string[]} stackKeys
- *   Stack-layer keys.
- * @returns {Array<object>}
- *   D3 stack layers.
- */
 function buildStackedSeriesLayers(series, stackKeys) {
   const stack = d3.stack().keys(stackKeys);
   return stack(series);
 }
 
-/**
- * Render the data-bearing layers of the stacked overview chart.
- *
- * @param {d3.Selection} g
- *   Plot group selection.
- * @param {{stacked: Array<object>, series: Array<object>, stackKeys: string[], x: any, y: any, innerW: number, colorByKey: Map<string, string>}} args
- *   Data-layer render context.
- */
-function renderStackedOverviewDataLayers(g, { stacked, series, stackKeys, x, y, innerW, colorByKey }) {
-  renderStackedAreas(g, {
-    stacked,
-    x,
-    y,
-    colorByKey,
-  });
-
-  renderRunMarkers(g, {
-    series,
-    keys: stackKeys,
-    x,
-    y,
-  });
-
-  renderEndLabels(g, {
-    stacked,
-    y,
-    innerW,
-    colorByKey,
-  });
+function buildLineSeriesLayers(series, stackKeys) {
+  return stackKeys.map((key) => ({
+    key,
+    points: series.map((row) => ({
+      row,
+      value: coerceNumber(row?.[key], 0),
+    })),
+  }));
 }
 
-/**
- * Render non-data chart chrome such as header and legend.
- *
- * @param {d3.Selection} root
- *   Root chart group.
- * @param {{width: number, margin: object, appId: string, series: Array<object>, stackKeys: string[], colorByKey: Map<string, string>}} args
- *   Chrome render context.
- */
-function renderStackedOverviewChrome(root, { width, margin, appId, series, stackKeys, colorByKey }) {
-  renderChartHeader(root, { width, margin, appId, series, keys: stackKeys });
-  renderModuleLegend(root, { margin, keys: stackKeys, colorByKey });
-}
-
-/**
- * Render the chart title and summary line.
- *
- * @param {d3.Selection} root
- *   Root chart group.
- * @param {{width: number, margin: object, appId: string, series: Array<object>, keys: string[]}} args
- *   Header render context.
- */
-function renderChartHeader(root, { width, margin, appId, series, keys }) {
-  root.append("text")
-    .attr("x", margin.left)
-    .attr("y", 18)
-    .style("font-size", "13px")
-    .style("font-weight", "600")
-    .text(buildSeriesLabel(appId));
-
-  root.append("text")
-    .attr("x", width - margin.right)
-    .attr("y", 18)
-    .attr("text-anchor", "end")
-    .style("font-size", "11px")
-    .style("fill", "#6c757d")
-    .text(`${series.length} runs · equal spacing · baseline run = 0 drift · top ${keys.length} modules`);
-}
-
-/**
- * Render the legend for module stack colors.
- *
- * @param {d3.Selection} root
- *   Root chart group.
- * @param {{margin: object, keys: string[], colorByKey: Map<string, string>}} args
- *   Legend render context.
- */
-function renderModuleLegend(root, { margin, keys, colorByKey }) {
-  const legend = root.append("g")
-    .attr("transform", `translate(${margin.left}, 30)`);
-
-  keys.forEach((key, index) => {
-    const row = Math.floor(index / 4);
-    const col = index % 4;
-    const x = col * 210;
-    const y = row * 18;
-
-    legend.append("rect")
-      .attr("x", x)
-      .attr("y", y - 8)
-      .attr("width", 12)
-      .attr("height", 12)
-      .attr("rx", 2)
-      .attr("fill", colorByKey.get(key));
-
-    legend.append("text")
-      .attr("x", x + 18)
-      .attr("y", y + 2)
-      .style("font-size", "10px")
-      .style("fill", "#6c757d")
-      .text(key);
-  });
-}
-
-/**
- * Render stacked area fills and their boundary lines.
- *
- * @param {d3.Selection} g
- *   Plot group selection.
- * @param {{stacked: Array<object>, x: any, y: any, colorByKey: Map<string, string>}} args
- *   Stacked-area render context.
- */
-function renderStackedAreas(g, { stacked, x, y, colorByKey }) {
+function renderStackedAreas(g, { stacked, x, y, xRead, colorByKey }) {
   const area = d3.area()
     .curve(d3.curveStepAfter)
-    .x((d) => x(d.data.runIndex))
+    .x((d) => x(xRead(d.data)))
     .y0((d) => y(d[0]))
     .y1((d) => y(d[1]));
 
@@ -1378,7 +1599,7 @@ function renderStackedAreas(g, { stacked, x, y, colorByKey }) {
   groups.append("path")
     .attr("class", "module-area")
     .attr("fill", (d) => colorByKey.get(d.key))
-    .attr("fill-opacity", 0.72)
+    .attr("fill-opacity", 0.68)
     .attr("stroke", "none")
     .attr("d", area)
     .append("title")
@@ -1388,59 +1609,29 @@ function renderStackedAreas(g, { stacked, x, y, colorByKey }) {
     .attr("class", "module-area-boundary")
     .attr("fill", "none")
     .attr("stroke", (d) => colorByKey.get(d.key))
-    .attr("stroke-opacity", 0.75)
-    .attr("stroke-width", 1.2)
+    .attr("stroke-opacity", 0.78)
+    .attr("stroke-width", 1.15)
     .attr("d", d3.line()
       .curve(d3.curveStepAfter)
-      .x((p) => x(p.data.runIndex))
-      .y((p) => y(p[1]))
+      .x((point) => x(xRead(point.data)))
+      .y((point) => y(point[1]))
     );
 }
 
-/**
- * Render total-drift markers and detailed tooltips for each run.
- *
- * @param {d3.Selection} g
- *   Plot group selection.
- * @param {{series: Array<object>, keys: string[], x: any, y: any}} args
- *   Run-marker render context.
- */
-function renderRunMarkers(g, { series, keys, x, y }) {
+function renderRunMarkers(g, { series, keys, x, y, xRead }) {
   g.selectAll(".time-total-point")
     .data(series)
     .enter()
     .append("circle")
     .attr("class", "time-total-point")
-    .attr("cx", (d) => x(d.runIndex))
-    .attr("cy", (d) => y(keys.reduce((sum, key) => sum + coerceNumber(d[key], 0), 0)))
+    .attr("cx", (d) => x(xRead(d)))
+    .attr("cy", (d) => y(computeRowTotalDrift(d, keys)))
     .attr("r", 3.2)
     .attr("fill", getCssToken("--cg-node-fill-root", "#111827"))
     .append("title")
-    .text((d) => {
-      const details = keys.map((key) => {
-        const driftValue = formatRunValue(d[key] || 0);
-        const loc = formatRunValue(d[`${key}_loc`] || 0);
-        const fanIn = formatRunValue(d[`${key}_fanIn`] || 0);
-        const fanOut = formatRunValue(d[`${key}_fanOut`] || 0);
-        const deltaLoc = d3.format("+,d")(coerceNumber(d[`${key}_deltaLoc`], 0));
-        const deltaFanIn = d3.format("+,d")(coerceNumber(d[`${key}_deltaFanIn`], 0));
-        const deltaFanOut = d3.format("+,d")(coerceNumber(d[`${key}_deltaFanOut`], 0));
-        return `${key}: drift ${driftValue}, loc ${loc} (Δ ${deltaLoc}), fanIn ${fanIn} (Δ ${deltaFanIn}), fanOut ${fanOut} (Δ ${deltaFanOut})`;
-      }).join("\n");
-
-      const total = keys.reduce((sum, key) => sum + coerceNumber(d[key], 0), 0);
-      return `${buildRunLabel(d.runIndex, series.length)}\n${d.file}\n${formatUtcTimestamp(d.timestamp)}\n${details}\ntotal drift: ${formatRunValue(total)}`;
-    });
+    .text((d) => buildRunMarkerTitle(d, series.length, keys));
 }
 
-/**
- * Render end-of-series labels for the stacked layers.
- *
- * @param {d3.Selection} g
- *   Plot group selection.
- * @param {{stacked: Array<object>, y: any, innerW: number, colorByKey: Map<string, string>}} args
- *   End-label render context.
- */
 function renderEndLabels(g, { stacked, y, innerW, colorByKey }) {
   const latestLayer = stacked.map((layer) => ({
     key: layer.key,
@@ -1464,7 +1655,6 @@ function renderEndLabels(g, { stacked, y, innerW, colorByKey }) {
       return nextY;
     })
     .attr("text-anchor", "end")
-    .attr("dominant-baseline", "auto")
     .style("font-size", "10px")
     .style("font-weight", "600")
     .style("paint-order", "stroke")
@@ -1472,96 +1662,285 @@ function renderEndLabels(g, { stacked, y, innerW, colorByKey }) {
     .style("stroke-width", "3px")
     .style("stroke-linejoin", "round")
     .style("fill", (d) => colorByKey.get(d.key))
-    .text((d) => d.key.split("/").pop());
+    .text((d) => formatModuleLabel(d.key));
 }
 
-/**
- * Render the stacked overview chart for the prepared run history.
- *
- * @param {d3.Selection} svg
- *   Target SVG selection.
- * @param {{width: number, height: number, margin: object, runs: Array<object>, appId: string}} args
- *   Chart render context.
- */
-function renderStackedOverviewChart(svg, { width, height, margin, runs, appId }) {
+function renderLineSeries(g, { layers, x, y, xRead, colorByKey, totalRuns, keys }) {
+  const line = d3.line()
+    .curve(d3.curveMonotoneX)
+    .x((point) => x(xRead(point.row)))
+    .y((point) => y(point.value));
+
+  const groups = g.selectAll(".module-line-group")
+    .data(layers)
+    .enter()
+    .append("g")
+    .attr("class", "module-line-group");
+
+  groups.append("path")
+    .attr("fill", "none")
+    .attr("stroke", (d) => colorByKey.get(d.key))
+    .attr("stroke-width", 2)
+    .attr("stroke-linecap", "round")
+    .attr("stroke-linejoin", "round")
+    .attr("d", (d) => line(d.points));
+
+  groups.selectAll("circle")
+    .data((layer) => layer.points.map((point) => ({
+      ...point,
+      key: layer.key,
+    })))
+    .enter()
+    .append("circle")
+    .attr("cx", (d) => x(xRead(d.row)))
+    .attr("cy", (d) => y(d.value))
+    .attr("r", 2.9)
+    .attr("fill", "#ffffff")
+    .attr("stroke", (d) => colorByKey.get(d.key))
+    .attr("stroke-width", 1.6)
+    .append("title")
+    .text((d) => buildModulePointTitle(d.row, d.key, totalRuns, keys));
+}
+
+function renderLineEndLabels(g, { layers, y, innerW, colorByKey }) {
+  const latestLayer = layers.map((layer) => ({
+    key: layer.key,
+    point: layer.points[layer.points.length - 1],
+  }));
+
+  const placed = [];
+  const minGap = 14;
+
+  g.selectAll(".line-end-label")
+    .data(latestLayer)
+    .enter()
+    .append("text")
+    .attr("class", "line-end-label")
+    .attr("x", innerW - 6)
+    .attr("y", (d) => {
+      const targetY = y(d.point?.value || 0) - 10;
+      const lastY = placed.length ? placed[placed.length - 1] : null;
+      const nextY = lastY !== null && targetY - lastY < minGap ? lastY + minGap : targetY;
+      placed.push(nextY);
+      return nextY;
+    })
+    .attr("text-anchor", "end")
+    .style("font-size", "10px")
+    .style("font-weight", "600")
+    .style("paint-order", "stroke")
+    .style("stroke", "rgba(255,255,255,0.95)")
+    .style("stroke-width", "3px")
+    .style("stroke-linejoin", "round")
+    .style("fill", (d) => colorByKey.get(d.key))
+    .text((d) => formatModuleLabel(d.key));
+}
+
+function renderStackedOverviewChart(svg, { width, height, margin, series, stackKeys, colorByKey }) {
   clearSvg(svg);
+  configureSvgViewport(svg, width, height);
 
-  const series = buildStackSeries(runs);
-  if (!series.length) {
-    renderEmpty(svg, width, height, "No module drift history found.");
-    return null;
-  }
-
-  STACK_KEYS = selectStackKeys(series);
-  const hasDrift = series.some((row) =>
-    STACK_KEYS.some((key) => coerceNumber(row?.[key], 0) > 0)
-  );
-  if (!hasDrift) {
-    renderEmpty(svg, width, height, "No module drift across available runs.");
-    return null;
-  }
-
-  logStackedOverviewRender(appId, runs, series, STACK_KEYS);
-
-  const colorByKey = buildModulePalette(STACK_KEYS);
   const { innerW, innerH } = getChartInnerSize(width, height, margin);
-  const { root, g } = createChartRoot(svg, margin);
-  const { x, y } = buildStackedOverviewScales(series, STACK_KEYS, innerW, innerH);
-
-  renderStackedOverviewAxes(g, { series, x, y, innerW, innerH });
-
-  const stacked = buildStackedSeriesLayers(series, STACK_KEYS);
-  renderStackedOverviewDataLayers(g, {
-    stacked,
+  const { g } = createChartRoot(svg, margin);
+  const { x, y, xRead } = buildStackedOverviewScales(
     series,
-    stackKeys: STACK_KEYS,
+    stackKeys,
+    innerW,
+    innerH,
+    timeViewUiState.spacingMode
+  );
+
+  renderOverviewAxes(g, {
+    series,
     x,
+    y,
+    innerW,
+    innerH,
+    xRead,
+    spacingMode: timeViewUiState.spacingMode,
+  });
+
+  const stacked = buildStackedSeriesLayers(series, stackKeys);
+
+  renderStackedAreas(g, {
+    stacked,
+    x,
+    y,
+    xRead,
+    colorByKey,
+  });
+
+  renderRunMarkers(g, {
+    series,
+    keys: stackKeys,
+    x,
+    y,
+    xRead,
+  });
+
+  renderEndLabels(g, {
+    stacked,
     y,
     innerW,
     colorByKey,
   });
-
-  renderStackedOverviewChrome(root, {
-    width,
-    margin,
-    appId,
-    series,
-    stackKeys: STACK_KEYS,
-    colorByKey,
-  });
-
-  return installSvgViewZoom(svg);
 }
 
-/**
- * Initialize the optional historic time-view chart for the current app.
- *
- * Lifecycle
- * ---------
- * 1. Resolve and size the target SVG
- * 2. Load prepared time-series snapshots
- * 3. Render empty/error states when needed
- * 4. Render the stacked overview chart
- *
- * @param {string} svgId
- *   DOM id of the target SVG element.
- * @param {{appId?: string, metrics?: unknown}} [options={}]
- *   Initialization options.
- * @returns {Promise<void>}
- *   Resolves when initialization completes.
- */
-export async function initGraphTimeView(svgId, { appId, metrics } = {}) {
-  const svg = d3.select(`#${svgId}`);
-  if (svg.empty()) {
-    logWarn("Time view SVG not found", { svgId });
-    return;
+function renderLineOverviewChart(svg, { width, height, margin, series, stackKeys, colorByKey }) {
+  clearSvg(svg);
+  configureSvgViewport(svg, width, height);
+
+  const { innerW, innerH } = getChartInnerSize(width, height, margin);
+  const { g } = createChartRoot(svg, margin);
+  const { x, y, xRead } = buildLineOverviewScales(
+    series,
+    stackKeys,
+    innerW,
+    innerH,
+    timeViewUiState.spacingMode
+  );
+
+  renderOverviewAxes(g, {
+    series,
+    x,
+    y,
+    innerW,
+    innerH,
+    xRead,
+    spacingMode: timeViewUiState.spacingMode,
+  });
+
+  const layers = buildLineSeriesLayers(series, stackKeys);
+
+  renderLineSeries(g, {
+    layers,
+    x,
+    y,
+    xRead,
+    colorByKey,
+    totalRuns: series.length,
+    keys: stackKeys,
+  });
+
+  renderLineEndLabels(g, {
+    layers,
+    y,
+    innerW,
+    colorByKey,
+  });
+}
+
+function renderTimeViewEmpty(elements, width, height, message, metaMessage = "") {
+  destroyTimeViewZoomController();
+  renderTimeViewSummary(elements?.summaryRoot, null);
+  renderTimeViewLegend(elements?.legendRoot, [], new Map());
+
+  if (elements?.metaEl) {
+    elements.metaEl.textContent = metaMessage || message;
+  }
+
+  renderEmpty(elements?.svg, width, height, message);
+  return null;
+}
+
+function renderPreparedTimeView(context) {
+  const elements = context?.elements;
+  const svg = elements?.svg;
+  const runs = Array.isArray(context?.runs) ? context.runs : [];
+  const appId = String(context?.appId || "");
+
+  if (!svg || svg.empty()) {
+    return null;
   }
 
   const { width, height } = getSvgRenderSize(svg);
-  const margin = { top: 64, right: 88, bottom: 64, left: 88 };
+  const previousZoom = timeViewControllerProxy.getZoom();
 
-  configureSvgViewport(svg, width, height);
-  svg.attr("width", width).attr("height", height);
+  destroyTimeViewZoomController();
+
+  if (!runs.length) {
+    return renderTimeViewEmpty(
+      elements,
+      width,
+      height,
+      "No code-metrics history found for current app."
+    );
+  }
+
+  const series = buildStackSeries(runs);
+  if (!series.length) {
+    return renderTimeViewEmpty(
+      elements,
+      width,
+      height,
+      "No module drift history found."
+    );
+  }
+
+  STACK_KEYS = selectStackKeys(series);
+  if (!STACK_KEYS.length || !hasDriftSeriesValues(series, STACK_KEYS)) {
+    return renderTimeViewEmpty(
+      elements,
+      width,
+      height,
+      "No module drift across available runs."
+    );
+  }
+
+  logTimeViewRender(appId, runs, series, STACK_KEYS);
+
+  renderTimeViewSummary(elements?.summaryRoot, buildTimeViewSummary(series, STACK_KEYS));
+  renderTimeViewMeta(elements?.metaEl, {
+    series,
+    spacingMode: timeViewUiState.spacingMode,
+    chartMode: timeViewUiState.chartMode,
+  });
+
+  const colorByKey = buildModulePalette(STACK_KEYS);
+  const margin = buildTimeViewMargin(width);
+  renderTimeViewLegend(elements?.legendRoot, STACK_KEYS, colorByKey);
+
+  if (timeViewUiState.chartMode === "stacked") {
+    renderStackedOverviewChart(svg, {
+      width,
+      height,
+      margin,
+      series,
+      stackKeys: STACK_KEYS,
+      colorByKey,
+    });
+  } else {
+    renderLineOverviewChart(svg, {
+      width,
+      height,
+      margin,
+      series,
+      stackKeys: STACK_KEYS,
+      colorByKey,
+    });
+  }
+
+  replaceTimeViewZoomController(installSvgViewZoom(svg), previousZoom);
+  return timeViewControllerProxy;
+}
+
+export async function initGraphTimeView(svgId, { appId, metrics } = {}) {
+  const elements = resolveTimeViewElements(svgId);
+  if (!elements?.svg) {
+    logWarn("Time view host not found", { svgId });
+    return null;
+  }
+
+  bindTimeViewControls(elements.container);
+  renderTimeViewSummary(elements.summaryRoot, null);
+
+  if (elements.metaEl) {
+    elements.metaEl.textContent = "Loading history…";
+  }
+
+  const { width, height } = getSvgRenderSize(elements.svg);
+  configureSvgViewport(elements.svg, width, height);
+  elements.svg.attr("width", width).attr("height", height);
+  renderEmpty(elements.svg, width, height, "Loading code-metrics history...");
 
   void metrics;
   logInfo("Initializing time view", { svgId, appId });
@@ -1571,25 +1950,24 @@ export async function initGraphTimeView(svgId, { appId, metrics } = {}) {
     runs = await loadTimeSeries(appId);
   } catch (err) {
     logError("Failed to load time-view series", err);
-    renderEmpty(svg, width, height, "Could not load code-metrics history.");
-    return null;
+    return renderTimeViewEmpty(
+      elements,
+      width,
+      height,
+      "Could not load code-metrics history."
+    );
   }
 
-  if (!runs.length) {
-    renderEmpty(svg, width, height, "No code-metrics history found for current app.");
-    return null;
-  }
+  latestTimeViewContext = {
+    elements,
+    runs,
+    appId,
+  };
 
   logInfo("Rendering time view with loaded runs", {
     appId,
     runCount: runs.length,
   });
 
-  return renderStackedOverviewChart(svg, {
-    width,
-    height,
-    margin,
-    runs,
-    appId
-  });
+  return renderPreparedTimeView(latestTimeViewContext);
 }

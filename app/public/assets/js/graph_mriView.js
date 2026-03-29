@@ -70,10 +70,24 @@ function renderEmpty(svg, width, height, message) {
     .text(message || "No MRI data found");
 }
 
+function setMriLegendMeta(text) {
+  const el = document.getElementById("graphMriLegendMeta");
+  if (!el) return;
+  el.textContent = String(text || "Latest MRI run.");
+}
+
 function getSvgSize(svg) {
+  const svgNode = svg?.node?.();
+  const host = svgNode?.parentElement;
+  const width = Math.max(
+    host?.clientWidth || 0,
+    svgNode?.clientWidth || 0,
+    360
+  );
+
   return {
-    width: svg.node()?.clientWidth || 1000,
-    height: 700,
+    width,
+    height: Math.max(host?.clientHeight || 0, width, 360),
   };
 }
 
@@ -340,6 +354,8 @@ function renderGraph(svg, graph, width, height, file) {
   const layoutName = layoutInfo.layoutName || "unknown";
   const layerLabels = layoutInfo.layerLabels || [];
 
+  setMriLegendMeta(`${file} · ${layoutName}`);
+
   const visuals = buildMriVisualEncodings(graph);
   const topLabelNodes = graph.nodes
     .slice()
@@ -518,52 +534,6 @@ function renderGraph(svg, graph, width, height, file) {
     .style("dominant-baseline", "middle")
     .text((d) => d.node.label);
 
-  svg.append("text")
-    .attr("x", 24)
-    .attr("y", 24)
-    .style("font-size", "14px")
-    .style("font-weight", "700")
-    .text("Architecture MRI");
-
-  svg.append("text")
-    .attr("x", 24)
-    .attr("y", 42)
-    .style("font-size", "11px")
-    .style("fill", "#6c757d")
-    .text(file);
-
-  // -------------------------------------------------
-  // Info box (layout indicator)
-  // -------------------------------------------------
-
-  const infoX = width - 220;
-  const infoY = 20;
-
-  const gInfo = svg.append("g");
-
-  gInfo.append("rect")
-    .attr("x", infoX)
-    .attr("y", infoY)
-    .attr("width", 200)
-    .attr("height", 46)
-    .attr("rx", 8)
-    .attr("fill", "rgba(255,255,255,0.9)")
-    .attr("stroke", "rgba(31,41,55,0.15)");
-
-  gInfo.append("text")
-    .attr("x", infoX + 12)
-    .attr("y", infoY + 18)
-    .style("font-size", "10px")
-    .style("fill", "#64748b")
-    .text("layout");
-
-  gInfo.append("text")
-    .attr("x", infoX + 12)
-    .attr("y", infoY + 34)
-    .style("font-size", "12px")
-    .style("font-weight", "700")
-    .text(layoutName);
-
   return installSvgViewZoom(svg);
 }
 
@@ -574,6 +544,8 @@ export async function initGraphMriView(svgId, { appId } = {}) {
     return;
   }
 
+  setMriLegendMeta("Loading latest MRI run…");
+
   const { width, height } = getSvgSize(svg);
 
   let files;
@@ -581,6 +553,7 @@ export async function initGraphMriView(svgId, { appId } = {}) {
     files = await fetch(`/api/output-files?appId=${appId}&type=code-metrics`).then((r) => r.json());
   } catch (err) {
     console.warn("MRI file list failed", err);
+    setMriLegendMeta("Could not load MRI file list.");
     renderEmpty(svg, width, height, "Could not load MRI file list");
     return null;
   }
@@ -591,6 +564,7 @@ export async function initGraphMriView(svgId, { appId } = {}) {
     .reverse()[0];
 
   if (!file) {
+    setMriLegendMeta("No MRI data found.");
     renderEmpty(svg, width, height, "No MRI data found");
     return null;
   }
@@ -600,12 +574,14 @@ export async function initGraphMriView(svgId, { appId } = {}) {
     rows = await d3.csv(`/output/${file}`);
   } catch (err) {
     console.warn("MRI CSV load failed", err);
+    setMriLegendMeta("Could not load MRI CSV.");
     renderEmpty(svg, width, height, "Could not load MRI CSV");
     return null;
   }
 
   const graph = buildGraph(rows || []);
   if (!graph.nodes.length) {
+    setMriLegendMeta("No MRI node data available.");
     renderEmpty(svg, width, height, "No code module nodes found");
     return null;
   }
