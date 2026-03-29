@@ -31,30 +31,52 @@
         </div>
       </div>
     </div>
+
     <div class="row g-3 g-lg-4 align-items-start">
       <main class="col-12">
         <div class="card shadow-sm">
           <div class="card-header py-0 border-top-0 bg-body">
             <ul class="nav nav-tabs card-header-tabs" id="workspaceTabs" role="tablist">
               <li class="nav-item" role="presentation">
+                <button class="nav-link small" id="app-view-tab" data-bs-toggle="tab"
+                  data-bs-target="#app-view-pane" data-workspace-view="app-view" type="button" role="tab" aria-controls="app-view-pane"
+                  aria-selected="false">
+                  App view
+                </button>
+              </li>
+              <li class="nav-item" role="presentation">
                 <button class="nav-link active small" id="graph-main-tab" data-bs-toggle="tab"
-                  data-bs-target="#graph-main-pane" type="button" role="tab" aria-controls="graph-main-pane"
+                  data-bs-target="#graph-main-pane" data-workspace-view="graphs" type="button" role="tab" aria-controls="graph-main-pane"
                   aria-selected="true">
                   Graphs
                 </button>
               </li>
               <li class="nav-item" role="presentation">
                 <button class="nav-link small" id="graph-projects-tab" data-bs-toggle="tab"
-                  data-bs-target="#graph-projects-pane" type="button" role="tab" aria-controls="graph-projects-pane"
+                  data-bs-target="#graph-projects-pane" data-workspace-view="portfolio" type="button" role="tab" aria-controls="graph-projects-pane"
                   aria-selected="false">
                   Portfolio
                 </button>
               </li>
               <li class="nav-item" role="presentation">
-                <button class="nav-link small" id="workspace-app-tab" data-bs-toggle="tab"
-                  data-bs-target="#workspace-app-pane" type="button" role="tab" aria-controls="workspace-app-pane"
+                <button class="nav-link small" id="app-overview-tab" data-bs-toggle="tab"
+                  data-bs-target="#app-overview-pane" data-workspace-view="overview" type="button" role="tab" aria-controls="app-overview-pane"
                   aria-selected="false">
-                  App
+                  Overview
+                </button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link small" id="app-git-tab" data-bs-toggle="tab"
+                  data-bs-target="#app-git-pane" data-workspace-view="git" type="button" role="tab" aria-controls="app-git-pane"
+                  aria-selected="false">
+                  Git
+                </button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link small" id="app-freeze-tab" data-bs-toggle="tab"
+                  data-bs-target="#app-freeze-pane" data-workspace-view="freeze" type="button" role="tab" aria-controls="app-freeze-pane"
+                  aria-selected="false">
+                  Freeze
                 </button>
               </li>
             </ul>
@@ -86,6 +108,13 @@
 
             <div class="p-2">
               <div class="tab-content" id="workspaceTabsContent">
+                <div class="tab-pane fade" id="app-view-pane" role="tabpanel"
+                  aria-labelledby="app-view-tab" tabindex="0">
+                  <div class="p-3 workspaceAppPanel" id="appViewPanel">
+                    <div class="text-secondary small">Select an app to preview it.</div>
+                  </div>
+                </div>
+
                 <div class="tab-pane fade show active" id="graph-main-pane" role="tabpanel"
                   aria-labelledby="graph-main-tab" tabindex="0">
                   <div class="graphsPanelGrid">
@@ -228,9 +257,23 @@
                   </div>
                 </div>
 
-                <div class="tab-pane fade" id="workspace-app-pane" role="tabpanel"
-                  aria-labelledby="workspace-app-tab" tabindex="0">
-                  <div class="p-3 workspaceAppPanel panelScroll" id="appInfoPanel">
+                <div class="tab-pane fade" id="app-overview-pane" role="tabpanel"
+                  aria-labelledby="app-overview-tab" tabindex="0">
+                  <div class="p-3 workspaceAppPanel panelScroll" id="appOverviewPanel">
+                    <div class="text-secondary small">Select an app to inspect details.</div>
+                  </div>
+                </div>
+
+                <div class="tab-pane fade" id="app-git-pane" role="tabpanel"
+                  aria-labelledby="app-git-tab" tabindex="0">
+                  <div class="p-3 workspaceAppPanel panelScroll" id="appGitPanel">
+                    <div class="text-secondary small">Select an app to inspect details.</div>
+                  </div>
+                </div>
+
+                <div class="tab-pane fade" id="app-freeze-pane" role="tabpanel"
+                  aria-labelledby="app-freeze-tab" tabindex="0">
+                  <div class="p-3 workspaceAppPanel panelScroll" id="appFreezePanel">
                     <div class="text-secondary small">Select an app to inspect details.</div>
                   </div>
                 </div>

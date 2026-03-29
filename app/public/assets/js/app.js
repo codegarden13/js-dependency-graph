@@ -26,13 +26,17 @@
  * Expected DOM
  * ------------
  * - #status
- * - #appInfoPanel
+ * - #appViewPanel
+ * - #appOverviewPanel
+ * - #appGitPanel
+ * - #appFreezePanel
  * - #codeStructureSvg
  */
 
 "use strict";
 
 import { initcodeStructureChart } from "./d3_codeStructure.js";
+import { rewriteReadmeAssetLinks } from "./readmeLinks.js";
 import {
   getApps,
   getSelectedAppId as getSelectedAppIdState,
@@ -65,9 +69,14 @@ let graphTimeController = null;
 let activeGraphAppId = "";
 let appInfoLoadToken = 0;
 let freezeInFlight = false;
+let screenshotsInFlight = false;
+let screenshotJobPollTimer = 0;
+let activeScreenshotJobId = "";
+let activeScreenshotAppId = "";
 let graphZoomUiBound = false;
 let graphZoomTabsBound = false;
 let latestCsvLoadToken = 0;
+let latestStoredGraphLoadToken = 0;
 let allProjectsLoadToken = 0;
 let crossViewEventsBound = false;
 let graphZoomScale = 1;
@@ -75,6 +84,12 @@ let graphZoomScale = 1;
 const SHELL_TITLE_BASE = "NodeAnalyzer";
 const PORTFOLIO_APP_ACTION_EVENT = "nodeanalyzer:portfolio-app-action";
 const ACTIVE_APP_CHANGED_EVENT = "nodeanalyzer:active-app-changed";
+const APP_VIEW_PANEL_ID = "appViewPanel";
+const APP_INFO_PANEL_IDS = Object.freeze({
+  overview: "appOverviewPanel",
+  git: "appGitPanel",
+  freeze: "appFreezePanel"
+});
 
 /* ======================================================================= */
 /* DOM helpers                                                              */
@@ -189,15 +204,36 @@ function clearAnalyzeStatusUi() {
   setStatusSignal("neutral");
 }
 
+function clearScreenshotJobPollTimer() {
+  if (!screenshotJobPollTimer) return;
+  window.clearTimeout(screenshotJobPollTimer);
+  screenshotJobPollTimer = 0;
+}
+
 function latestFilenameFromOutputFiles(files) {
   const list = Array.isArray(files) ? files : [];
   return String(list[list.length - 1] || "").trim();
 }
 
-async function fetchLatestCsvFilename(appId) {
+async function fetchLatestOutputFilename(appId, { type = "code-metrics", ext = "csv" } = {}) {
   const id = encodeURIComponent(String(appId || ""));
-  const files = await fetchJson(`/api/output-files?appId=${id}&type=code-metrics`);
+  const kind = encodeURIComponent(String(type || "code-metrics"));
+  const suffix = encodeURIComponent(String(ext || "csv"));
+  const files = await fetchJson(`/api/output-files?appId=${id}&type=${kind}&ext=${suffix}`);
   return latestFilenameFromOutputFiles(files);
+}
+
+async function fetchLatestCsvFilename(appId) {
+  return fetchLatestOutputFilename(appId, { type: "code-metrics", ext: "csv" });
+}
+
+async function fetchLatestMetricsFilename(appId) {
+  return fetchLatestOutputFilename(appId, { type: "code-metrics", ext: "json" });
+}
+
+function buildOutputFileUrl(filename = "") {
+  const safe = String(filename || "").trim();
+  return safe ? `/output/${encodeURIComponent(safe)}` : "";
 }
 
 async function loadLatestCsvForApp(appId) {
@@ -224,6 +260,134 @@ async function loadLatestCsvForApp(appId) {
   }
 }
 
+function findConfiguredApp(appId) {
+  const safeAppId = String(appId || "").trim();
+  if (!safeAppId) return null;
+  return getApps().find((app) => String(app?.id || "").trim() === safeAppId) || null;
+}
+
+function buildAppViewEmptyMarkup(message) {
+  return `<div class="workspaceAppFrameEmpty text-secondary small">${esc(message || "Select an app to preview it.")}</div>`;
+}
+
+function normalizePathname(pathname = "/") {
+  const safe = String(pathname || "/").trim() || "/";
+  return safe.length > 1 ? safe.replace(/\/+$/, "") : "/";
+}
+
+function normalizeUrlPort(url) {
+  const explicitPort = Number(url?.port || 0);
+  if (Number.isInteger(explicitPort) && explicitPort > 0) return String(explicitPort);
+  return String(url?.protocol || "").toLowerCase() === "https:" ? "443" : "80";
+}
+
+function normalizeLoopbackHost(hostname = "") {
+  const safeHost = String(hostname || "").trim().toLowerCase();
+  if (safeHost === "localhost" || safeHost === "127.0.0.1" || safeHost === "::1" || safeHost === "[::1]") {
+    return "loopback";
+  }
+  return safeHost;
+}
+
+function isEquivalentHost(currentUrl, targetUrl) {
+  return normalizeLoopbackHost(currentUrl?.hostname) === normalizeLoopbackHost(targetUrl?.hostname);
+}
+
+function isAppViewActive() {
+  const tab = byId("app-view-tab");
+  return Boolean(tab?.classList.contains("active"));
+}
+
+function isSelfAppViewUrl(url) {
+  const safeUrl = String(url || "").trim();
+  if (!safeUrl) return false;
+
+  try {
+    const current = new URL(window.location.href);
+    const target = new URL(safeUrl, current.href);
+
+    return (
+      String(target.protocol || "").toLowerCase() === String(current.protocol || "").toLowerCase() &&
+      normalizeUrlPort(target) === normalizeUrlPort(current) &&
+      isEquivalentHost(current, target) &&
+      normalizePathname(target.pathname) === normalizePathname(current.pathname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function buildAppViewMarkup(app, { force = false } = {}) {
+  const safeUrl = String(app?.url || "").trim();
+  if (!safeUrl) {
+    return buildAppViewEmptyMarkup("This app has no URL configured.");
+  }
+
+  if (isSelfAppViewUrl(safeUrl)) {
+    return buildAppViewEmptyMarkup("NodeAnalyzer itself is not embedded recursively in App view.");
+  }
+
+  if (!force && !isAppViewActive()) {
+    return buildAppViewEmptyMarkup("Open App view to load the selected app preview.");
+  }
+
+  return `
+    <div class="workspaceAppFrameShell">
+      <div class="workspaceAppFrameHeader">
+        <div class="small fw-semibold">${esc(app?.name || app?.id || "App view")}</div>
+        <a class="small" href="${esc(safeUrl)}" target="_blank" rel="noopener noreferrer">${esc(safeUrl)}</a>
+      </div>
+      <iframe
+        class="workspaceAppFrame"
+        src="${esc(safeUrl)}"
+        title="${esc(app?.name || app?.id || "App view")}"
+        loading="lazy"
+        referrerpolicy="no-referrer"
+      ></iframe>
+    </div>
+  `;
+}
+
+function syncAppViewPanel(appId, { force = false } = {}) {
+  const root = byId(APP_VIEW_PANEL_ID);
+  if (!root) return;
+
+  const app = findConfiguredApp(appId);
+  root.innerHTML = app
+    ? buildAppViewMarkup(app, { force })
+    : buildAppViewEmptyMarkup("Select an app to preview it.");
+}
+
+async function loadLatestRenderedGraphForApp(appId) {
+  const safeAppId = String(appId || "").trim();
+  const requestToken = ++latestStoredGraphLoadToken;
+  if (!safeAppId) return false;
+
+  try {
+    const latestMetricsFilename = await fetchLatestMetricsFilename(safeAppId);
+    if (requestToken !== latestStoredGraphLoadToken) return false;
+    if (!latestMetricsFilename) return false;
+
+    const metricsUrl = buildOutputFileUrl(latestMetricsFilename);
+    if (!metricsUrl) return false;
+
+    const metrics = await fetchJson(metricsUrl);
+    if (requestToken !== latestStoredGraphLoadToken) return false;
+    if (getSelectedAppId() !== safeAppId) return false;
+
+    activeGraphAppId = safeAppId;
+    resetSupplementaryGraphViews();
+    renderGraph(metrics);
+    await renderSupplementaryCharts(metrics);
+    updateGraphHeader(metrics);
+    return true;
+  } catch (e) {
+    if (requestToken !== latestStoredGraphLoadToken) return false;
+    console.warn("Stored graph load failed:", e);
+    return false;
+  }
+}
+
 function ensurePanelsExist() {
   return true;
 }
@@ -237,9 +401,8 @@ function getGraphViewTabs() {
 }
 
 function getActiveGraphViewKey() {
-  if (byId("workspace-app-tab")?.classList.contains("active")) return "app";
-  if (byId("graph-projects-tab")?.classList.contains("active")) return "projects";
-  return "main";
+  const activeTab = getGraphViewTabs().find((tab) => tab.classList.contains("active"));
+  return String(activeTab?.dataset?.workspaceView || "graphs").trim() || "graphs";
 }
 
 function getActiveGraphViewLabel() {
@@ -259,11 +422,11 @@ function getGraphToolsAccordion() {
   return maybeById("graphToolsAccordion");
 }
 
-function viewSupportsZoom(viewKey = "main") {
-  return viewKey === "main";
+function viewSupportsZoom(viewKey = "graphs") {
+  return viewKey === "graphs";
 }
 
-function viewSupportsGraphTools(viewKey = "main") {
+function viewSupportsGraphTools(viewKey = "graphs") {
   void viewKey;
   return false;
 }
@@ -366,7 +529,12 @@ function bindGraphZoomUi() {
 
   if (!graphZoomTabsBound) {
     for (const tab of getGraphViewTabs()) {
-      tab.addEventListener("shown.bs.tab", syncGraphZoomUi);
+      tab.addEventListener("shown.bs.tab", () => {
+        syncGraphZoomUi();
+        if (String(tab.id || "") === "app-view-tab") {
+          syncAppViewPanel(getSelectedAppId(), { force: true });
+        }
+      });
     }
     graphZoomTabsBound = true;
   }
@@ -572,6 +740,22 @@ async function fetchJsonOrNullOn404(url, init) {
   return body;
 }
 
+async function postJsonAction(url, body) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body || {})
+  });
+
+  const ctx = buildResponseContext(url, response);
+  const payload = await readResponseBodySafely(response, ctx.isJson);
+
+  if (!response.ok) throw buildHttpError(ctx, payload);
+  assertJsonResponse(ctx);
+
+  return payload;
+}
+
 async function renderAllProjectsOverview() {
   const panel = byId("allProjectsPanel");
   if (!panel) return;
@@ -605,6 +789,20 @@ async function syncPortfolioSelectionUi(appId) {
   }
 
   await renderAllProjectsOverview();
+}
+
+async function updatePortfolioScreenshotStatusUi(appId, status = null) {
+  const safeAppId = normalizeAppId(appId);
+  if (!safeAppId) return;
+
+  try {
+    const mod = await import("./graph_allProjectsView.js");
+    if (typeof mod.setPortfolioScreenshotStatus === "function") {
+      mod.setPortfolioScreenshotStatus("allProjectsPanel", safeAppId, status);
+    }
+  } catch (e) {
+    console.warn("Portfolio screenshot status sync failed:", e);
+  }
 }
 
 function getActiveGraphAppId() {
@@ -658,54 +856,6 @@ function renderAppInfoTable(rows) {
       <table class="table table-sm appInfoTable">
         <tbody>${rows.join("")}</tbody>
       </table>
-    </div>
-  `;
-}
-
-function renderAppInfoSectionPanel(section) {
-  return `
-    <section class="appInfoSection appInfoTabPanel">
-      <div class="appInfoSectionTitle">${esc(section.title)}</div>
-      ${String(section.contentHtml || "")}
-    </section>
-  `;
-}
-
-function renderAppInfoSectionTabs(sections) {
-  const navItems = sections
-    .map((section, index) => {
-      const active = index === 0 ? " active" : "";
-      const selected = index === 0 ? "true" : "false";
-      const shown = index === 0 ? " show active" : "";
-      const tabId = `app-info-${section.id}-tab`;
-      const paneId = `app-info-${section.id}-pane`;
-
-      return {
-        nav: `
-          <li class="nav-item" role="presentation">
-            <button class="nav-link small${active}" id="${tabId}" data-bs-toggle="tab"
-              data-bs-target="#${paneId}" type="button" role="tab" aria-controls="${paneId}"
-              aria-selected="${selected}">
-              ${esc(section.title)}
-            </button>
-          </li>
-        `,
-        pane: `
-          <div class="tab-pane fade${shown}" id="${paneId}" role="tabpanel" aria-labelledby="${tabId}" tabindex="0">
-            ${renderAppInfoSectionPanel(section)}
-          </div>
-        `
-      };
-    });
-
-  return `
-    <div class="appInfoTabs">
-      <ul class="nav nav-tabs appInfoTabsNav" role="tablist">
-        ${navItems.map((item) => item.nav).join("")}
-      </ul>
-      <div class="tab-content appInfoTabsContent">
-        ${navItems.map((item) => item.pane).join("")}
-      </div>
     </div>
   `;
 }
@@ -794,15 +944,69 @@ function buildWorktreeBadges(worktree, gitAvailable) {
   return `<div class="appInfoBadgeRow">${badges.join("")}</div>`;
 }
 
+function getAppInfoRoots() {
+  return Object.values(APP_INFO_PANEL_IDS)
+    .map((id) => byId(id))
+    .filter(Boolean);
+}
+
 function renderAppInfoEmpty(message) {
-  const root = byId("appInfoPanel");
+  const markup = `<div class="text-secondary small">${esc(message)}</div>`;
+  for (const root of getAppInfoRoots()) {
+    root.innerHTML = markup;
+  }
+}
+
+function buildAppInfoHeader(app) {
+  return `
+    <div>
+      <div class="h5 mb-1">${esc(app?.name || app?.id || "App")}</div>
+      <div class="small text-secondary">${esc(app?.id || "")}</div>
+    </div>
+  `;
+}
+
+function renderAppInfoSectionPanel(section, app) {
+  return `
+    <div class="appInfoShell">
+      ${buildAppInfoHeader(app)}
+      <section class="appInfoSection appInfoTabPanel">
+        <div class="appInfoSectionTitle">${esc(section.title)}</div>
+        ${String(section.contentHtml || "")}
+      </section>
+    </div>
+  `;
+}
+
+function renderAppInfoSectionsPanel(sections, app) {
+  return `
+    <div class="appInfoShell">
+      ${buildAppInfoHeader(app)}
+      ${(sections || []).map((section) => `
+        <section class="appInfoSection appInfoTabPanel">
+          <div class="appInfoSectionTitle">${esc(section.title)}</div>
+          ${String(section.contentHtml || "")}
+        </section>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderAppInfoSectionInto(panelId, section, app) {
+  const root = byId(panelId);
   if (!root) return;
-  root.innerHTML = `<div class="text-secondary small">${esc(message)}</div>`;
+  root.innerHTML = renderAppInfoSectionPanel(section, app);
+}
+
+function renderAppInfoSectionsInto(panelId, sections, app) {
+  const root = byId(panelId);
+  if (!root) return;
+  root.innerHTML = renderAppInfoSectionsPanel(sections, app);
 }
 
 function renderAppInfoPanel(data) {
-  const root = byId("appInfoPanel");
-  if (!root) return;
+  const roots = getAppInfoRoots();
+  if (!roots.length) return;
 
   if (!data) {
     renderAppInfoEmpty("Select an app to inspect details.");
@@ -844,11 +1048,6 @@ function renderAppInfoPanel(data) {
       ])
     },
     {
-      id: "commits",
-      title: "Commits",
-      contentHtml: renderCommitsTable(commits, git.available)
-    },
-    {
       id: "freeze",
       title: "Freeze",
       contentHtml: renderAppInfoTable([
@@ -860,15 +1059,15 @@ function renderAppInfoPanel(data) {
     }
   ];
 
-  root.innerHTML = `
-    <div class="appInfoShell">
-      <div>
-        <div class="h5 mb-1">${esc(app.name || app.id || "App")}</div>
-        <div class="small text-secondary">${esc(app.id || "")}</div>
-      </div>
-      ${renderAppInfoSectionTabs(sections)}
-    </div>
-  `;
+  renderAppInfoSectionInto(APP_INFO_PANEL_IDS.overview, sections[0], app);
+  renderAppInfoSectionsInto(APP_INFO_PANEL_IDS.git, [
+    sections[1],
+    {
+      title: "Commits",
+      contentHtml: renderCommitsTable(commits, git.available)
+    }
+  ], app);
+  renderAppInfoSectionInto(APP_INFO_PANEL_IDS.freeze, sections[2], app);
 }
 
 async function fetchAppInfo(appId) {
@@ -1039,71 +1238,12 @@ function sanitizeHtml(rawHtml) {
   return window.DOMPurify?.sanitize ? window.DOMPurify.sanitize(rawHtml) : rawHtml;
 }
 
-function findAppConfig(appId) {
-  const safeAppId = normalizeAppId(appId);
-  if (!safeAppId) return null;
-  return getApps().find((app) => normalizeAppId(app?.id) === safeAppId) || null;
-}
-
-function normalizeProjectBaseUrl(url) {
-  const safeUrl = String(url || "").trim();
-  if (!safeUrl) return "";
-  return safeUrl.endsWith("/") ? safeUrl : `${safeUrl}/`;
-}
-
-function isProjectAssetLink(rawValue) {
-  const safeValue = String(rawValue || "").trim();
-  if (!safeValue) return false;
-  if (safeValue.startsWith("#")) return false;
-  if (safeValue.startsWith("//")) return false;
-  if (/^[a-z][a-z0-9+.-]*:/i.test(safeValue)) return false;
-  return /^\.?\/?assets\//i.test(safeValue);
-}
-
-function resolveProjectAssetUrl(appId, rawValue) {
-  const appUrl = normalizeProjectBaseUrl(findAppConfig(appId)?.url || "");
-  if (!appUrl || !isProjectAssetLink(rawValue)) return rawValue;
-
-  const relPath = String(rawValue || "")
-    .trim()
-    .replace(/^\.\//, "")
-    .replace(/^\/+/, "");
-
-  try {
-    return new URL(relPath, appUrl).toString();
-  } catch {
-    return rawValue;
-  }
-}
-
-function rewriteProjectAssetLinks(rawHtml, appId) {
-  const safeHtml = String(rawHtml || "");
-  if (!safeHtml) return safeHtml;
-
-  const template = document.createElement("template");
-  template.innerHTML = safeHtml;
-
-  for (const element of template.content.querySelectorAll("[href], [src]")) {
-    if (element.hasAttribute("href")) {
-      const href = String(element.getAttribute("href") || "");
-      element.setAttribute("href", resolveProjectAssetUrl(appId, href));
-    }
-
-    if (element.hasAttribute("src")) {
-      const src = String(element.getAttribute("src") || "");
-      element.setAttribute("src", resolveProjectAssetUrl(appId, src));
-    }
-  }
-
-  return template.innerHTML;
-}
-
 function renderReadmeMarkdown(root, data, appId = "") {
   const md = String(data?.markdown || "");
   const rawHtml = markdownToHtml(md);
   const safeHtml = sanitizeHtml(rawHtml);
-  const linkedHtml = rewriteProjectAssetLinks(safeHtml, appId);
   const readmePath = String(data?.readmePath || "").trim();
+  const linkedHtml = rewriteReadmeAssetLinks(safeHtml, appId, readmePath);
 
   setReadmeSummary(readmePath || "README");
 
@@ -1359,6 +1499,138 @@ async function restartApp(appId) {
   setRestartStatus(id, res);
 }
 
+function buildScreenshotTries(appId) {
+  const idEnc = encodeURIComponent(String(appId || ""));
+  const body = { appId: String(appId || "") };
+
+  return [
+    { url: "/screenshots", body },
+    { url: `/apps/${idEnc}/screenshots`, body }
+  ];
+}
+
+async function createScreenshotsApp(appId) {
+  const id = normalizeAppId(appId);
+  if (!id) return null;
+
+  let lastErr = null;
+  for (const t of buildScreenshotTries(id)) {
+    try {
+      return await postJsonAction(t.url, t.body);
+    } catch (error) {
+      lastErr = error;
+    }
+  }
+
+  throw lastErr || new Error("Create screenshots failed (no endpoint responded).");
+}
+
+async function fetchScreenshotJob(jobId) {
+  const safeJobId = encodeURIComponent(String(jobId || "").trim());
+  if (!safeJobId) throw new Error("Missing screenshot job id.");
+  return fetchJson(`/screenshots/jobs/${safeJobId}`);
+}
+
+function formatScreenshotCreatedAt(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "now";
+
+  try {
+    return new Date(raw).toLocaleString("de-DE", {
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  } catch {
+    return raw;
+  }
+}
+
+function buildRunningScreenshotStatus() {
+  return {
+    state: "running",
+    label: "Creating screenshots…",
+    title: "Screenshot creation is running."
+  };
+}
+
+function buildFinishedScreenshotStatus(job) {
+  const createdAt = formatScreenshotCreatedAt(job?.finishedAt || new Date().toISOString());
+  const failedCount = Number(job?.failedCount || 0);
+  const baseLabel = `Screenshots created at ${createdAt}`;
+  const title = failedCount > 0
+    ? `${baseLabel}. ${failedCount} screenshot(s) failed.`
+    : baseLabel;
+
+  return {
+    state: failedCount > 0 ? "done_with_errors" : "done",
+    label: baseLabel,
+    title
+  };
+}
+
+function screenshotJobSuccessMessage(job) {
+  const created = Number(job?.createdCount || 0);
+  const failed = Number(job?.failedCount || 0);
+  const total = Number(job?.totalCount || created + failed);
+  const dir = String(job?.screenshotsDirAbs || "").trim();
+  const summary = failed > 0
+    ? `Created ${created}/${total || created + failed} screenshot(s), ${failed} failed.`
+    : `Created ${created} screenshot(s).`;
+  return dir ? `${summary} ${dir}` : summary;
+}
+
+function finishScreenshotJob(job) {
+  clearScreenshotJobPollTimer();
+  activeScreenshotJobId = "";
+  const finishedAppId = activeScreenshotAppId;
+  activeScreenshotAppId = "";
+  screenshotsInFlight = false;
+
+  if (job?.status === "failed") {
+    updatePortfolioScreenshotStatusUi(finishedAppId, {
+      state: "idle",
+      label: "Create screenshots",
+      title: "Create screenshots"
+    }).catch(() => { });
+    showMessageBox({
+      title: "Create screenshots failed",
+      severity: "error",
+      message: String(job?.errorMessage || job?.message || "Unknown error"),
+      details: job?.errorDetails || job
+    });
+    setStatus("Create screenshots failed.");
+    return;
+  }
+
+  updatePortfolioScreenshotStatusUi(finishedAppId, buildFinishedScreenshotStatus(job)).catch(() => { });
+  setStatus(screenshotJobSuccessMessage(job));
+}
+
+function scheduleScreenshotJobPoll(jobId, delayMs = 800) {
+  clearScreenshotJobPollTimer();
+  screenshotJobPollTimer = window.setTimeout(() => {
+    fetchScreenshotJob(jobId)
+      .then((job) => {
+        if (String(job?.jobId || "") !== activeScreenshotJobId) return;
+
+        if (job?.status === "queued" || job?.status === "running") {
+          scheduleScreenshotJobPoll(jobId, 900);
+          return;
+        }
+
+        finishScreenshotJob(job);
+      })
+      .catch((error) => {
+        screenshotsInFlight = false;
+        activeScreenshotJobId = "";
+        clearScreenshotJobPollTimer();
+        showCreateScreenshotsFailed(error);
+      });
+  }, Math.max(250, Number(delayMs || 0)));
+}
+
 /** Fetch `/apps` and return its `apps` array (throws on HTTP errors). */
 async function fetchAppsOrThrow() {
   const data = await fetchJson("/apps");
@@ -1392,6 +1664,7 @@ function applySelectedApp(appId) {
   renderInfoPanel(null);
   requestDefaultReadmeForApp(nextId);
   clearAnalyzeStatusUi();
+  syncAppViewPanel(nextId);
   loadLatestCsvForApp(nextId).catch((e) => console.warn("Latest CSV load failed:", e));
   loadSelectedAppInfo().catch((e) => console.warn("App info load failed:", e));
 }
@@ -1418,7 +1691,19 @@ function handleOpenAction(url) {
 function handleRestartAction(appId) {
   setStatus("Restarting…");
   restartApp(appId)
-    .then(() => loadSelectedAppInfo().catch(() => { }))
+    .then(() => {
+      if (appId === getSelectedAppId()) {
+        syncAppViewPanel(appId);
+        loadSelectedAppInfo().catch(() => { });
+      }
+
+      window.setTimeout(() => {
+        renderAllProjectsOverview().catch(() => { });
+        if (appId === getSelectedAppId()) {
+          syncAppViewPanel(appId);
+        }
+      }, 1200);
+    })
     .catch(showRestartFailed);
 }
 
@@ -1430,6 +1715,59 @@ function handleAnalyzeAction(appId) {
 function handleFreezeAction(appId) {
   applySelectedApp(appId);
   runFreeze().catch((e) => console.error(e));
+}
+
+function showCreateScreenshotsFailed(error) {
+  clearScreenshotJobPollTimer();
+  const failedAppId = activeScreenshotAppId;
+  activeScreenshotJobId = "";
+  activeScreenshotAppId = "";
+  screenshotsInFlight = false;
+  updatePortfolioScreenshotStatusUi(failedAppId, {
+    state: "idle",
+    label: "Create screenshots",
+    title: "Create screenshots"
+  }).catch(() => { });
+  console.error("Create screenshots failed:", error);
+  showMessageBox({
+    title: "Create screenshots failed",
+    severity: "error",
+    message: String(error?.message || error || "Unknown error"),
+    details: error?.details
+  });
+  setStatus("Create screenshots failed.");
+}
+
+function handleCreateScreenshotsAction(appId) {
+  const id = normalizeAppId(appId);
+  if (!id) return;
+
+  applySelectedApp(id);
+  if (screenshotsInFlight) {
+    setStatus("Create screenshots already running…");
+    return;
+  }
+
+  screenshotsInFlight = true;
+  activeScreenshotAppId = id;
+  setStatus("Creating screenshots…");
+  updatePortfolioScreenshotStatusUi(id, buildRunningScreenshotStatus()).catch(() => { });
+
+  createScreenshotsApp(id)
+    .then((data) => {
+      const job = data?.job || data;
+      activeScreenshotJobId = String(data?.jobId || job?.jobId || "").trim();
+      if (!activeScreenshotJobId) {
+        throw new Error("Screenshot job did not return a job id.");
+      }
+      scheduleScreenshotJobPoll(activeScreenshotJobId, 250);
+    })
+    .catch(showCreateScreenshotsFailed)
+    .finally(() => {
+      if (!activeScreenshotJobId) {
+        screenshotsInFlight = false;
+      }
+    });
 }
 
 function handlePortfolioAppActionEvent(ev) {
@@ -1444,6 +1782,7 @@ function handlePortfolioAppActionEvent(ev) {
     restart: () => handleRestartAction(appId),
     analyze: () => handleAnalyzeAction(appId),
     freeze: () => handleFreezeAction(appId),
+    screenshots: () => handleCreateScreenshotsAction(appId),
   };
 
   handlers[action]?.();
@@ -1462,10 +1801,6 @@ function bindCrossViewEvents() {
   document.addEventListener(ACTIVE_APP_CHANGED_EVENT, handleActiveAppChangedEvent);
 }
 
-function requestInitialAnalysis() {
-  runAnalysis().catch((e) => console.error(e));
-}
-
 /**
  * Lädt die App-Presets vom Backend (`/apps`) und synchronisiert den Shared State.
  *
@@ -1475,7 +1810,7 @@ function requestInitialAnalysis() {
  * 2) In den Shared State schreiben
  * 3) Auswahl festlegen (gemerkte Auswahl oder erstes Preset)
  * 4) App-Zustand und abhängige Panels synchronisieren
- * 5) Optional direkt Analyze starten
+ * 5) Letzten gespeicherten Graph-Stand der Auswahl laden
  */
 async function fetchAndStoreApps() {
   const apps = await fetchAppsOrThrow();
@@ -1488,16 +1823,14 @@ function applyEmptyAppsState() {
   applySelectedApp("");
 }
 
-function applyInitialAppSelection(apps, { autoAnalyze = false } = {}) {
+function applyInitialAppSelection(apps) {
   const current = chooseInitialAppId(apps);
   applySelectedApp(current);
 
-  if (autoAnalyze) {
-    requestInitialAnalysis();
-  }
+  loadLatestRenderedGraphForApp(current).catch((e) => console.warn("Stored graph bootstrap failed:", e));
 }
 
-async function loadApps({ autoAnalyze = false } = {}) {
+async function loadApps() {
   let apps = [];
 
   try {
@@ -1513,7 +1846,7 @@ async function loadApps({ autoAnalyze = false } = {}) {
     return;
   }
 
-  applyInitialAppSelection(apps, { autoAnalyze });
+  applyInitialAppSelection(apps);
 }
 
 /* ======================================================================= */
@@ -1725,12 +2058,19 @@ function buildGraphHeaderText(appId, metrics) {
 function buildWorkspaceHintText(viewKey = getActiveGraphViewKey()) {
   const hasGraphApp = Boolean(getActiveGraphAppId());
   const hasSelectedApp = Boolean(getSelectedAppId());
+  const missingAppText = "Select an app to inspect details.";
 
   switch (String(viewKey || "")) {
-    case "app":
-      return hasSelectedApp ? "Repository details, Git state and freeze history." : "Select an app to inspect details.";
-    case "projects":
+    case "app-view":
+      return hasSelectedApp ? "Live iframe preview for the selected app." : missingAppText;
+    case "portfolio":
       return "Portfolio trends and app-level review priorities.";
+    case "overview":
+      return hasSelectedApp ? "Entry point, URL and project roots for the selected app." : missingAppText;
+    case "git":
+      return hasSelectedApp ? "Repository state, branch tracking and worktree health." : missingAppText;
+    case "freeze":
+      return hasSelectedApp ? "Freeze archive output and latest snapshot metadata." : missingAppText;
     default:
       if (hasGraphApp) return "Three synchronized graph views: structure, MRI and drift.";
       if (hasSelectedApp) return "Run Analyze to inspect the graph.";
@@ -2023,7 +2363,7 @@ async function runFreeze() {
 
     setStatus(zipPath ? `Freeze created: ${zipPath}` : "Freeze created.");
     await loadSelectedAppInfo();
-    activateTabById("workspace-app-tab");
+    activateTabById("app-freeze-tab");
   } catch (e) {
     handleFreezeError(e);
   } finally {
@@ -2098,7 +2438,7 @@ async function runAnalysis() {
  * 1) verify side panels exist
  * 2) initialize static headers
  * 3) start SSE early so live events are available
- * 4) load apps and immediately analyze the default selection
+ * 4) load apps and restore the latest stored graph for the default selection
  */
 function init() {
   ensurePanelsExist();
@@ -2110,7 +2450,8 @@ function init() {
   updateGraphHeader(null);
   startLiveEvents();
   renderAllProjectsOverview().catch((e) => console.warn("Portfolio init failed:", e));
-  loadApps({ autoAnalyze: true });
+  syncAppViewPanel("");
+  loadApps();
 }
 
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);

@@ -19,6 +19,7 @@ import {
 import {
   writeMetricsArtifacts
 } from "../lib/analyze/artifacts.js";
+import { writePuppetierManifest } from "../lib/appScreenshots.js";
 
 
 
@@ -928,6 +929,17 @@ async function activateAnalyzeRun(context, target) {
   });
 }
 
+function writeAnalyzeScreenshotsManifest(context, target, metrics) {
+  return writePuppetierManifest({
+    appId: context.appId,
+    app: context.app,
+    appRootAbs: target.appRootAbs,
+    metrics,
+    generatedAt: context.timestampIso,
+    source: "analyze"
+  });
+}
+
 /**
  * Handle the analyze endpoint.
  *
@@ -959,6 +971,7 @@ async function handleAnalyze(req, res) {
     const context = buildAnalyzeContext(req, appResult.appId, appResult.app);
     const metrics = await buildAnalyzeMetrics(context, targetResult);
     const artifacts = writeMetricsArtifacts(context.appId, context.timestampIso, metrics);
+    writeAnalyzeScreenshotsManifest(context, targetResult, metrics);
 
     await activateAnalyzeRun(context, targetResult);
 

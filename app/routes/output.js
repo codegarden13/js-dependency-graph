@@ -17,7 +17,7 @@ const router = express.Router();
  *   `code-metrics`
  */
 router.get("/output-files", async (req, res) => {
-  const { appId, type = "code-metrics" } = req.query;
+  const { appId, type = "code-metrics", ext = "csv" } = req.query;
 
   if (!appId) {
     return res.status(400).json({ error: "appId required" });
@@ -35,7 +35,7 @@ router.get("/output-files", async (req, res) => {
   }
 
   const result = files
-    .filter((file) => file.startsWith(`${appId}-`) && file.endsWith(`${type}.csv`))
+    .filter((file) => file.startsWith(`${appId}-`) && file.endsWith(`${type}.${String(ext || "csv")}`))
     .sort();
 
   res.json(result);

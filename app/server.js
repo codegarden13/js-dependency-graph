@@ -31,6 +31,7 @@ import freezeRoute from "./routes/freeze.js";   // POST /freeze  → create ZIP 
 import readmeRoute from "./routes/readme.js";   // GET  /readme  → resolve nearest README
 import helpRoute from "./routes/help.js";       // GET  /help    → UI help markdown
 import portfolioRoute from "./routes/portfolio.js";
+import screenshotsRoute from "./routes/screenshots.js";
 
 // Output routes expose generated analysis artifacts
 import outputRoutes from "./routes/output.js";  // /api/output-files etc.
@@ -143,6 +144,7 @@ app.use(sseRouter);
 
 app.use(appsRoute);
 app.use(freezeRoute);
+app.use(screenshotsRoute);
 app.use(readmeRoute);
 app.use(helpRoute);
 app.use(analyzeRoute);

@@ -100,23 +100,23 @@ function metricsBaseName(appId, timestampIso) {
   return `${buildArtifactPrefix(appId, timestampIso)}-code-metrics`;
 }
 
-function codeMetricsCsvSuffix() {
-  return "-code-metrics.csv";
+function codeMetricsSuffix(ext = "csv") {
+  return `-code-metrics.${String(ext || "csv").trim() || "csv"}`;
 }
 
-function csvArtifactFromFilename(filename) {
-  const csvFilename = String(filename || "").trim();
+function artifactFromFilename(filename) {
+  const safeFilename = String(filename || "").trim();
   return {
-    csvFilename,
-    csvPath: path.join(outputDirAbs(), csvFilename),
-    csvUrl: `/output/${csvFilename}`
+    filename: safeFilename,
+    path: path.join(outputDirAbs(), safeFilename),
+    url: `/output/${safeFilename}`
   };
 }
 
-function listCodeMetricsCsvFilenames(appId) {
+function listCodeMetricsFilenames(appId, ext = "csv") {
   const safeAppId = normalizeId(appId) || "app";
   const prefix = `${safeAppId}-`;
-  const suffix = codeMetricsCsvSuffix();
+  const suffix = codeMetricsSuffix(ext);
 
   try {
     return fs.readdirSync(outputDirAbs())
@@ -128,14 +128,48 @@ function listCodeMetricsCsvFilenames(appId) {
 }
 
 function latestCodeMetricsCsvArtifact(appId) {
-  const filenames = listCodeMetricsCsvFilenames(appId);
+  const filenames = listCodeMetricsFilenames(appId, "csv");
   const latestFilename = String(filenames[filenames.length - 1] || "").trim();
-  return latestFilename ? csvArtifactFromFilename(latestFilename) : null;
+  if (!latestFilename) return null;
+
+  const artifact = artifactFromFilename(latestFilename);
+  return {
+    csvFilename: artifact.filename,
+    csvPath: artifact.path,
+    csvUrl: artifact.url
+  };
+}
+
+export function latestCodeMetricsJsonArtifact(appId) {
+  const filenames = listCodeMetricsFilenames(appId, "json");
+  const latestFilename = String(filenames[filenames.length - 1] || "").trim();
+  if (!latestFilename) return null;
+
+  const artifact = artifactFromFilename(latestFilename);
+  return {
+    jsonFilename: artifact.filename,
+    jsonPath: artifact.path,
+    jsonUrl: artifact.url
+  };
 }
 
 function readFileUtf8OrNull(filePath) {
   try {
     return fs.readFileSync(filePath, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+export function readLatestCodeMetricsJson(appId) {
+  const artifact = latestCodeMetricsJsonArtifact(appId);
+  if (!artifact?.jsonPath) return null;
+
+  const content = readFileUtf8OrNull(artifact.jsonPath);
+  if (!content) return null;
+
+  try {
+    return JSON.parse(content);
   } catch {
     return null;
   }

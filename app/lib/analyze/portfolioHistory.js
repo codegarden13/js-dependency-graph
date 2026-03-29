@@ -1,30 +1,33 @@
 import fs from "node:fs";
 import path from "node:path";
+import fetch from "node-fetch";
 
 import { OUTPUT_DIR } from "../projectPaths.js";
 import { normalizeId } from "../stringUtils.js";
 
 const CODE_FILE_EXT_RE = /\.(js|mjs|cjs|ts|tsx|jsx)$/i;
 const CODE_METRICS_SUFFIX = "-code-metrics.csv";
+const APP_STATUS_TIMEOUT_MS = 1200;
 const MODULE_PRIORITY_WEIGHTS = Object.freeze({
   hotness: 0.5,
   ccDensity: 0.3,
   codeLines: 0.2
 });
 
-export function buildPortfolioHistory(apps) {
+export async function buildPortfolioHistory(apps) {
   const configuredApps = Array.isArray(apps) ? apps : [];
   const historyFilesByAppId = groupHistoryFilesByAppId(listAllHistoryFiles());
+  const availabilityByAppId = await probeAppAvailability(configuredApps);
 
   return {
     generatedAt: new Date().toISOString(),
     apps: configuredApps
-      .map((app) => buildConfiguredAppHistory(app, historyFilesByAppId))
+      .map((app) => buildConfiguredAppHistory(app, historyFilesByAppId, availabilityByAppId))
       .filter(Boolean)
   };
 }
 
-function buildConfiguredAppHistory(app, historyFilesByAppId) {
+function buildConfiguredAppHistory(app, historyFilesByAppId, availabilityByAppId) {
   const appId = normalizeId(app?.id);
   if (!appId) return null;
 
@@ -39,7 +42,87 @@ function buildConfiguredAppHistory(app, historyFilesByAppId) {
     runCount: history.length,
     latest,
     history,
-    latestModules
+    latestModules,
+    availability: availabilityByAppId?.get(appId) || buildOfflineAvailability()
+  };
+}
+
+async function probeAppAvailability(apps) {
+  const entries = await Promise.all(
+    (apps || []).map(async (app) => {
+      const appId = normalizeId(app?.id);
+      if (!appId) return null;
+      return [appId, await probeSingleAppAvailability(app?.url)];
+    })
+  );
+
+  return new Map(entries.filter(Boolean));
+}
+
+async function probeSingleAppAvailability(url) {
+  const safeUrl = String(url || "").trim();
+  if (!safeUrl) return buildOfflineAvailability();
+
+  try {
+    const headResponse = await fetchAppUrl(safeUrl, "HEAD");
+    if (isReachableResponse(headResponse)) {
+      return buildReachableAvailability();
+    }
+
+    if (!shouldRetryAvailabilityProbe(headResponse?.status)) {
+      return buildOfflineAvailability();
+    }
+
+    const getResponse = await fetchAppUrl(safeUrl, "GET");
+    return isReachableResponse(getResponse)
+      ? buildReachableAvailability()
+      : buildOfflineAvailability();
+  } catch {
+    return buildOfflineAvailability();
+  }
+}
+
+async function fetchAppUrl(url, method) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), APP_STATUS_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, {
+      method,
+      redirect: "manual",
+      signal: controller.signal
+    });
+
+    response.body?.destroy?.();
+    return response;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function isReachableResponse(response) {
+  const status = Number(response?.status || 0);
+  return status >= 200 && status < 500;
+}
+
+function shouldRetryAvailabilityProbe(status) {
+  const code = Number(status || 0);
+  return code === 405 || code === 501;
+}
+
+function buildReachableAvailability() {
+  return {
+    reachable: true,
+    state: "online",
+    label: "reachable"
+  };
+}
+
+function buildOfflineAvailability() {
+  return {
+    reachable: false,
+    state: "offline",
+    label: "offline"
   };
 }
 
@@ -318,7 +401,8 @@ function createHistoryAggregate() {
     hotnessTotal: 0,
     hotnessRows: 0,
     ccTotal: 0,
-    ccRows: 0
+    ccRows: 0,
+    lastTouchedEpoch: null
   };
 }
 
@@ -347,6 +431,14 @@ function mergeHistoryRow(aggregate, row) {
     aggregate.ccTotal += ccValue;
     aggregate.ccRows++;
   }
+
+  const lastTouchedEpoch = readIsoDateEpoch(row?.lastTouchedAt);
+  if (lastTouchedEpoch !== null && (
+    aggregate.lastTouchedEpoch === null ||
+    lastTouchedEpoch > aggregate.lastTouchedEpoch
+  )) {
+    aggregate.lastTouchedEpoch = lastTouchedEpoch;
+  }
 }
 
 function finalizeHistoryAggregate(aggregate) {
@@ -354,6 +446,7 @@ function finalizeHistoryAggregate(aggregate) {
   const commentLinesTotal = aggregate.commentRows > 0 ? aggregate.commentLinesTotal : null;
   const hotnessTotal = aggregate.hotnessRows > 0 ? aggregate.hotnessTotal : null;
   const ccTotal = aggregate.ccRows > 0 ? aggregate.ccTotal : null;
+  const lastTouchedEpoch = aggregate.lastTouchedEpoch;
   const totalAnnotatedLines = codeLinesTotal + (commentLinesTotal ?? 0);
 
   return {
@@ -367,6 +460,8 @@ function finalizeHistoryAggregate(aggregate) {
     hotnessCoverage: coverageRatio(aggregate.hotnessRows, aggregate.fileCount),
     ccTotal,
     ccCoverage: coverageRatio(aggregate.ccRows, aggregate.fileCount),
+    lastTouchedEpoch,
+    lastTouchedAt: lastTouchedEpoch !== null ? new Date(lastTouchedEpoch).toISOString() : "",
     commentRatio: commentLinesTotal !== null && totalAnnotatedLines > 0
       ? commentLinesTotal / totalAnnotatedLines
       : null,
@@ -410,6 +505,15 @@ function normalizeHistoryFileName(value) {
 
 function readLocValue(row) {
   return readNumberOrZero(row?.loc ?? row?.lines);
+}
+
+function readIsoDateEpoch(value) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+
+  const date = new Date(text);
+  const epoch = date.getTime();
+  return Number.isFinite(epoch) ? epoch : null;
 }
 
 function readCodeLinesValue(row) {

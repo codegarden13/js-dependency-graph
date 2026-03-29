@@ -13,10 +13,10 @@ function safeLoadAppsConfig() {
   }
 }
 
-router.get("/projects-overview", (req, res) => {
+router.get("/projects-overview", async (req, res) => {
   try {
     const apps = safeLoadAppsConfig();
-    return res.json(buildPortfolioHistory(apps));
+    return res.json(await buildPortfolioHistory(apps));
   } catch (err) {
     return res.status(500).json({
       error: {

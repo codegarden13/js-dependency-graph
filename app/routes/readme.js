@@ -22,6 +22,7 @@ import fs from "node:fs";
 const router = express.Router();
 
 router.get("/readme", handleReadmeRequest);
+router.get("/readme-asset", handleReadmeAssetRequest);
 
 function sendText(res, status, message) {
   return res.status(status).send(String(message || ""));
@@ -50,6 +51,18 @@ function requireNormalizedFileRel(req, res) {
   const raw = requireQueryParam(req, res, "file", "file query param missing");
   if (!raw) return "";
   return normalizeRel(raw);
+}
+
+function requireNormalizedReadmeRel(req, res) {
+  const raw = requireQueryParam(req, res, "readmePath", "readmePath query param missing");
+  if (!raw) return "";
+  return normalizeRel(raw);
+}
+
+function requireNormalizedAssetRel(req, res) {
+  const raw = requireQueryParam(req, res, "asset", "asset query param missing");
+  if (!raw) return "";
+  return normalizeAssetRel(raw);
 }
 
 function tryReplyWithAnalyzerHelp(res, fileRel) {
@@ -117,6 +130,35 @@ function handleReadmeRequest(req, res) {
   });
 }
 
+function handleReadmeAssetRequest(req, res) {
+  return withRouteErrors(res, () => {
+    const appRootAbs = requireAppRootAbs(req, res);
+    if (!appRootAbs) return;
+
+    const readmeRel = requireNormalizedReadmeRel(req, res);
+    if (!readmeRel) return;
+
+    const assetRel = requireNormalizedAssetRel(req, res);
+    if (!assetRel) return;
+
+    const assetAbs = resolveReadmeAssetAbs(appRootAbs, readmeRel, assetRel);
+    if (!assetAbs) {
+      sendText(res, 400, "asset outside target app rootDir");
+      return;
+    }
+
+    if (!requireExistingPath(res, assetAbs)) return;
+
+    const st = fs.statSync(assetAbs);
+    if (!st.isFile()) {
+      sendText(res, 404, "asset not found");
+      return;
+    }
+
+    res.sendFile(assetAbs);
+  });
+}
+
 export default router;
 
 /* ====================================================================== */
@@ -142,6 +184,12 @@ function normalizeRel(p) {
   return String(p || "")
     .replace(/\\/g, "/")
     .replace(/^\/+/, "")
+    .trim();
+}
+
+function normalizeAssetRel(p) {
+  return String(p || "")
+    .replace(/\\/g, "/")
     .trim();
 }
 
@@ -202,6 +250,33 @@ function tryServeAnalyzerHelp(fileRel) {
 function resolveInsideRootOrNull(rootAbs, relPosix) {
   const abs = path.resolve(rootAbs, relPosix);
   return isInsideRoot(abs, rootAbs) ? abs : "";
+}
+
+function isAppRootRelativeAssetPath(assetRel) {
+  const safeAssetRel = String(assetRel || "").trim();
+  if (!safeAssetRel) return false;
+
+  if (safeAssetRel.startsWith("/")) return true;
+  return safeAssetRel.replace(/^\.\//, "").startsWith("assets/");
+}
+
+function resolveReadmeAssetAbs(appRootAbs, readmeRel, assetRel) {
+  const readmeAbs = resolveInsideRootOrNull(appRootAbs, readmeRel);
+  if (!readmeAbs) return "";
+
+  const safeAssetRel = normalizeAssetRel(assetRel);
+  if (!safeAssetRel) return "";
+
+  const baseAbs = isAppRootRelativeAssetPath(safeAssetRel)
+    ? appRootAbs
+    : path.dirname(readmeAbs);
+
+  const relativeAsset = safeAssetRel
+    .replace(/^\/+/, "")
+    .replace(/^\.\//, "");
+
+  const assetAbs = path.resolve(baseAbs, relativeAsset);
+  return isInsideRoot(assetAbs, appRootAbs) ? assetAbs : "";
 }
 
 function findNearestReadme({ appRootAbs, fileAbs }) {

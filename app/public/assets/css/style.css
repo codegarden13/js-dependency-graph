@@ -450,6 +450,58 @@ body {
   gap: 10px;
 }
 
+.portfolioSortBar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.portfolioSortMeta {
+  display: grid;
+  gap: 2px;
+}
+
+.portfolioSortButtons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.portfolioSortButton {
+  border-radius: 999px;
+}
+
+.portfolioView {
+  --portfolio-accent: #b7791f;
+  --portfolio-accent-dark: #8a5b12;
+  --portfolio-accent-soft: rgba(183, 121, 31, 0.18);
+  --portfolio-active-bg: #f3f4f6;
+}
+
+.portfolioView .btn-primary {
+  --bs-btn-bg: var(--portfolio-accent);
+  --bs-btn-border-color: var(--portfolio-accent);
+  --bs-btn-hover-bg: var(--portfolio-accent-dark);
+  --bs-btn-hover-border-color: var(--portfolio-accent-dark);
+  --bs-btn-active-bg: var(--portfolio-accent-dark);
+  --bs-btn-active-border-color: var(--portfolio-accent-dark);
+  --bs-btn-disabled-bg: var(--portfolio-accent);
+  --bs-btn-disabled-border-color: var(--portfolio-accent);
+}
+
+.portfolioView .btn-outline-primary {
+  --bs-btn-color: var(--portfolio-accent-dark);
+  --bs-btn-border-color: rgba(183, 121, 31, 0.6);
+  --bs-btn-hover-bg: var(--portfolio-accent);
+  --bs-btn-hover-border-color: var(--portfolio-accent);
+  --bs-btn-hover-color: #fff;
+  --bs-btn-active-bg: var(--portfolio-accent-dark);
+  --bs-btn-active-border-color: var(--portfolio-accent-dark);
+  --bs-btn-active-color: #fff;
+}
+
 .portfolioProjectCard {
   border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 14px;
@@ -458,8 +510,8 @@ body {
 }
 
 .portfolioProjectCard.is-active-app {
-  border-color: rgba(234, 179, 8, 0.45);
-  background: rgba(254, 249, 195, 0.92);
+  border-color: rgba(107, 114, 128, 0.28);
+  background: var(--portfolio-active-bg);
 }
 
 .portfolioProjectCard.tone-stable {
@@ -476,7 +528,13 @@ body {
 
 .portfolioProjectShell {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(184px, 216px);
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+.portfolioProjectTopRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
   align-items: start;
 }
@@ -491,22 +549,36 @@ body {
   text-align: left;
 }
 
+.portfolioProjectToggleHeader {
+  grid-template-columns: minmax(240px, 0.9fr) minmax(540px, 1.4fr);
+  align-items: start;
+  gap: 12px;
+}
+
+.portfolioProjectToggleMeta {
+  min-width: 0;
+}
+
+.portfolioProjectMetricsRail {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
 .portfolioProjectToggle:hover .portfolioMetricTile,
 .portfolioProjectToggle:focus-visible .portfolioMetricTile {
-  border-color: rgba(13, 110, 253, 0.22);
+  border-color: rgba(183, 121, 31, 0.32);
 }
 
 .portfolioProjectToggle:focus-visible {
-  outline: 2px solid rgba(13, 110, 253, 0.35);
+  outline: 2px solid rgba(183, 121, 31, 0.38);
   outline-offset: 4px;
   border-radius: 12px;
 }
 
 .portfolioProjectHeader {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px;
+  display: grid;
+  gap: 6px;
 }
 
 .portfolioProjectName {
@@ -521,18 +593,55 @@ body {
   flex-wrap: wrap;
 }
 
+.portfolioAppStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.portfolioAppStatus.is-online {
+  color: #166534;
+  background: rgba(22, 163, 74, 0.12);
+}
+
+.portfolioAppStatus.is-offline {
+  color: #b91c1c;
+  background: rgba(220, 38, 38, 0.1);
+}
+
+.portfolioAppStatusDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex: 0 0 8px;
+}
+
+.portfolioAppStatus.is-online .portfolioAppStatusDot {
+  background: #16a34a;
+}
+
+.portfolioAppStatus.is-offline .portfolioAppStatusDot {
+  background: #dc2626;
+}
+
+.portfolioProjectToolbar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .portfolioProjectScore {
   display: inline-flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 4px;
-}
-
-.portfolioProjectHeaderAside {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 8px;
 }
 
 .portfolioScoreBadge {
@@ -548,23 +657,22 @@ body {
 
 .portfolioProjectActions {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(2, max-content);
+  justify-content: end;
   gap: 6px;
-  align-content: flex-start;
-  justify-items: stretch;
-  max-width: 216px;
-  width: 100%;
 }
 
 .portfolioProjectActions .btn {
-  width: 100%;
-  white-space: nowrap;
+  min-width: 108px;
+  white-space: normal;
+  text-align: center;
 }
 
 .portfolioMetricGrid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
+  width: 100%;
 }
 
 .portfolioMetricGridInteractive {
@@ -574,7 +682,6 @@ body {
 .portfolioProjectQueue {
   display: grid;
   gap: 10px;
-  margin-top: 12px;
 }
 
 .portfolioProjectAccordionBody {
@@ -583,6 +690,13 @@ body {
   margin-top: 12px;
   padding-top: 12px;
   border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.portfolioProjectDetailsGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(320px, 1.05fr);
+  gap: 12px;
+  align-items: start;
 }
 
 .portfolioProjectQueueHeader {
@@ -669,6 +783,10 @@ body {
   stroke: #92400e;
 }
 
+.portfolioSparkline.tone-change path {
+  stroke: #475569;
+}
+
 .portfolioSparklineEmpty,
 .portfolioMetricNote {
   font-size: 11px;
@@ -684,20 +802,43 @@ body {
   }
 
   .portfolioProjectShell {
+    gap: 10px;
+  }
+
+  .portfolioProjectTopRow {
     grid-template-columns: 1fr;
   }
 
-  .portfolioProjectHeader {
-    flex-direction: column;
-    align-items: stretch;
+  .portfolioProjectToggleHeader {
+    grid-template-columns: 1fr;
   }
 
-  .portfolioProjectHeaderAside {
+  .portfolioProjectDetailsGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .portfolioSortBar {
     align-items: flex-start;
   }
 
+  .portfolioProjectHeader {
+    gap: 8px;
+  }
+
+  .portfolioProjectToolbar {
+    justify-content: flex-start;
+  }
+
+  .portfolioProjectMetricsRail {
+    justify-content: flex-start;
+  }
+
   .portfolioProjectActions {
-    max-width: none;
+    justify-content: start;
+  }
+
+  .workspaceAppFrame {
+    min-height: 56vh;
   }
 
   .graphLegendToolbar {
@@ -772,6 +913,37 @@ body {
   overflow: auto;
 }
 
+.workspaceAppFrameShell {
+  display: grid;
+  gap: 12px;
+  min-height: 520px;
+}
+
+.workspaceAppFrameHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.workspaceAppFrame {
+  width: 100%;
+  min-height: 68vh;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.workspaceAppFrameEmpty {
+  display: grid;
+  place-items: center;
+  min-height: 520px;
+  border: 1px dashed rgba(0, 0, 0, 0.14);
+  border-radius: 12px;
+  background: rgba(248, 249, 250, 0.7);
+}
+
 @media (max-width: 1199px) {
   .graphsPanelGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -803,14 +975,6 @@ body {
 .appInfoShell {
   display: grid;
   gap: 16px;
-}
-
-.appInfoTabsNav {
-  gap: 4px;
-}
-
-.appInfoTabsContent {
-  padding-top: 12px;
 }
 
 .appInfoTabPanel {

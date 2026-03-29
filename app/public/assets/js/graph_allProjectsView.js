@@ -1,15 +1,41 @@
 "use strict";
 
 import { getSelectedAppId } from "./uiState.js";
+import { rewriteReadmeAssetLinks } from "./readmeLinks.js";
 
 const SCORE_WEIGHTS = Object.freeze({
   hotness: 0.45,
   cc: 0.35,
   volatility: 0.20
 });
+const PORTFOLIO_SORT_OPTIONS = Object.freeze({
+  codeLines: {
+    label: "Code lines",
+    readValue: (app) => Number(app?.latestCodeLines || 0)
+  },
+  commentLines: {
+    label: "Comment lines",
+    readValue: (app) => Number(app?.latestCommentLines || 0)
+  },
+  hotness: {
+    label: "Hotness",
+    readValue: (app) => Number(app?.latestHotness || 0)
+  },
+  cc: {
+    label: "CC",
+    readValue: (app) => Number(app?.latestCc || 0)
+  },
+  lastChange: {
+    label: "Last change",
+    readValue: (app) => Number(app?.latestLastTouchedEpoch || 0)
+  }
+});
+const DEFAULT_PORTFOLIO_SORT_KEY = "criticality";
+const DEFAULT_PORTFOLIO_SORT_DIRECTION = "desc";
 const PORTFOLIO_APP_ACTION_EVENT = "nodeanalyzer:portfolio-app-action";
 const PROJECT_REVIEW_LIMIT = 6;
 let latestPortfolioState = null;
+const screenshotStatusByAppId = new Map();
 const projectReadmeCache = new Map();
 const projectReadmePending = new Map();
 
@@ -37,6 +63,36 @@ export function syncPortfolioSelection(elementId, appId) {
   return renderPortfolioProjectList(root, nextState);
 }
 
+export function setPortfolioScreenshotStatus(elementId, appId, status = null) {
+  const root = document.getElementById(String(elementId || ""));
+  const safeAppId = String(appId || "").trim();
+  if (!safeAppId) return false;
+
+  if (status) {
+    screenshotStatusByAppId.set(safeAppId, {
+      state: String(status?.state || "idle"),
+      label: String(status?.label || "").trim(),
+      title: String(status?.title || "").trim()
+    });
+  } else {
+    screenshotStatusByAppId.delete(safeAppId);
+  }
+
+  if (!root || !latestPortfolioState?.apps?.length) return false;
+
+  const nextState = {
+    ...latestPortfolioState,
+    apps: latestPortfolioState.apps.map((app) =>
+      String(app?.appId || "").trim() === safeAppId
+        ? { ...app, screenshotStatus: status ? screenshotStatusByAppId.get(safeAppId) || null : null }
+        : app
+    )
+  };
+
+  latestPortfolioState = nextState;
+  return renderPortfolioProjectList(root, nextState);
+}
+
 async function fetchJson(url) {
   const response = await fetch(url, {
     headers: { accept: "application/json" }
@@ -54,15 +110,20 @@ function decoratePortfolioPayload(payload) {
   const baseApps = Array.isArray(payload?.apps) ? payload.apps : [];
   const decoratedApps = baseApps.map(decorateAppMetrics);
   const maxima = collectPortfolioMaxima(decoratedApps);
-
-  const apps = decoratedApps
-    .map((app) => attachCriticality(app, maxima))
-    .sort((a, b) => b.criticality.score - a.criticality.score);
+  const sortKey = normalizePortfolioSortKey(latestPortfolioState?.sortKey);
+  const sortDirection = normalizePortfolioSortDirection(latestPortfolioState?.sortDirection);
+  const apps = sortPortfolioApps(
+    decoratedApps.map((app) => attachCriticality(app, maxima)),
+    sortKey,
+    sortDirection
+  );
 
   return {
     generatedAt: String(payload?.generatedAt || ""),
     apps,
     selectedAppId: readSelectedAppId(),
+    sortKey,
+    sortDirection,
     totalRuns: apps.reduce((sum, app) => sum + Number(app?.runCount || 0), 0)
   };
 }
@@ -75,15 +136,20 @@ function decorateAppMetrics(app) {
   const history = Array.isArray(app?.history) ? app.history : [];
   const latest = app?.latest || null;
   const latestCodeLines = Number(latest?.codeLinesTotal ?? latest?.locTotal ?? 0) || 0;
+  const latestCommentLines = Number(latest?.commentLinesTotal || 0) || 0;
   const latestHotness = Number(latest?.hotnessDensity ?? latest?.hotnessTotal ?? 0) || 0;
   const latestCc = Number(latest?.ccDensity ?? latest?.ccTotal ?? 0) || 0;
+  const latestLastTouchedEpoch = readTimestampValue(latest?.lastTouchedEpoch ?? latest?.lastTouchedAt);
 
   return {
     ...app,
     latest,
     latestCodeLines,
+    latestCommentLines,
     latestHotness,
     latestCc,
+    latestLastTouchedEpoch,
+    screenshotStatus: screenshotStatusByAppId.get(String(app?.appId || "").trim()) || null,
     locVolatility: computeRelativeVolatility(history, (run) => run?.codeLinesTotal ?? run?.locTotal),
     hotnessDelta: computeLatestDelta(history, (run) => run?.hotnessDensity ?? run?.hotnessTotal),
     ccDelta: computeLatestDelta(history, (run) => run?.ccDensity ?? run?.ccTotal)
@@ -147,6 +213,66 @@ function criticalityTone(score) {
   return "stable";
 }
 
+function normalizePortfolioSortKey(sortKey) {
+  const safeKey = String(sortKey || "").trim();
+  if (!safeKey) return DEFAULT_PORTFOLIO_SORT_KEY;
+  if (safeKey === DEFAULT_PORTFOLIO_SORT_KEY) return safeKey;
+  return Object.prototype.hasOwnProperty.call(PORTFOLIO_SORT_OPTIONS, safeKey)
+    ? safeKey
+    : DEFAULT_PORTFOLIO_SORT_KEY;
+}
+
+function normalizePortfolioSortDirection(direction) {
+  return String(direction || "").trim().toLowerCase() === "asc"
+    ? "asc"
+    : DEFAULT_PORTFOLIO_SORT_DIRECTION;
+}
+
+function compareNumbers(leftValue, rightValue, direction) {
+  const left = Number(leftValue || 0);
+  const right = Number(rightValue || 0);
+  if (left === right) return 0;
+  const factor = direction === "asc" ? 1 : -1;
+  return left > right ? factor : -factor;
+}
+
+function compareNames(leftApp, rightApp) {
+  const left = String(leftApp?.name || leftApp?.appId || "");
+  const right = String(rightApp?.name || rightApp?.appId || "");
+  return left.localeCompare(right);
+}
+
+function readPortfolioSortValue(app, sortKey) {
+  if (sortKey === DEFAULT_PORTFOLIO_SORT_KEY) {
+    return Number(app?.criticality?.score || 0);
+  }
+
+  return PORTFOLIO_SORT_OPTIONS[sortKey]?.readValue(app) ?? 0;
+}
+
+function sortPortfolioApps(apps, sortKey, sortDirection) {
+  const safeSortKey = normalizePortfolioSortKey(sortKey);
+  const safeDirection = normalizePortfolioSortDirection(sortDirection);
+
+  return [...(apps || [])].sort((leftApp, rightApp) => {
+    const primary = compareNumbers(
+      readPortfolioSortValue(leftApp, safeSortKey),
+      readPortfolioSortValue(rightApp, safeSortKey),
+      safeDirection
+    );
+    if (primary) return primary;
+
+    const fallback = compareNumbers(
+      Number(leftApp?.criticality?.score || 0),
+      Number(rightApp?.criticality?.score || 0),
+      "desc"
+    );
+    if (fallback) return fallback;
+
+    return compareNames(leftApp, rightApp);
+  });
+}
+
 function computeRelativeVolatility(history, readValue) {
   const series = compactSeries(history, readValue);
   if (series.length < 2) return 0;
@@ -202,6 +328,13 @@ function renderPortfolioProjectList(root, state) {
   return true;
 }
 
+function renderPortfolioSortBar(root, state) {
+  const container = root.querySelector("[data-role='portfolio-sort-bar']");
+  if (!container) return false;
+  container.innerHTML = buildPortfolioSortMarkup(state);
+  return true;
+}
+
 function buildPortfolioMarkup(state) {
   return `
     <div class="portfolioView">
@@ -226,6 +359,10 @@ function buildPortfolioMarkup(state) {
         </section>
       </div>
 
+      <section class="portfolioSortBar" data-role="portfolio-sort-bar">
+        ${buildPortfolioSortMarkup(state)}
+      </section>
+
       <section class="portfolioProjectsList"></section>
     </div>
   `;
@@ -235,6 +372,66 @@ function buildProjectRowsMarkup(state) {
   return (state.apps || [])
     .map((app) => buildProjectRowMarkup(app, state.selectedAppId))
     .join("");
+}
+
+function buildPortfolioSortMarkup(state) {
+  return `
+    <div class="portfolioSortMeta">
+      <div class="small fw-semibold">Sort apps by latest value</div>
+      <div class="small text-secondary">Current: ${escapeHtml(currentPortfolioSortLabel(state))}</div>
+    </div>
+    <div class="portfolioSortButtons" role="group" aria-label="Sort portfolio apps">
+      ${Object.entries(PORTFOLIO_SORT_OPTIONS).map(([sortKey, option]) => buildPortfolioSortButtonMarkup(sortKey, option, state)).join("")}
+    </div>
+  `;
+}
+
+function currentPortfolioSortLabel(state) {
+  const sortKey = normalizePortfolioSortKey(state?.sortKey);
+  const sortDirection = normalizePortfolioSortDirection(state?.sortDirection);
+  if (sortKey === DEFAULT_PORTFOLIO_SORT_KEY) return "Criticality";
+
+  const label = PORTFOLIO_SORT_OPTIONS[sortKey]?.label || "Criticality";
+  return `${label} ${sortDirection === "asc" ? "↑" : "↓"}`;
+}
+
+function buildPortfolioSortButtonMarkup(sortKey, option, state) {
+  const isActive = normalizePortfolioSortKey(state?.sortKey) === sortKey;
+  const direction = normalizePortfolioSortDirection(state?.sortDirection);
+  const directionMarker = isActive ? ` ${direction === "asc" ? "↑" : "↓"}` : "";
+
+  return `
+    <button
+      type="button"
+      class="btn btn-sm ${isActive ? "btn-primary" : "btn-outline-secondary"} portfolioSortButton"
+      data-portfolio-sort="${escapeHtml(sortKey)}"
+      aria-pressed="${isActive ? "true" : "false"}"
+    >
+      ${escapeHtml(option.label)}${directionMarker}
+    </button>
+  `;
+}
+
+function applyPortfolioSort(root, sortKey) {
+  if (!latestPortfolioState?.apps?.length) return;
+
+  const safeSortKey = normalizePortfolioSortKey(sortKey);
+  const currentSortKey = normalizePortfolioSortKey(latestPortfolioState.sortKey);
+  const currentDirection = normalizePortfolioSortDirection(latestPortfolioState.sortDirection);
+  const nextDirection = currentSortKey === safeSortKey && currentDirection === "desc"
+    ? "asc"
+    : "desc";
+
+  const nextState = {
+    ...latestPortfolioState,
+    sortKey: safeSortKey,
+    sortDirection: nextDirection,
+    apps: sortPortfolioApps(latestPortfolioState.apps, safeSortKey, nextDirection)
+  };
+
+  latestPortfolioState = nextState;
+  renderPortfolioSortBar(root, nextState);
+  renderPortfolioProjectList(root, nextState);
 }
 
 function buildRiskLegendMarkup() {
@@ -353,23 +550,31 @@ function formatIntegerMetric(value) {
 function buildProjectRowMarkup(app, selectedAppId) {
   const isActiveApp = String(app?.appId || "") === String(selectedAppId || "");
   const detailsId = buildProjectDetailsId(app?.appId);
+  const toggleAttrs = [
+    `data-portfolio-toggle-details="true"`,
+    `data-app-id="${escapeHtml(app.appId)}"`,
+    `aria-expanded="${isActiveApp ? "true" : "false"}"`,
+    `aria-controls="${escapeHtml(detailsId)}"`
+  ].join(" ");
 
   return `
     <article class="portfolioProjectCard tone-${app.criticality?.tone || "stable"}${isActiveApp ? " is-active-app" : ""}">
       <div class="portfolioProjectShell">
-        <button
-          type="button"
-          class="portfolioProjectToggle"
-          data-portfolio-toggle-details="true"
-          data-app-id="${escapeHtml(app.appId)}"
-          aria-expanded="${isActiveApp ? "true" : "false"}"
-          aria-controls="${escapeHtml(detailsId)}"
-        >
-          ${buildProjectToggleContentMarkup(app)}
-        </button>
+        <div class="portfolioProjectTopRow">
+          <button
+            type="button"
+            class="portfolioProjectToggle portfolioProjectToggleHeader"
+            ${toggleAttrs}
+          >
+            ${buildProjectToggleContentMarkup(app)}
+          </button>
 
-        <div class="portfolioProjectActions" aria-label="Project actions">
-          ${buildProjectActionButtonsMarkup(app)}
+          <div class="portfolioProjectToolbar">
+            ${buildProjectScoreMarkup(app)}
+            <div class="portfolioProjectActions" aria-label="Project actions">
+              ${buildProjectActionButtonsMarkup(app)}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -384,12 +589,13 @@ function buildProjectDetailsId(appId) {
 
 function buildProjectToggleContentMarkup(app) {
   return `
-    <div class="portfolioProjectHeader">
+    <div class="portfolioProjectToggleMeta">
       ${buildProjectHeaderMetaMarkup(app)}
-      <div class="portfolioProjectHeaderAside">${buildProjectScoreMarkup(app)}</div>
     </div>
-    <div class="portfolioMetricGrid portfolioMetricGridInteractive">
-      ${buildProjectMetricTilesMarkup(app)}
+    <div class="portfolioProjectMetricsRail">
+      <div class="portfolioMetricGrid portfolioMetricGridInteractive">
+        ${buildProjectMetricTilesMarkup(app)}
+      </div>
     </div>
   `;
 }
@@ -398,14 +604,28 @@ function buildProjectHeaderMetaMarkup(app) {
   const latest = app.latest || {};
 
   return `
-    <div>
+    <div class="portfolioProjectHeader">
       <div class="portfolioProjectNameRow">
         <div class="portfolioProjectName">${escapeHtml(app.name || app.appId)}</div>
+        ${buildProjectAvailabilityMarkup(app)}
       </div>
       <div class="small text-secondary">
         ${escapeHtml(app.appId)} · ${app.runCount} runs · latest ${formatTimestamp(latest.timestamp)}
       </div>
     </div>
+  `;
+}
+
+function buildProjectAvailabilityMarkup(app) {
+  const isReachable = app?.availability?.reachable === true || String(app?.availability?.state || "") === "online";
+  const tone = isReachable ? "online" : "offline";
+  const label = String(app?.availability?.label || (isReachable ? "reachable" : "offline"));
+
+  return `
+    <span class="portfolioAppStatus is-${escapeHtml(tone)}">
+      <span class="portfolioAppStatusDot" aria-hidden="true"></span>
+      <span class="portfolioAppStatusLabel">${escapeHtml(label)}</span>
+    </span>
   `;
 }
 
@@ -422,35 +642,49 @@ function buildProjectScoreMarkup(app) {
 
 function buildProjectMetricTilesMarkup(app) {
   const latest = app.latest || {};
+  const metricTiles = [
+    {
+      label: "Code lines",
+      value: latest.codeLinesTotal ?? latest.locTotal,
+      sparklineSvg: buildSparklineSvg(app.history, (run) => run?.codeLinesTotal ?? run?.locTotal, "code")
+    },
+    {
+      label: "Comment lines",
+      value: latest.commentLinesTotal,
+      sparklineSvg: buildSparklineSvg(app.history, (run) => run?.commentLinesTotal, "comment"),
+      note: coverageLabel(latest.commentCoverage)
+    },
+    {
+      label: "Hotness",
+      value: latest.hotnessDensity ?? latest.hotnessTotal,
+      sparklineSvg: buildSparklineSvg(app.history, (run) => run?.hotnessDensity ?? run?.hotnessTotal, "hotness"),
+      note: coverageLabel(latest.hotnessCoverage)
+    },
+    {
+      label: "CC",
+      value: latest.ccDensity ?? latest.ccTotal,
+      sparklineSvg: buildSparklineSvg(app.history, (run) => run?.ccDensity ?? run?.ccTotal, "cc"),
+      note: coverageLabel(latest.ccCoverage)
+    },
+    {
+      label: "Last change",
+      value: latest.lastTouchedEpoch ?? latest.lastTouchedAt,
+      displayValue: formatTimestamp(latest.lastTouchedAt || latest.lastTouchedEpoch),
+      sparklineSvg: buildSparklineSvg(
+        app.history,
+        (run) => run?.lastTouchedEpoch ?? run?.lastTouchedAt,
+        "change"
+      )
+    }
+  ];
 
-  return [
-    buildMetricTile(
-      "Code lines",
-      latest.codeLinesTotal ?? latest.locTotal,
-      buildSparklineSvg(app.history, (run) => run?.codeLinesTotal ?? run?.locTotal, "code")
-    ),
-    buildMetricTile(
-      "Comment lines",
-      latest.commentLinesTotal,
-      buildSparklineSvg(app.history, (run) => run?.commentLinesTotal, "comment"),
-      coverageLabel(latest.commentCoverage)
-    ),
-    buildMetricTile(
-      "Hotness",
-      latest.hotnessDensity ?? latest.hotnessTotal,
-      buildSparklineSvg(app.history, (run) => run?.hotnessDensity ?? run?.hotnessTotal, "hotness"),
-      coverageLabel(latest.hotnessCoverage)
-    ),
-    buildMetricTile(
-      "CC",
-      latest.ccDensity ?? latest.ccTotal,
-      buildSparklineSvg(app.history, (run) => run?.ccDensity ?? run?.ccTotal, "cc"),
-      coverageLabel(latest.ccCoverage)
-    )
-  ].join("");
+  return metricTiles.map((tile) => buildMetricTile(tile)).join("");
 }
 
 function buildProjectActionButtonsMarkup(app) {
+  const restartLabel = app?.availability?.reachable ? "Restart" : "Start";
+  const screenshotButton = buildScreenshotsButtonMarkup(app);
+
   return `
     <button
       type="button"
@@ -458,7 +692,7 @@ function buildProjectActionButtonsMarkup(app) {
       data-portfolio-action="restart"
       data-app-id="${escapeHtml(app.appId)}"
     >
-      Restart
+      ${escapeHtml(restartLabel)}
     </button>
     <button
       type="button"
@@ -485,6 +719,28 @@ function buildProjectActionButtonsMarkup(app) {
     >
       Freeze
     </button>
+    ${screenshotButton}
+  `;
+}
+
+function buildScreenshotsButtonMarkup(app) {
+  const status = app?.screenshotStatus || null;
+  const state = String(status?.state || "").trim();
+  const label = status?.label || "Create screenshots";
+  const title = status?.title || label;
+  const disabledAttr = state === "running" ? "disabled" : "";
+
+  return `
+    <button
+      type="button"
+      class="btn btn-sm btn-outline-primary"
+      data-portfolio-action="screenshots"
+      data-app-id="${escapeHtml(app.appId)}"
+      title="${escapeHtml(title)}"
+      ${disabledAttr}
+    >
+      ${escapeHtml(label)}
+    </button>
   `;
 }
 
@@ -496,8 +752,10 @@ function buildProjectDetailsMarkup(app, detailsId) {
       role="region"
       aria-label="Project details for ${escapeHtml(app.appId)}"
     >
-      ${buildProjectReviewQueueMarkup(app)}
-      ${buildProjectReadmeMarkup(app)}
+      <div class="portfolioProjectDetailsGrid">
+        ${buildProjectReviewQueueMarkup(app)}
+        ${buildProjectReadmeMarkup(app)}
+      </div>
     </section>
   `;
 }
@@ -518,12 +776,14 @@ function buildProjectReadmeMarkup(app) {
   `;
 }
 
-function buildMetricTile(label, value, sparklineSvg, note = "") {
+function buildMetricTile({ label, value, sparklineSvg, note = "", displayValue = "" }) {
+  const renderedValue = String(displayValue || "").trim() || formatMetricValue(value);
+
   return `
     <section class="portfolioMetricTile">
       <div class="portfolioMetricHeader">
         <span class="small fw-semibold">${escapeHtml(label)}</span>
-        <span class="small text-secondary">${escapeHtml(formatMetricValue(value))}</span>
+        <span class="small text-secondary">${escapeHtml(renderedValue)}</span>
       </div>
       ${sparklineSvg}
       ${note ? `<div class="portfolioMetricNote">${escapeHtml(note)}</div>` : ""}
@@ -545,65 +805,6 @@ function sanitizeHtml(rawHtml) {
   return window.DOMPurify?.sanitize ? window.DOMPurify.sanitize(rawHtml) : rawHtml;
 }
 
-function findPortfolioApp(appId) {
-  const safeAppId = String(appId || "").trim();
-  if (!safeAppId) return null;
-  return latestPortfolioState?.apps?.find((app) => String(app?.appId || "").trim() === safeAppId) || null;
-}
-
-function normalizeProjectBaseUrl(url) {
-  const safeUrl = String(url || "").trim();
-  if (!safeUrl) return "";
-  return safeUrl.endsWith("/") ? safeUrl : `${safeUrl}/`;
-}
-
-function isProjectAssetLink(rawValue) {
-  const safeValue = String(rawValue || "").trim();
-  if (!safeValue) return false;
-  if (safeValue.startsWith("#")) return false;
-  if (safeValue.startsWith("//")) return false;
-  if (/^[a-z][a-z0-9+.-]*:/i.test(safeValue)) return false;
-  return /^\.?\/?assets\//i.test(safeValue);
-}
-
-function resolveProjectAssetUrl(appId, rawValue) {
-  const appUrl = normalizeProjectBaseUrl(findPortfolioApp(appId)?.url || "");
-  if (!appUrl || !isProjectAssetLink(rawValue)) return rawValue;
-
-  const relPath = String(rawValue || "")
-    .trim()
-    .replace(/^\.\//, "")
-    .replace(/^\/+/, "");
-
-  try {
-    return new URL(relPath, appUrl).toString();
-  } catch {
-    return rawValue;
-  }
-}
-
-function rewriteProjectAssetLinks(rawHtml, appId) {
-  const safeHtml = String(rawHtml || "");
-  if (!safeHtml) return safeHtml;
-
-  const template = document.createElement("template");
-  template.innerHTML = safeHtml;
-
-  for (const element of template.content.querySelectorAll("[href], [src]")) {
-    if (element.hasAttribute("href")) {
-      const href = String(element.getAttribute("href") || "");
-      element.setAttribute("href", resolveProjectAssetUrl(appId, href));
-    }
-
-    if (element.hasAttribute("src")) {
-      const src = String(element.getAttribute("src") || "");
-      element.setAttribute("src", resolveProjectAssetUrl(appId, src));
-    }
-  }
-
-  return template.innerHTML;
-}
-
 function buildProjectReadmeBodyMarkup(appId) {
   const entry = projectReadmeCache.get(String(appId || ""));
 
@@ -621,7 +822,7 @@ function buildProjectReadmeBodyMarkup(appId) {
 
   const rawHtml = markdownToHtml(entry.markdown || "");
   const safeHtml = sanitizeHtml(rawHtml);
-  const linkedHtml = rewriteProjectAssetLinks(safeHtml, appId);
+  const linkedHtml = rewriteReadmeAssetLinks(safeHtml, appId, entry.readmePath || "");
 
   return `
     <div class="small text-secondary mb-2">${escapeHtml(entry.readmePath || "")}</div>
@@ -708,7 +909,7 @@ function coverageLabel(coverage) {
 
 function buildSparklineSvg(history, readValue, tone) {
   const values = (history || []).map((run) => {
-    const value = Number(readValue(run));
+    const value = readTimestampValue(readValue(run));
     return Number.isFinite(value) ? value : null;
   });
 
@@ -838,8 +1039,13 @@ function ensurePortfolioInteractionsBound(root) {
   Object.defineProperty(root, "__portfolioInteractionsBound", { value: true });
 
   root.addEventListener("click", (event) => {
-    const target = event?.target?.closest?.("[data-portfolio-action], [data-action='create-review-note'], [data-portfolio-toggle-details]");
+    const target = event?.target?.closest?.("[data-portfolio-action], [data-action='create-review-note'], [data-portfolio-toggle-details], [data-portfolio-sort]");
     if (!target || !root.contains(target)) return;
+
+    if (target.dataset.portfolioSort) {
+      applyPortfolioSort(root, String(target.dataset.portfolioSort || ""));
+      return;
+    }
 
     if (target.dataset.portfolioToggleDetails === "true") {
       toggleProjectDetails(root, String(target.dataset.appId || ""));
@@ -952,6 +1158,21 @@ function round(value) {
   return Math.round(value * 10) / 10;
 }
 
+function readTimestampValue(value) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : NaN;
+  }
+
+  const text = String(value || "").trim();
+  if (!text) return NaN;
+
+  const numeric = Number(text);
+  if (Number.isFinite(numeric)) return numeric;
+
+  const epoch = new Date(text).getTime();
+  return Number.isFinite(epoch) ? epoch : NaN;
+}
+
 function formatMetricValue(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return "n/a";
@@ -965,8 +1186,10 @@ function formatMetricValue(value) {
 }
 
 function formatTimestamp(value) {
-  const date = new Date(String(value || ""));
-  if (!Number.isFinite(date.getTime())) return "n/a";
+  const epoch = readTimestampValue(value);
+  if (!Number.isFinite(epoch)) return "n/a";
+
+  const date = new Date(epoch);
   return date.toLocaleString("de-DE", {
     day: "2-digit",
     month: "2-digit",
