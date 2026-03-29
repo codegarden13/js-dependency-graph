@@ -1,8 +1,16 @@
 "use strict";
 
 import { installSvgViewZoom } from "./svgViewZoom.js";
+import {
+  computeEdgeColor,
+  computeEdgeWidth,
+  computeNodeColor,
+  computeNodeStroke,
+  computeNodeStrokeWidth,
+} from "./codeGraph/render.encoders.js";
 
 const CODE_FILE_EXT_RE = /\.(js|mjs|cjs|ts|tsx|jsx)$/i;
+const MRI_COMPLEXITY_REFERENCE = 25;
 
 function coerceNumber(value, fallback = 0) {
   const n = Number(value);
@@ -22,6 +30,16 @@ function basename(value) {
   if (!file) return "(unknown)";
   const parts = file.split("/");
   return parts[parts.length - 1] || file;
+}
+
+function clamp01(value) {
+  return Math.max(0, Math.min(1, Number(value) || 0));
+}
+
+function normalizeScore(value, reference) {
+  const safeValue = Math.max(0, Number(value) || 0);
+  const safeReference = Math.max(1, Number(reference) || 0);
+  return clamp01(Math.log1p(safeValue) / Math.log1p(safeReference));
 }
 
 function hasCoordinateSpread(nodes) {
@@ -90,6 +108,8 @@ function buildGraph(rows) {
     };
   });
 
+  decorateMriNodes(nodes);
+
   const nodeMap = new Map(nodes.map((node) => [node.id, node]));
 
   const links = rows
@@ -107,6 +127,20 @@ function buildGraph(rows) {
   }
 
   return { nodes, links };
+}
+
+function decorateMriNodes(nodes) {
+  const complexityReference = Math.max(
+    MRI_COMPLEXITY_REFERENCE,
+    d3.max(nodes || [], (node) => coerceNumber(node?.complexity, 0)) || 0
+  );
+
+  for (const node of nodes || []) {
+    node.group = "code";
+    node.kind = "file";
+    node.type = "file";
+    node._complexityScore = normalizeScore(node.complexity, complexityReference);
+  }
 }
 
 function positionNodes(graph, width, height) {
@@ -228,11 +262,6 @@ function sizeScale(nodes) {
     .range([5, 30]);
 }
 
-function hotspotScale(nodes) {
-  return d3.scaleSequential(d3.interpolateYlOrRd)
-    .domain([0, d3.max(nodes, (d) => d.hotspotScore) || 1]);
-}
-
 function fanOutScale(nodes) {
   return d3.scaleLinear()
     .domain([0, d3.max(nodes, (d) => d.fanOut || 0) || 1])
@@ -245,6 +274,13 @@ function haloScale(nodes) {
     .range([0, 15]);
 }
 
+function normalizedMetricScale(nodes, readValue) {
+  return d3.scaleLinear()
+    .domain([0, d3.max(nodes, (item) => Number(readValue(item) || 0)) || 1])
+    .range([0, 1])
+    .clamp(true);
+}
+
 function importanceScore(node) {
   return (
     node.hotspotScore * 5
@@ -252,6 +288,45 @@ function importanceScore(node) {
     + node.complexity * 1.5
     + node.lines * 0.03
   );
+}
+
+function buildMriVisualEncodings(graph) {
+  const size = sizeScale(graph.nodes);
+  const haloRadius = haloScale(graph.nodes);
+  const hotspotStrength = normalizedMetricScale(graph.nodes, (node) => node.hotspotScore);
+  const changeStrength = normalizedMetricScale(graph.nodes, (node) => node.changeFreq);
+  const fanOutWidth = fanOutScale(graph.nodes);
+
+  const defaultEdgeColor = computeEdgeColor({});
+  const defaultNodeStroke = computeNodeStroke({});
+  const changedAccent = computeNodeStroke({ _changed: true });
+
+  function nodeFill(node) {
+    const base = computeNodeColor(node);
+    const emphasis = hotspotStrength(node.hotspotScore) * 0.55;
+    return d3.interpolateRgb(base, changedAccent)(emphasis);
+  }
+
+  function nodeStrokeWidth(node) {
+    return Math.max(computeNodeStrokeWidth(node), fanOutWidth(node.fanOut || 0));
+  }
+
+  function haloOpacity(node) {
+    return 0.05 + (changeStrength(node.changeFreq) * 0.23);
+  }
+
+  return {
+    linkColor: defaultEdgeColor,
+    linkWidth: (link) => computeEdgeWidth(link),
+    haloColor: changedAccent,
+    nodeRadius: (node) => size(node.lines),
+    haloRadius: (node) => size(node.lines) + haloRadius(node.changeFreq),
+    haloOpacity,
+    nodeFill,
+    nodeStroke: defaultNodeStroke,
+    nodeStrokeWidth,
+    leaderLineColor: defaultEdgeColor,
+  };
 }
 
 function renderGraph(svg, graph, width, height, file) {
@@ -265,10 +340,7 @@ function renderGraph(svg, graph, width, height, file) {
   const layoutName = layoutInfo.layoutName || "unknown";
   const layerLabels = layoutInfo.layerLabels || [];
 
-  const size = sizeScale(graph.nodes);
-  const hotspotColor = hotspotScale(graph.nodes);
-  const strokeWidth = fanOutScale(graph.nodes);
-  const halo = haloScale(graph.nodes);
+  const visuals = buildMriVisualEncodings(graph);
   const topLabelNodes = graph.nodes
     .slice()
     .sort((a, b) => d3.descending(importanceScore(a), importanceScore(b)))
@@ -281,9 +353,6 @@ function renderGraph(svg, graph, width, height, file) {
   // left side of the SVG.
   // Change STAR_ANGLE_DEG to rotate the star rays.
   // -------------------------------------------------
-  const centerX = width / 2;
-  const centerY = height / 2;
-
   const STAR_ANGLE_DEG = 150; // <-- adjust this to rotate the star direction
   const STAR_ANGLE = (STAR_ANGLE_DEG * Math.PI) / 180;
 
@@ -372,8 +441,8 @@ function renderGraph(svg, graph, width, height, file) {
   }
 
   gLinks
-    .attr("stroke", "#94a3b8")
-    .attr("stroke-opacity", 0.3)
+    .attr("stroke", visuals.linkColor)
+    .attr("stroke-opacity", 1)
     .selectAll("line")
     .data(graph.links)
     .enter()
@@ -382,7 +451,7 @@ function renderGraph(svg, graph, width, height, file) {
     .attr("y1", (d) => d.source.y)
     .attr("x2", (d) => d.target.x)
     .attr("y2", (d) => d.target.y)
-    .attr("stroke-width", (d) => Math.sqrt(d.value));
+    .attr("stroke-width", (d) => visuals.linkWidth(d));
 
   gHalos
     .selectAll("circle")
@@ -392,10 +461,10 @@ function renderGraph(svg, graph, width, height, file) {
     .attr("class", "halo")
     .attr("cx", (d) => d.x)
     .attr("cy", (d) => d.y)
-    .attr("r", (d) => size(d.lines) + halo(d.changeFreq))
+    .attr("r", (d) => visuals.haloRadius(d))
     .attr("fill", "none")
-    .attr("stroke", "#ef4444")
-    .attr("stroke-opacity", 0.15)
+    .attr("stroke", visuals.haloColor)
+    .attr("stroke-opacity", (d) => visuals.haloOpacity(d))
     .attr("stroke-width", 8);
 
   const node = gNodes
@@ -405,10 +474,10 @@ function renderGraph(svg, graph, width, height, file) {
     .append("circle")
     .attr("cx", (d) => d.x)
     .attr("cy", (d) => d.y)
-    .attr("r", (d) => size(d.lines))
-    .attr("fill", (d) => hotspotColor(d.hotspotScore))
-    .attr("stroke", "#1f2937")
-    .attr("stroke-width", (d) => strokeWidth(d.fanOut || 0));
+    .attr("r", (d) => visuals.nodeRadius(d))
+    .attr("fill", (d) => visuals.nodeFill(d))
+    .attr("stroke", visuals.nodeStroke)
+    .attr("stroke-width", (d) => visuals.nodeStrokeWidth(d));
 
   node.append("title").text((d) => [
     d.file,
@@ -420,7 +489,7 @@ function renderGraph(svg, graph, width, height, file) {
   ].join("\n"));
 
   gLeaderLines
-    .attr("stroke", "rgba(31, 41, 55, 0.35)")
+    .attr("stroke", visuals.leaderLineColor)
     .attr("stroke-width", 1)
     .selectAll("line")
     .data(radialLabels)
