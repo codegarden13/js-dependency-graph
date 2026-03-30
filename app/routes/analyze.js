@@ -1,13 +1,13 @@
 import express from "express";
 import fs from "fs";
 import crypto from "crypto";
-import { spawnSync } from "node:child_process";
 
 import { activateAnalysis } from "../lib/liveChangeFeed.js";
 import {
   resolveAppRootAbs,
   resolveEntryAbs
 } from "../lib/appsRegistry.js";
+import { hasGitRepo, runGitOrThrow } from "../lib/gitShell.js";
 import { clamp01 } from "../lib/numberUtils.js";
 import {
   resolveConfiguredApp,
@@ -176,23 +176,6 @@ function safeIsoDateFromEpochSeconds(epochSeconds) {
 }
 
 /**
- * Check whether the project root is inside a Git repository.
- *
- * @param {string} projectRootAbs
- *   Absolute project root path.
- * @returns {boolean}
- *   `true` when Git metadata is available.
- */
-function hasGitRepo(projectRootAbs) {
-  const probe = spawnSync("git", ["rev-parse", "--show-toplevel"], {
-    cwd: projectRootAbs,
-    encoding: "utf8"
-  });
-
-  return probe.status === 0;
-}
-
-/**
  * Build the Git command used to collect per-file change frequency data.
  *
  * @returns {string[]}
@@ -220,18 +203,10 @@ function gitLogFileStatsCommand() {
  *   Thrown when the Git command fails.
  */
 function runGitFileStatsLog(projectRootAbs) {
-  const res = spawnSync("git", gitLogFileStatsCommand(), {
-    cwd: projectRootAbs,
-    encoding: "utf8",
-    maxBuffer: 16 * 1024 * 1024
+  return runGitOrThrow(projectRootAbs, gitLogFileStatsCommand(), {
+    maxBuffer: 16 * 1024 * 1024,
+    fallbackMessage: "git log failed"
   });
-
-  if (res.status !== 0) {
-    const stderr = String(res.stderr || res.stdout || "git log failed").trim();
-    throw new Error(stderr || "git log failed");
-  }
-
-  return String(res.stdout || "");
 }
 
 /**
@@ -754,7 +729,7 @@ function resolveAndValidateEntryAbs(appRootAbs, app) {
     kind: "unsupported",
     payload: {
       reason: "missing-entry",
-      message: "Cannot resolve entry file. Provide 'entry' in apps.json (relative to rootDir).",
+      message: "Cannot resolve entry file automatically. Add a conventional server/main file or configure 'entry' explicitly if needed.",
       details: app
     }
   };

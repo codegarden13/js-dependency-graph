@@ -1,53 +1,42 @@
 import fs from "node:fs";
-import { spawnSync } from "node:child_process";
+import path from "node:path";
 
 import { normalizeFsPath } from "./fsPaths.js";
 import { findLatestProjectFreeze } from "./analyze/projectFreeze.js";
+import { readGitValue, runGit } from "./gitShell.js";
 
-const DEFAULT_GIT_MAX_BUFFER = 8 * 1024 * 1024;
 const COMMIT_HISTORY_MAX_BUFFER = 64 * 1024 * 1024;
 const GIT_FIELD_SEPARATOR = "\x1f";
 const GIT_RECORD_SEPARATOR = "\x1e";
-
-function runGit(projectRootAbs, args, { maxBuffer = DEFAULT_GIT_MAX_BUFFER } = {}) {
-  const res = spawnSync("git", args, {
-    cwd: projectRootAbs,
-    encoding: "utf8",
-    maxBuffer
-  });
-
-  if (res.error) {
-    return {
-      ok: false,
-      stdout: String(res.stdout || ""),
-      stderr: String(res.error.message || "")
-    };
-  }
-
-  if (res.status !== 0) {
-    return {
-      ok: false,
-      stdout: String(res.stdout || ""),
-      stderr: String(res.stderr || res.stdout || "").trim()
-    };
-  }
-
-  return {
-    ok: true,
-    stdout: String(res.stdout || ""),
-    stderr: String(res.stderr || "")
-  };
-}
-
-function readGitValue(projectRootAbs, args) {
-  const res = runGit(projectRootAbs, args);
-  if (!res.ok) return "";
-  return String(res.stdout || "").trim();
-}
+const GIT_TIMELINE_MARKER = "@@@TIMELINE@@@";
+const CODE_HISTORY_EXTS = new Set([".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"]);
 
 function countNullSeparated(stdout) {
   if (!stdout) return 0;
   return String(stdout).split("\0").filter(Boolean).length;
+}
+
+function readGitHeadRecord(projectRootAbs) {
+  const res = runGit(projectRootAbs, [
+    "log",
+    "-1",
+    "--date=iso-strict",
+    `--format=%H${GIT_FIELD_SEPARATOR}%h${GIT_FIELD_SEPARATOR}%cI`
+  ]);
+
+  if (!res.ok) return null;
+
+  const [fullSha = "", shortSha = "", committedAt = ""] = String(res.stdout || "")
+    .trim()
+    .split(GIT_FIELD_SEPARATOR);
+
+  if (!fullSha) return null;
+
+  return {
+    fullSha: String(fullSha || "").trim(),
+    shortSha: String(shortSha || "").trim(),
+    committedAt: String(committedAt || "").trim()
+  };
 }
 
 function readGitTrackedFileCount(projectRootAbs) {
@@ -177,6 +166,94 @@ function readCommitHistory(projectRootAbs) {
   return parseCommitHistory(res.stdout);
 }
 
+function normalizeNumstatPath(rawPath) {
+  let text = String(rawPath || "").trim();
+  if (!text) return "";
+
+  text = text.replace(/\{([^{}]*?) => ([^{}]*?)\}/g, "$2");
+  if (text.includes("=>")) {
+    text = text.split("=>").pop() || text;
+  }
+
+  return String(text || "").trim().replace(/^"+|"+$/g, "");
+}
+
+function isCodeHistoryPath(filePath) {
+  const ext = String(path.extname(normalizeNumstatPath(filePath) || "")).toLowerCase();
+  return CODE_HISTORY_EXTS.has(ext);
+}
+
+function buildCommitTimelineRecord(fields, codeLines) {
+  const [
+    fullSha = "",
+    shortSha = "",
+    committedAt = "",
+    subject = ""
+  ] = fields;
+
+  if (!fullSha) return null;
+
+  return {
+    fullSha: String(fullSha || "").trim(),
+    shortSha: String(shortSha || "").trim(),
+    committedAt: String(committedAt || "").trim(),
+    subject: String(subject || "").trim(),
+    codeLines: Math.max(0, Number(codeLines || 0))
+  };
+}
+
+function parseCommitCodeLineHistory(stdout) {
+  const lines = String(stdout || "").split(/\r?\n/);
+  const history = [];
+  let current = null;
+  let codeLines = 0;
+
+  for (const rawLine of lines) {
+    const line = String(rawLine || "");
+    if (!line.trim()) continue;
+
+    if (line.startsWith(GIT_TIMELINE_MARKER)) {
+      if (current) history.push(current);
+
+      const fields = line.slice(GIT_TIMELINE_MARKER.length).split(GIT_FIELD_SEPARATOR);
+      current = buildCommitTimelineRecord(fields, codeLines);
+      continue;
+    }
+
+    if (!current) continue;
+
+    const [addedRaw = "", deletedRaw = "", rawPath = ""] = line.split("\t");
+    const added = Number(addedRaw);
+    const deleted = Number(deletedRaw);
+    if (!Number.isFinite(added) || !Number.isFinite(deleted)) continue;
+    if (!isCodeHistoryPath(rawPath)) continue;
+
+    codeLines = Math.max(0, codeLines + added - deleted);
+    current.codeLines = codeLines;
+  }
+
+  if (current) history.push(current);
+  return history.reverse();
+}
+
+function readCommitCodeLineHistory(projectRootAbs) {
+  const res = runGit(
+    projectRootAbs,
+    [
+      "log",
+      "--reverse",
+      "--first-parent",
+      "--date=iso-strict",
+      "--numstat",
+      `--format=${GIT_TIMELINE_MARKER}%H${GIT_FIELD_SEPARATOR}%h${GIT_FIELD_SEPARATOR}%cI${GIT_FIELD_SEPARATOR}%s`
+    ],
+    { maxBuffer: COMMIT_HISTORY_MAX_BUFFER }
+  );
+
+  if (!res.ok) return [];
+  return parseCommitCodeLineHistory(res.stdout);
+}
+
 function collectGitInfo(projectRootAbs) {
   const repoRootAbs = readGitValue(projectRootAbs, ["rev-parse", "--show-toplevel"]);
   if (!repoRootAbs) {
@@ -189,14 +266,16 @@ function collectGitInfo(projectRootAbs) {
     readGitValue(projectRootAbs, ["status", "--short", "--branch"])
   );
 
-  const fullSha = readGitValue(projectRootAbs, ["rev-parse", "HEAD"]);
-  const shortSha = readGitValue(projectRootAbs, ["rev-parse", "--short", "HEAD"]);
+  const headRecord = readGitHeadRecord(projectRootAbs);
+  const fullSha = String(headRecord?.fullSha || readGitValue(projectRootAbs, ["rev-parse", "HEAD"]));
+  const shortSha = String(headRecord?.shortSha || readGitValue(projectRootAbs, ["rev-parse", "--short", "HEAD"]));
   const branch =
     status.branch || readGitValue(projectRootAbs, ["rev-parse", "--abbrev-ref", "HEAD"]);
   const commitCount = toIntegerOrZero(readGitValue(projectRootAbs, ["rev-list", "--count", "HEAD"]));
   const trackedFileCount = readGitTrackedFileCount(projectRootAbs);
   const remoteOriginUrl = readGitValue(projectRootAbs, ["remote", "get-url", "origin"]);
   const commits = readCommitHistory(projectRootAbs);
+  const codeLineHistory = readCommitCodeLineHistory(projectRootAbs);
   const lastCommit = commits[0] || null;
 
   return {
@@ -209,7 +288,8 @@ function collectGitInfo(projectRootAbs) {
     remoteOriginUrl: remoteOriginUrl || "",
     head: {
       fullSha,
-      shortSha
+      shortSha,
+      committedAt: String(headRecord?.committedAt || "")
     },
     commitCount,
     trackedFileCount,
@@ -220,8 +300,27 @@ function collectGitInfo(projectRootAbs) {
       untrackedCount: status.untrackedCount || 0,
       conflictedCount: status.conflictedCount || 0
     },
+    codeLineHistory,
     lastCommit,
     commits
+  };
+}
+
+export function collectGitHeadInfo(projectRootAbs) {
+  const repoRootAbs = readGitValue(projectRootAbs, ["rev-parse", "--show-toplevel"]);
+  if (!repoRootAbs) {
+    return {
+      available: false,
+      repoRootAbs: "",
+      head: null
+    };
+  }
+
+  const head = readGitHeadRecord(projectRootAbs);
+  return {
+    available: Boolean(head?.fullSha),
+    repoRootAbs: normalizeFsPath(repoRootAbs),
+    head: head || null
   };
 }
 

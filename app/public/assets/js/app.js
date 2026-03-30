@@ -44,6 +44,17 @@ import {
   setApps,
   setSelectedAppId as setSelectedAppIdState,
 } from "./uiState.js";
+import {
+  buildVersionedUrl,
+  escapeHtml as esc,
+  fetchJson,
+  formatBytes,
+  formatInteger,
+  formatIsoDate,
+  markdownToHtml,
+  sanitizeHtml,
+  toDisplayText
+} from "./browserShared.js";
 
 
 
@@ -78,6 +89,7 @@ let graphZoomTabsBound = false;
 let latestCsvLoadToken = 0;
 let latestStoredGraphLoadToken = 0;
 let allProjectsLoadToken = 0;
+let appViewScreenshotsLoadToken = 0;
 let crossViewEventsBound = false;
 let graphZoomScale = 1;
 
@@ -90,6 +102,9 @@ const APP_INFO_PANEL_IDS = Object.freeze({
   git: "appGitPanel",
   freeze: "appFreezePanel"
 });
+const APP_GIT_HISTORY_CHART_ID = "graphGitHistorySvg";
+const GRAPH_GIT_HISTORY_META_ID = "graphGitHistoryMeta";
+const GRAPH_GIT_HISTORY_EMPTY_ID = "graphGitHistoryEmpty";
 
 /* ======================================================================= */
 /* DOM helpers                                                              */
@@ -106,13 +121,6 @@ function byId(id) {
 
 function maybeById(id) {
   return /** @type {HTMLElement|null} */ (document.getElementById(String(id || "")));
-}
-
-/** Minimal HTML escape for safe innerHTML templating. */
-function esc(s) {
-  return String(s ?? "").replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
-  );
 }
 
 function normId(v) {
@@ -344,6 +352,9 @@ function buildAppViewMarkup(app, { force = false } = {}) {
         loading="lazy"
         referrerpolicy="no-referrer"
       ></iframe>
+      <section class="workspaceAppScreenshots" data-app-view-screenshots>
+        <div class="workspaceAppScreenshotsEmpty text-secondary small">Loading screenshots...</div>
+      </section>
     </div>
   `;
 }
@@ -356,6 +367,10 @@ function syncAppViewPanel(appId, { force = false } = {}) {
   root.innerHTML = app
     ? buildAppViewMarkup(app, { force })
     : buildAppViewEmptyMarkup("Select an app to preview it.");
+
+  loadAppViewScreenshots(appId, root).catch((error) => {
+    console.warn("App view screenshots load failed:", error);
+  });
 }
 
 async function loadLatestRenderedGraphForApp(appId) {
@@ -648,22 +663,6 @@ function showUnsupportedTargetMessage(data) {
 /* Fetch helpers                                                            */
 /* ======================================================================= */
 
-/**
- * Fetch JSON and throw on non-2xx.
- * @param {string} url
- * @param {RequestInit} [init]
- */
-async function fetchJson(url, init) {
-  const r = await fetch(url, init);
-  if (!r.ok) {
-    const text = await r.text().catch(() => "");
-    const err = new Error(text || `HTTP ${r.status}`);
-      /** @type {any} */ (err).status = r.status;
-    throw err;
-  }
-  return r.json();
-}
-
 function isHttpNotFound(r) {
   return Number(r?.status) === 404;
 }
@@ -809,35 +808,91 @@ function getActiveGraphAppId() {
   return String(activeGraphAppId || "").trim();
 }
 
-function toDisplayText(value, fallback = "—") {
-  const text = String(value || "").trim();
-  return text || fallback;
+function buildAppViewScreenshotsEmptyMarkup(message) {
+  return `<div class="workspaceAppScreenshotsEmpty text-secondary small">${esc(message || "No screenshots created yet.")}</div>`;
 }
 
-function formatIsoDate(value) {
-  const raw = String(value || "").trim();
-  if (!raw) return "—";
+function buildAppViewScreenshotCardMarkup(item) {
+  const name = String(item?.name || "").trim() || "screenshot";
+  const imageUrl = buildVersionedUrl(item?.imageUrl, item?.modifiedAt || item?.sizeBytes);
+  const metaParts = [
+    item?.modifiedAt ? formatIsoDate(item.modifiedAt) : "",
+    item?.sizeBytes ? formatBytes(item.sizeBytes) : ""
+  ].filter(Boolean);
+  const meta = metaParts.join(" · ");
+  const pageUrl = String(item?.pageUrl || "").trim();
+  const title = [name, meta, pageUrl].filter(Boolean).join("\n");
 
-  const date = new Date(raw);
-  if (!Number.isFinite(date.getTime())) return raw;
-  return date.toLocaleString();
+  return `
+    <a
+      class="workspaceAppScreenshotCard"
+      href="${esc(imageUrl)}"
+      target="_blank"
+      rel="noopener noreferrer"
+      title="${esc(title)}"
+    >
+      <img
+        class="workspaceAppScreenshotThumb"
+        src="${esc(imageUrl)}"
+        alt="${esc(name)}"
+        loading="lazy"
+      />
+      <span class="workspaceAppScreenshotName">${esc(name)}</span>
+      <span class="workspaceAppScreenshotMeta">${esc(meta || "Open screenshot")}</span>
+    </a>
+  `;
 }
 
-function formatBytes(value) {
-  const bytes = Number(value);
-  if (!Number.isFinite(bytes) || bytes <= 0) return "—";
+function buildAppViewScreenshotsMarkup(data) {
+  const items = Array.isArray(data?.items) ? data.items : [];
+  const metaParts = [
+    `${items.length} screenshot${items.length === 1 ? "" : "s"}`,
+    data?.generatedAt ? `manifest ${formatIsoDate(data.generatedAt)}` : ""
+  ].filter(Boolean);
 
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let size = bytes;
-  let unitIndex = 0;
+  return `
+    <div class="workspaceAppScreenshotsHeader">
+      <div class="small fw-semibold">Latest screenshots</div>
+      <div class="small text-secondary">${esc(metaParts.join(" · "))}</div>
+    </div>
+    ${items.length
+      ? `<div class="workspaceAppScreenshotsRail">${items.map(buildAppViewScreenshotCardMarkup).join("")}</div>`
+      : buildAppViewScreenshotsEmptyMarkup("No screenshots created yet for this app.")}
+  `;
+}
 
-  while (size >= 1024 && unitIndex < units.length - 1) {
-    size /= 1024;
-    unitIndex += 1;
+async function fetchAppViewScreenshots(appId) {
+  const safeAppId = normalizeAppId(appId);
+  if (!safeAppId) return { items: [] };
+  return fetchJson(`/apps/${encodeURIComponent(safeAppId)}/screenshots/latest`);
+}
+
+async function loadAppViewScreenshots(appId, root = byId(APP_VIEW_PANEL_ID)) {
+  const safeAppId = normalizeAppId(appId);
+  const section = root?.querySelector?.("[data-app-view-screenshots]");
+  if (!safeAppId || !section) return false;
+
+  const requestToken = ++appViewScreenshotsLoadToken;
+
+  try {
+    const data = await fetchAppViewScreenshots(safeAppId);
+    if (requestToken !== appViewScreenshotsLoadToken) return false;
+    if (getSelectedAppId() !== safeAppId) return false;
+
+    const liveSection = root?.querySelector?.("[data-app-view-screenshots]");
+    if (!liveSection) return false;
+    liveSection.innerHTML = buildAppViewScreenshotsMarkup(data);
+    return true;
+  } catch (error) {
+    if (requestToken !== appViewScreenshotsLoadToken) return false;
+
+    const liveSection = root?.querySelector?.("[data-app-view-screenshots]");
+    if (!liveSection) return false;
+    liveSection.innerHTML = buildAppViewScreenshotsEmptyMarkup(
+      String(error?.message || error || "Could not load screenshots.")
+    );
+    return false;
   }
-
-  const digits = size >= 10 || unitIndex === 0 ? 0 : 1;
-  return `${size.toFixed(digits)} ${units[unitIndex]}`;
 }
 
 function renderAppInfoRow(label, value, { html = false } = {}) {
@@ -869,6 +924,44 @@ function renderCommitAuthorCell(commit) {
     <div>${authorName}</div>
     <div class="small text-secondary">${esc(authorEmail)}</div>
   `;
+}
+
+function readGitHistoryChartPoints(commits) {
+  return (Array.isArray(commits) ? commits : [])
+    .map((commit) => {
+      const committedAt = String(commit?.committedAt || commit?.authoredAt || "").trim();
+      const date = new Date(committedAt);
+      const codeLines = Number(commit?.codeLines);
+      if (!Number.isFinite(date.getTime()) || !Number.isFinite(codeLines)) return null;
+
+      return {
+        fullSha: String(commit?.fullSha || "").trim(),
+        shortSha: String(commit?.shortSha || "").trim(),
+        subject: String(commit?.subject || "").trim(),
+        committedAt,
+        date,
+        codeLines: Math.max(0, codeLines)
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.date - right.date);
+}
+
+function setGraphGitHistoryPlaceholder(message, meta = "Select an app to load Git history.") {
+  const emptyNode = maybeById(GRAPH_GIT_HISTORY_EMPTY_ID);
+  const metaNode = maybeById(GRAPH_GIT_HISTORY_META_ID);
+  const svgNode = maybeById(APP_GIT_HISTORY_CHART_ID);
+
+  if (metaNode) metaNode.textContent = String(meta || "");
+  if (emptyNode) {
+    emptyNode.textContent = String(message || "");
+    emptyNode.classList.remove("d-none");
+  }
+
+  if (svgNode) {
+    svgNode.classList.add("d-none");
+    window.d3?.select(svgNode).selectAll("*").remove();
+  }
 }
 
 function renderCommitsTable(commits, gitAvailable) {
@@ -908,6 +1001,169 @@ function renderCommitsTable(commits, gitAvailable) {
       </table>
     </div>
   `;
+}
+
+function gitHistoryChartTimeDomain(points) {
+  const first = points[0]?.date;
+  const last = points[points.length - 1]?.date;
+  if (!(first instanceof Date) || !(last instanceof Date)) return [new Date(), new Date()];
+
+  if (first.getTime() !== last.getTime()) return [first, last];
+
+  const center = first.getTime();
+  const halfDayMs = 12 * 60 * 60 * 1000;
+  return [new Date(center - halfDayMs), new Date(center + halfDayMs)];
+}
+
+function buildGitHistoryTooltip(commit) {
+  const lines = Number(commit?.codeLines || 0);
+  const lineLabel = `${formatInteger(lines)} code lines`;
+  const parts = [
+    toDisplayText(commit?.subject, "No subject"),
+    commit?.shortSha ? `Commit ${commit.shortSha}` : "",
+    commit?.committedAt ? `Date ${formatIsoDate(commit.committedAt)}` : "",
+    lineLabel
+  ].filter(Boolean);
+
+  return parts.join("\n");
+}
+
+function renderGitHistoryChart(commits, gitAvailable) {
+  const svgNode = maybeById(APP_GIT_HISTORY_CHART_ID);
+  if (!svgNode || !gitAvailable) return;
+
+  const d3Global = window.d3;
+  if (!d3Global) return;
+
+  const points = readGitHistoryChartPoints(commits);
+  if (!points.length) return;
+
+  const width = 760;
+  const height = 240;
+  const margin = { top: 16, right: 20, bottom: 34, left: 58 };
+  const innerWidth = width - margin.left - margin.right;
+  const innerHeight = height - margin.top - margin.bottom;
+  const xDomain = gitHistoryChartTimeDomain(points);
+  const yMax = d3Global.max(points, (point) => point.codeLines) || 1;
+
+  const x = d3Global.scaleUtc()
+    .domain(xDomain)
+    .range([margin.left, width - margin.right]);
+  const y = d3Global.scaleLinear()
+    .domain([0, yMax])
+    .nice()
+    .range([height - margin.bottom, margin.top]);
+
+  const svg = d3Global.select(svgNode);
+  svg.selectAll("*").remove();
+  svg
+    .attr("viewBox", `0 0 ${width} ${height}`)
+    .attr("preserveAspectRatio", "xMidYMid meet");
+
+  svg.append("g")
+    .attr("transform", `translate(0,${height - margin.bottom})`)
+    .call(
+      d3Global.axisBottom(x)
+        .ticks(Math.max(3, Math.min(8, Math.round(points.length / 10) || 3)))
+        .tickFormat(d3Global.utcFormat("%d.%m.%y"))
+    )
+    .call((group) => group.select(".domain").attr("stroke", "rgba(15, 23, 42, 0.18)"))
+    .call((group) => group.selectAll("line").attr("stroke", "rgba(15, 23, 42, 0.12)"))
+    .call((group) => group.selectAll("text").attr("fill", "rgba(15, 23, 42, 0.75)").style("font-size", "11px"));
+
+  svg.append("g")
+    .attr("transform", `translate(${margin.left},0)`)
+    .call(
+      d3Global.axisLeft(y)
+        .ticks(5)
+        .tickFormat(d3Global.format(","))
+    )
+    .call((group) => group.select(".domain").attr("stroke", "rgba(15, 23, 42, 0.18)"))
+    .call((group) => group.selectAll("line").attr("stroke", "rgba(15, 23, 42, 0.12)"))
+    .call((group) => group.selectAll("text").attr("fill", "rgba(15, 23, 42, 0.75)").style("font-size", "11px"));
+
+  svg.append("g")
+    .attr("class", "gitHistoryChartGrid")
+    .attr("transform", `translate(${margin.left},0)`)
+    .call(
+      d3Global.axisLeft(y)
+        .ticks(5)
+        .tickSize(-innerWidth)
+        .tickFormat("")
+    )
+    .call((group) => group.select(".domain").remove())
+    .call((group) => group.selectAll("line").attr("stroke", "rgba(15, 23, 42, 0.08)"));
+
+  const line = d3Global.line()
+    .x((point) => x(point.date))
+    .y((point) => y(point.codeLines))
+    .curve(d3Global.curveMonotoneX);
+
+  svg.append("path")
+    .datum(points)
+    .attr("fill", "none")
+    .attr("stroke", "#2563eb")
+    .attr("stroke-width", 2)
+    .attr("d", line);
+
+  svg.append("g")
+    .selectAll("circle")
+    .data(points)
+    .join("circle")
+    .attr("cx", (point) => x(point.date))
+    .attr("cy", (point) => y(point.codeLines))
+    .attr("r", points.length > 180 ? 2 : 3)
+    .attr("fill", "#2563eb")
+    .attr("opacity", 0.95);
+
+  const hitDots = svg.append("g")
+    .selectAll("circle")
+    .data(points)
+    .join("circle")
+    .attr("cx", (point) => x(point.date))
+    .attr("cy", (point) => y(point.codeLines))
+    .attr("r", 9)
+    .attr("fill", "transparent")
+    .style("cursor", "pointer");
+
+  hitDots.append("title")
+    .text((point) => buildGitHistoryTooltip(point));
+}
+
+function renderGraphGitHistoryPanel(data, fallbackMessage = "Select an app to load Git history.") {
+  if (!data) {
+    setGraphGitHistoryPlaceholder(fallbackMessage, "Select an app to load Git history.");
+    return;
+  }
+
+  const app = data.app || {};
+  const git = data.git || {};
+  const appLabel = String(app?.name || app?.id || "Selected app").trim();
+  const codeLineHistory = Array.isArray(git.codeLineHistory) ? git.codeLineHistory : [];
+  const points = readGitHistoryChartPoints(codeLineHistory);
+
+  if (!git.available) {
+    setGraphGitHistoryPlaceholder("No Git repository detected for this app.", `${appLabel} · no Git repository`);
+    return;
+  }
+
+  if (!points.length) {
+    setGraphGitHistoryPlaceholder("No code line history available for this app.", `${appLabel} · no code line history`);
+    return;
+  }
+
+  const latest = points[points.length - 1];
+  const metaNode = maybeById(GRAPH_GIT_HISTORY_META_ID);
+  const emptyNode = maybeById(GRAPH_GIT_HISTORY_EMPTY_ID);
+  const svgNode = maybeById(APP_GIT_HISTORY_CHART_ID);
+
+  if (metaNode) {
+    metaNode.textContent = `${appLabel} · ${points.length} commits · latest ${formatInteger(latest.codeLines)} lines`;
+  }
+  if (emptyNode) emptyNode.classList.add("d-none");
+  if (svgNode) svgNode.classList.remove("d-none");
+
+  renderGitHistoryChart(codeLineHistory, true);
 }
 
 function buildLinkHtml(url) {
@@ -955,6 +1211,7 @@ function renderAppInfoEmpty(message) {
   for (const root of getAppInfoRoots()) {
     root.innerHTML = markup;
   }
+  renderGraphGitHistoryPanel(null, String(message || "Select an app to load Git history."));
 }
 
 function buildAppInfoHeader(app) {
@@ -1067,6 +1324,7 @@ function renderAppInfoPanel(data) {
       contentHtml: renderCommitsTable(commits, git.available)
     }
   ], app);
+  renderGraphGitHistoryPanel(data);
   renderAppInfoSectionInto(APP_INFO_PANEL_IDS.freeze, sections[2], app);
 }
 
@@ -1227,15 +1485,6 @@ async function fetchReadmeDataOrNull(url, signal) {
     console.warn("README fetch failed:", e);
     return null;
   }
-}
-
-function markdownToHtml(md) {
-  const text = String(md || "");
-  return window.marked?.parse ? window.marked.parse(text) : `<pre>${esc(text)}</pre>`;
-}
-
-function sanitizeHtml(rawHtml) {
-  return window.DOMPurify?.sanitize ? window.DOMPurify.sanitize(rawHtml) : rawHtml;
 }
 
 function renderReadmeMarkdown(root, data, appId = "") {
@@ -1605,6 +1854,9 @@ function finishScreenshotJob(job) {
   }
 
   updatePortfolioScreenshotStatusUi(finishedAppId, buildFinishedScreenshotStatus(job)).catch(() => { });
+  loadAppViewScreenshots(finishedAppId).catch((error) => {
+    console.warn("App view screenshots refresh failed:", error);
+  });
   setStatus(screenshotJobSuccessMessage(job));
 }
 
@@ -1895,6 +2147,55 @@ function shouldIgnoreFsChange(msg, currentToken) {
   return isStaleRunToken(currentToken, msg?.runToken);
 }
 
+function parseEventPayload(ev) {
+  try {
+    return JSON.parse(ev?.data || "{}");
+  } catch {
+    return null;
+  }
+}
+
+function updateCurrentRunToken(nextToken) {
+  currentRunToken = nextToken || null;
+}
+
+function syncRunTokenFromEvent(ev, readToken) {
+  const payload = parseEventPayload(ev);
+  if (!payload) return;
+  updateCurrentRunToken(readToken(payload));
+}
+
+function markGraphNodeChanged(msg) {
+  try {
+    graphController?.markChanged?.({ id: msg.id, ev: msg.ev, at: msg.at });
+  } catch { }
+}
+
+function refreshSelectedNodeAfterFsChange(msg) {
+  if (!isSelectedNodeMessage(msg)) return;
+  refreshSelectedPanels();
+}
+
+function handleFsChangePayload(msg) {
+  if (!msg || shouldIgnoreFsChange(msg, currentRunToken)) return;
+  markGraphNodeChanged(msg);
+  refreshSelectedNodeAfterFsChange(msg);
+}
+
+function handleFsChangeEvent(ev) {
+  handleFsChangePayload(parseEventPayload(ev));
+}
+
+function handleFsWatchErrorEvent(ev) {
+  const payload = parseEventPayload(ev);
+  if (payload) {
+    console.warn("[SSE] fs-watch-error:", payload?.message || payload);
+    return;
+  }
+
+  console.warn("[SSE] fs-watch-error:", ev?.data);
+}
+
 
 /**
  * Start the shared SSE connection once.
@@ -1910,50 +2211,10 @@ function startLiveEvents() {
 
   sse = new EventSource("/events");
 
-  sse.addEventListener("hello", (ev) => {
-    try {
-      const msg = JSON.parse(ev.data || "{}");
-      currentRunToken = msg?.activeAnalysis?.runToken || null;
-    } catch { }
-  });
-
-  sse.addEventListener("analysis", (ev) => {
-    try {
-      const msg = JSON.parse(ev.data || "{}");
-      currentRunToken = msg?.runToken || null;
-    } catch { }
-  });
-
-  sse.addEventListener("fs-change", (ev) => {
-    let msg = null;
-    try {
-      msg = JSON.parse(ev.data || "{}");
-    } catch {
-      return;
-    }
-
-    // Ignoriere veraltete Change-Events aus einem anderen Analyse-Lauf.
-    if (shouldIgnoreFsChange(msg, currentRunToken)) return;
-
-    // Mark changed node in the *current* rendered graph (if present).
-    try {
-      graphController?.markChanged?.({ id: msg.id, ev: msg.ev, at: msg.at });
-    
-    } catch { }
-    
-
-    if (!isSelectedNodeMessage(msg)) return;
-    refreshSelectedPanels();
-  });
-
-  sse.addEventListener("fs-watch-error", (ev) => {
-    try {
-      const msg = JSON.parse(ev.data || "{}");
-      console.warn("[SSE] fs-watch-error:", msg?.message || msg);
-    } catch {
-      console.warn("[SSE] fs-watch-error:", ev.data);
-    }
-  });
+  sse.addEventListener("hello", (ev) => syncRunTokenFromEvent(ev, (msg) => msg?.activeAnalysis?.runToken || null));
+  sse.addEventListener("analysis", (ev) => syncRunTokenFromEvent(ev, (msg) => msg?.runToken || null));
+  sse.addEventListener("fs-change", handleFsChangeEvent);
+  sse.addEventListener("fs-watch-error", handleFsWatchErrorEvent);
 
   sse.onerror = () => {
     // EventSource auto-reconnects; keep UI calm
@@ -2026,6 +2287,35 @@ function handleUnsupportedAnalysis(data) {
   setStatusSignal("error");
 }
 
+function prepareAnalysisUi() {
+  setStatus("Running analysis…");
+  setStatusSignal("neutral");
+}
+
+async function fetchAnalysisMetrics(data) {
+  return fetchJson(data?.metricsUrl || "");
+}
+
+async function renderAnalysisMetrics(appId, metrics) {
+  activeGraphAppId = appId;
+  resetSupplementaryGraphViews();
+  renderGraph(metrics);
+  await renderSupplementaryCharts(metrics);
+  updateGraphHeader(metrics);
+}
+
+async function applyAnalysisResult(appId, data) {
+  if (isUnsupportedAnalysis(data)) {
+    handleUnsupportedAnalysis(data);
+    return false;
+  }
+
+  const metrics = await fetchAnalysisMetrics(data);
+  await renderAnalysisMetrics(appId, metrics);
+  statusDone(data);
+  return true;
+}
+
 
 /**
  * Replace the current graph with a freshly rendered one.
@@ -2072,7 +2362,7 @@ function buildWorkspaceHintText(viewKey = getActiveGraphViewKey()) {
     case "freeze":
       return hasSelectedApp ? "Freeze archive output and latest snapshot metadata." : missingAppText;
     default:
-      if (hasGraphApp) return "Three synchronized graph views: structure, MRI and drift.";
+      if (hasGraphApp) return "Accordion with structure, MRI, drift and Git history for the active app.";
       if (hasSelectedApp) return "Run Analyze to inspect the graph.";
       return "Select an app, then run Analyze.";
   }
@@ -2094,10 +2384,6 @@ function activateTabById(id) {
   const tabApi = window.bootstrap?.Tab;
   if (!el || !tabApi?.getOrCreateInstance) return;
   tabApi.getOrCreateInstance(el).show();
-}
-
-function showWorkspaceGraphTab() {
-  activateTabById("graph-main-tab");
 }
 
 function resetGraphViews() {
@@ -2395,30 +2681,13 @@ async function runAnalysis() {
     const appId = getSelectedAppIdOrShowStatus();
     if (!appId) return;
 
-    setStatus("Running analysis…");
-    setStatusSignal("neutral");
-
-
+    prepareAnalysisUi();
     const data = await postAnalyze(appId);
-    if (isUnsupportedAnalysis(data)) {
-      handleUnsupportedAnalysis(data);
-      return;
-    }
-
     // Important:
     // `data.runToken` belongs to the analyze/metrics flow, not to the active
     // SSE stream state. The live event token is updated only from SSE events,
     // so we intentionally do NOT overwrite `currentRunToken` here.
-    const metrics = await fetchJson(data.metricsUrl);
-    activeGraphAppId = appId;
-    resetSupplementaryGraphViews();
-    renderGraph(metrics);
-    await renderSupplementaryCharts(metrics);
-
-    updateGraphHeader(metrics);
-    showWorkspaceGraphTab();
-
-    statusDone(data);
+    await applyAnalysisResult(appId, data);
   } catch (e) {
     handleAnalyzeError(e);
   } finally {
