@@ -38,10 +38,10 @@
           <div class="card-header py-0 border-top-0 bg-body">
             <ul class="nav nav-tabs card-header-tabs" id="workspaceTabs" role="tablist">
               <li class="nav-item" role="presentation">
-                <button class="nav-link small" id="app-view-tab" data-bs-toggle="tab"
-                  data-bs-target="#app-view-pane" data-workspace-view="app-view" type="button" role="tab" aria-controls="app-view-pane"
+                <button class="nav-link small" id="graph-projects-tab" data-bs-toggle="tab"
+                  data-bs-target="#graph-projects-pane" data-workspace-view="portfolio" type="button" role="tab" aria-controls="graph-projects-pane"
                   aria-selected="false">
-                  App view
+                  Portfolio
                 </button>
               </li>
               <li class="nav-item" role="presentation">
@@ -52,10 +52,10 @@
                 </button>
               </li>
               <li class="nav-item" role="presentation">
-                <button class="nav-link small" id="graph-projects-tab" data-bs-toggle="tab"
-                  data-bs-target="#graph-projects-pane" data-workspace-view="portfolio" type="button" role="tab" aria-controls="graph-projects-pane"
+                <button class="nav-link small" id="app-view-tab" data-bs-toggle="tab"
+                  data-bs-target="#app-view-pane" data-workspace-view="app-view" type="button" role="tab" aria-controls="app-view-pane"
                   aria-selected="false">
-                  Portfolio
+                  App view
                 </button>
               </li>
               <li class="nav-item" role="presentation">
@@ -117,133 +117,222 @@
 
                 <div class="tab-pane fade show active" id="graph-main-pane" role="tabpanel"
                   aria-labelledby="graph-main-tab" tabindex="0">
-                  <div class="graphsPanelGrid">
-                    <section class="graphPanelCard">
-                      <div class="graphPanelHeader">
-                        <div>
-                          <div class="small fw-semibold">Standard graph</div>
-                          <div class="small text-secondary">Dependencies, structure and live node inspection.</div>
-                        </div>
-                      </div>
-                      <div class="graphPanelCanvas">
-                        <svg id="codeStructureSvg" width="1200" height="1200"></svg>
-                      </div>
-                      <div class="graphPanelFooter">
-                        <div class="graphLegendCard">
-                          <div class="graphLegendToolbar">
-                            <div>
-                              <div class="small fw-semibold">Legend &amp; Filter</div>
-                              <div class="small text-secondary" id="filterSummary">architecture</div>
+                  <div class="accordion graphAccordion" id="graphsAccordion">
+                    <section class="accordion-item graphAccordionItem">
+                      <h2 class="accordion-header" id="graph-structure-heading">
+                        <button class="accordion-button graphAccordionButton" type="button" data-bs-toggle="collapse"
+                          data-bs-target="#graph-structure-collapse" aria-expanded="true" aria-controls="graph-structure-collapse">
+                          <span class="graphAccordionHeading">
+                            <span class="graphAccordionTitle">Standard graph</span>
+                            <span class="graphAccordionMeta">Dependencies, structure and live node inspection.</span>
+                          </span>
+                        </button>
+                      </h2>
+                      <div id="graph-structure-collapse" class="accordion-collapse collapse show"
+                        aria-labelledby="graph-structure-heading">
+                        <div class="accordion-body graphAccordionBody">
+                          <section class="graphAccordionMain">
+                            <div class="graphPanelCanvas">
+                              <svg id="codeStructureSvg" width="1200" height="1200"></svg>
                             </div>
-                            <div class="graphLegendToolbarControl">
-                              <label for="graphTextFilterMode" class="form-label small fw-semibold mb-1">Text filter</label>
-                              <select id="graphTextFilterMode" class="form-select form-select-sm"
-                                aria-label="Text filter mode">
-                                <option value="comments_readme">Kommentare und readme</option>
-                                <option value="functions">Funktionsnamen und Funktionsinhalte</option>
-                              </select>
+                          </section>
+                          <aside class="graphAccordionSide">
+                            <div class="graphLegendCard">
+                              <div class="graphLegendToolbar">
+                                <div>
+                                  <div class="small fw-semibold">Legend &amp; Filter</div>
+                                  <div class="small text-secondary" id="filterSummary">architecture</div>
+                                </div>
+                                <div class="graphLegendToolbarControl">
+                                  <label for="graphTextFilterMode" class="form-label small fw-semibold mb-1">Text filter</label>
+                                  <select id="graphTextFilterMode" class="form-select form-select-sm"
+                                    aria-label="Text filter mode">
+                                    <option value="comments_readme">Kommentare und readme</option>
+                                    <option value="functions">Funktionsnamen und Funktionsinhalte</option>
+                                  </select>
+                                </div>
+                              </div>
+                              <div id="legendFilterPanel">
+                                <div class="text-secondary small">Run Analyze to load graph filters.</div>
+                              </div>
                             </div>
-                          </div>
-                          <div id="legendFilterPanel">
-                            <div class="text-secondary small">Run Analyze to load graph filters.</div>
-                          </div>
+                          </aside>
                         </div>
                       </div>
                     </section>
 
-                    <section class="graphPanelCard">
-                      <div class="graphPanelHeader">
-                        <div>
-                          <div class="small fw-semibold">MRI</div>
-                          <div class="small text-secondary">Architecture layout with hotspot tint and change halo.</div>
-                        </div>
-                      </div>
-                      <div class="graphPanelCanvas">
-                        <svg id="graphMriView" width="1200" height="1200"></svg>
-                      </div>
-                      <div class="graphPanelFooter">
-                        <div class="graphLegendCard">
-                          <div class="graphLegendToolbar">
-                            <div>
-                              <div class="small fw-semibold">Legend</div>
-                              <div class="small text-secondary" id="graphMriLegendMeta">Latest MRI run.</div>
+                    <section class="accordion-item graphAccordionItem">
+                      <h2 class="accordion-header" id="graph-mri-heading">
+                        <button class="accordion-button graphAccordionButton" type="button"
+                          data-bs-toggle="collapse" data-bs-target="#graph-mri-collapse" aria-expanded="true"
+                          aria-controls="graph-mri-collapse">
+                          <span class="graphAccordionHeading">
+                            <span class="graphAccordionTitle">MRI</span>
+                            <span class="graphAccordionMeta">Architecture layout with hotspot tint and change halo.</span>
+                          </span>
+                        </button>
+                      </h2>
+                      <div id="graph-mri-collapse" class="accordion-collapse collapse show"
+                        aria-labelledby="graph-mri-heading">
+                        <div class="accordion-body graphAccordionBody">
+                          <section class="graphAccordionMain">
+                            <div class="graphPanelCanvas">
+                              <svg id="graphMriView" width="1200" height="1200"></svg>
                             </div>
-                          </div>
-                          <div class="graphLegendList">
-                            <div class="graphLegendItem">
-                              <span class="graphLegendSwatch swatch-mri-node"></span>
-                              <span class="small">Code module node size reflects LOC.</span>
+                          </section>
+                          <aside class="graphAccordionSide">
+                            <div class="graphLegendCard">
+                              <div class="graphLegendToolbar">
+                                <div>
+                                  <div class="small fw-semibold">Legend</div>
+                                  <div class="small text-secondary" id="graphMriLegendMeta">Latest MRI run.</div>
+                                </div>
+                              </div>
+                              <div class="graphLegendList">
+                                <div class="graphLegendItem">
+                                  <span class="graphLegendSwatch swatch-mri-node"></span>
+                                  <span class="small">Code module node size reflects LOC.</span>
+                                </div>
+                                <div class="graphLegendItem">
+                                  <span class="graphLegendSwatch swatch-mri-hotspot"></span>
+                                  <span class="small">Warmer fill means stronger hotspot pressure.</span>
+                                </div>
+                                <div class="graphLegendItem">
+                                  <span class="graphLegendSwatch swatch-mri-halo"></span>
+                                  <span class="small">Red halo shows change frequency.</span>
+                                </div>
+                                <div class="graphLegendItem">
+                                  <span class="graphLegendSwatch swatch-mri-stroke"></span>
+                                  <span class="small">Outline strength reflects outgoing coupling.</span>
+                                </div>
+                              </div>
                             </div>
-                            <div class="graphLegendItem">
-                              <span class="graphLegendSwatch swatch-mri-hotspot"></span>
-                              <span class="small">Warmer fill means stronger hotspot pressure.</span>
-                            </div>
-                            <div class="graphLegendItem">
-                              <span class="graphLegendSwatch swatch-mri-halo"></span>
-                              <span class="small">Red halo shows change frequency.</span>
-                            </div>
-                            <div class="graphLegendItem">
-                              <span class="graphLegendSwatch swatch-mri-stroke"></span>
-                              <span class="small">Outline strength reflects outgoing coupling.</span>
-                            </div>
-                          </div>
+                          </aside>
                         </div>
                       </div>
                     </section>
 
-                    <section class="graphPanelCard graphPanelCardDrift" id="graphTimePanel">
-                      <div class="graphPanelHeader">
-                        <div>
-                          <div class="small fw-semibold">Drift history</div>
-                          <div class="small text-secondary" data-role="drift-meta">Preparing history…</div>
+                    <section class="accordion-item graphAccordionItem" id="graphTimePanel">
+                      <h2 class="accordion-header" id="graph-drift-heading">
+                        <button class="accordion-button graphAccordionButton" type="button"
+                          data-bs-toggle="collapse" data-bs-target="#graph-drift-collapse" aria-expanded="true"
+                          aria-controls="graph-drift-collapse">
+                          <span class="graphAccordionHeading">
+                            <span class="graphAccordionTitle">Drift history</span>
+                            <span class="graphAccordionMeta" data-role="drift-meta">Preparing history…</span>
+                          </span>
+                        </button>
+                      </h2>
+                      <div id="graph-drift-collapse" class="accordion-collapse collapse show"
+                        aria-labelledby="graph-drift-heading">
+                        <div class="accordion-body graphAccordionBody">
+                          <section class="graphAccordionMain">
+                            <div class="graphPanelCanvas">
+                              <svg id="graphTimeView" data-role="drift-chart" width="1200" height="1200"></svg>
+                            </div>
+                          </section>
+                          <aside class="graphAccordionSide">
+                            <div class="graphLegendCard">
+                              <div class="graphLegendToolbar graphLegendToolbarWrap">
+                                <div>
+                                  <div class="small fw-semibold">Legend &amp; Controls</div>
+                                  <div class="small text-secondary">Switch spacing and compare modules below the chart.</div>
+                                </div>
+                                <div class="graphPanelControls">
+                                  <div class="btn-group btn-group-sm" role="group" aria-label="Drift time spacing">
+                                    <button type="button" class="btn btn-outline-secondary active"
+                                      data-graph-time-spacing="time">Time</button>
+                                    <button type="button" class="btn btn-outline-secondary"
+                                      data-graph-time-spacing="run">Runs</button>
+                                  </div>
+                                  <div class="btn-group btn-group-sm" role="group" aria-label="Drift chart mode">
+                                    <button type="button" class="btn btn-outline-secondary"
+                                      data-graph-time-mode="stacked">Stacked</button>
+                                    <button type="button" class="btn btn-outline-secondary active"
+                                      data-graph-time-mode="lines">Lines</button>
+                                  </div>
+                                </div>
+                              </div>
+                              <div class="graphTimeSummaryGrid" data-role="drift-summary">
+                                <div class="graphTimeSummaryCard">
+                                  <div class="graphTimeSummaryLabel">Runs</div>
+                                  <div class="graphTimeSummaryValue">-</div>
+                                </div>
+                                <div class="graphTimeSummaryCard">
+                                  <div class="graphTimeSummaryLabel">Latest drift</div>
+                                  <div class="graphTimeSummaryValue">-</div>
+                                </div>
+                                <div class="graphTimeSummaryCard">
+                                  <div class="graphTimeSummaryLabel">Largest spike</div>
+                                  <div class="graphTimeSummaryValue">-</div>
+                                </div>
+                                <div class="graphTimeSummaryCard">
+                                  <div class="graphTimeSummaryLabel">Most unstable</div>
+                                  <div class="graphTimeSummaryValue">-</div>
+                                </div>
+                              </div>
+                              <div class="graphLegendList" data-role="drift-legend">
+                                <div class="text-secondary small">Legend appears with loaded drift data.</div>
+                              </div>
+                            </div>
+                          </aside>
                         </div>
                       </div>
-                      <div class="graphPanelCanvas">
-                        <svg id="graphTimeView" data-role="drift-chart" width="1200" height="1200"></svg>
-                      </div>
-                      <div class="graphPanelFooter">
-                        <div class="graphLegendCard">
-                          <div class="graphLegendToolbar graphLegendToolbarWrap">
-                            <div>
-                              <div class="small fw-semibold">Legend &amp; Controls</div>
-                              <div class="small text-secondary">Switch spacing and compare modules below the chart.</div>
-                            </div>
-                            <div class="graphPanelControls">
-                              <div class="btn-group btn-group-sm" role="group" aria-label="Drift time spacing">
-                                <button type="button" class="btn btn-outline-secondary active"
-                                  data-graph-time-spacing="time">Time</button>
-                                <button type="button" class="btn btn-outline-secondary"
-                                  data-graph-time-spacing="run">Runs</button>
+                    </section>
+
+                    <section class="accordion-item graphAccordionItem">
+                      <h2 class="accordion-header" id="graph-git-heading">
+                        <button class="accordion-button graphAccordionButton" type="button"
+                          data-bs-toggle="collapse" data-bs-target="#graph-git-collapse" aria-expanded="true"
+                          aria-controls="graph-git-collapse">
+                          <span class="graphAccordionHeading">
+                            <span class="graphAccordionTitle">Git history</span>
+                            <span class="graphAccordionMeta">Code lines over commit time for the selected app.</span>
+                          </span>
+                        </button>
+                      </h2>
+                      <div id="graph-git-collapse" class="accordion-collapse collapse show"
+                        aria-labelledby="graph-git-heading">
+                        <div class="accordion-body graphAccordionBody">
+                          <section class="graphAccordionMain">
+                            <div class="gitHistoryChartCard graphGitHistoryCard">
+                              <div class="gitHistoryChartHeader">
+                                <div class="small fw-semibold">Code lines over commit time</div>
+                                <div class="small text-secondary" id="graphGitHistoryMeta">Select an app to load Git history.</div>
                               </div>
-                              <div class="btn-group btn-group-sm" role="group" aria-label="Drift chart mode">
-                                <button type="button" class="btn btn-outline-secondary"
-                                  data-graph-time-mode="stacked">Stacked</button>
-                                <button type="button" class="btn btn-outline-secondary active"
-                                  data-graph-time-mode="lines">Lines</button>
+                              <div class="gitHistoryChartFrame">
+                                <div id="graphGitHistoryEmpty" class="graphPanelEmpty text-secondary small">
+                                  Select an app to load Git history.
+                                </div>
+                                <svg id="graphGitHistorySvg" class="gitHistoryChartSvg d-none" role="img"
+                                  aria-label="Code lines over commit history"></svg>
                               </div>
                             </div>
-                          </div>
-                          <div class="graphTimeSummaryGrid" data-role="drift-summary">
-                            <div class="graphTimeSummaryCard">
-                              <div class="graphTimeSummaryLabel">Runs</div>
-                              <div class="graphTimeSummaryValue">-</div>
+                          </section>
+                          <aside class="graphAccordionSide">
+                            <div class="graphLegendCard">
+                              <div class="graphLegendToolbar">
+                                <div>
+                                  <div class="small fw-semibold">Legend</div>
+                                  <div class="small text-secondary">Git-derived code line history for the selected app.</div>
+                                </div>
+                              </div>
+                              <div class="graphLegendList">
+                                <div class="graphLegendItem">
+                                  <span class="graphLegendSwatch swatch-drift-line" style="background:#2563eb"></span>
+                                  <span class="small">Blue line shows cumulative code lines over commit time.</span>
+                                </div>
+                                <div class="graphLegendItem">
+                                  <span class="graphLegendSwatch swatch-mri-node"></span>
+                                  <span class="small">Points mark individual commits in chronological order.</span>
+                                </div>
+                                <div class="graphLegendItem">
+                                  <span class="graphLegendSwatch swatch-mri-stroke"></span>
+                                  <span class="small">Hover points to inspect commit subject, sha and line count.</span>
+                                </div>
+                              </div>
                             </div>
-                            <div class="graphTimeSummaryCard">
-                              <div class="graphTimeSummaryLabel">Latest drift</div>
-                              <div class="graphTimeSummaryValue">-</div>
-                            </div>
-                            <div class="graphTimeSummaryCard">
-                              <div class="graphTimeSummaryLabel">Largest spike</div>
-                              <div class="graphTimeSummaryValue">-</div>
-                            </div>
-                            <div class="graphTimeSummaryCard">
-                              <div class="graphTimeSummaryLabel">Most unstable</div>
-                              <div class="graphTimeSummaryValue">-</div>
-                            </div>
-                          </div>
-                          <div class="graphLegendList" data-role="drift-legend">
-                            <div class="text-secondary small">Legend appears with loaded drift data.</div>
-                          </div>
+                          </aside>
                         </div>
                       </div>
                     </section>

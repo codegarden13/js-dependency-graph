@@ -1,0 +1,257 @@
+{
+  "schemaVersion": 1,
+  "generator": "NodeAnalyzer",
+  "source": "analyze",
+  "generatedAt": "2026-03-30T17:03:22.903Z",
+  "app": {
+    "id": "nodeanalyzer",
+    "name": "NodeAnalyzer (It's me). I test codebases.",
+    "url": "http://localhost:3003",
+    "entry": "app/server.js",
+    "rootDir": "/Users/thomassalomon/Library/Mobile Documents/com~apple~CloudDocs/Documents/_OFFICE/Projects-GIT/25-12-16 NodeAnalyzer"
+  },
+  "manifestPath": "/Users/thomassalomon/Library/Mobile Documents/com~apple~CloudDocs/Documents/_OFFICE/Projects-GIT/25-12-16 NodeAnalyzer/app/public/assets/puppetier.json",
+  "assetsDirAbs": "/Users/thomassalomon/Library/Mobile Documents/com~apple~CloudDocs/Documents/_OFFICE/Projects-GIT/25-12-16 NodeAnalyzer/app/public/assets",
+  "screenshotsDirAbs": "/Users/thomassalomon/Library/Mobile Documents/com~apple~CloudDocs/Documents/_OFFICE/Projects-GIT/25-12-16 NodeAnalyzer/app/public/screenshots",
+  "defaults": {
+    "viewport": {
+      "width": 1440,
+      "height": 1024
+    },
+    "waitUntil": "domcontentloaded",
+    "delayMs": 250,
+    "navigationTimeoutMs": 15000,
+    "selectorTimeoutMs": 5000
+  },
+  "pages": [
+    {
+      "name": "home",
+      "url": "http://localhost:3003/",
+      "outputPath": "/Users/thomassalomon/Library/Mobile Documents/com~apple~CloudDocs/Documents/_OFFICE/Projects-GIT/25-12-16 NodeAnalyzer/app/public/screenshots/01-home.png",
+      "relativeOutputPath": "01-home.png",
+      "fullPage": true,
+      "waitUntil": "domcontentloaded",
+      "waitForSelector": "",
+      "delayMs": 250,
+      "navigationTimeoutMs": 15000,
+      "selectorTimeoutMs": 5000,
+      "viewport": {
+        "width": 1440,
+        "height": 1024
+      },
+      "actions": []
+    },
+    {
+      "name": "app-view",
+      "url": "http://localhost:3003/",
+      "outputPath": "/Users/thomassalomon/Library/Mobile Documents/com~apple~CloudDocs/Documents/_OFFICE/Projects-GIT/25-12-16 NodeAnalyzer/app/public/screenshots/app-view.png",
+      "relativeOutputPath": "app-view.png",
+      "fullPage": true,
+      "waitUntil": "domcontentloaded",
+      "waitForSelector": "",
+      "delayMs": 250,
+      "navigationTimeoutMs": 15000,
+      "selectorTimeoutMs": 5000,
+      "viewport": {
+        "width": 1440,
+        "height": 1024
+      },
+      "actions": [
+        {
+          "type": "click",
+          "selector": "#app-view-tab",
+          "delayMs": 250
+        }
+      ]
+    },
+    {
+      "name": "graphs",
+      "url": "http://localhost:3003/",
+      "outputPath": "/Users/thomassalomon/Library/Mobile Documents/com~apple~CloudDocs/Documents/_OFFICE/Projects-GIT/25-12-16 NodeAnalyzer/app/public/screenshots/graphs.png",
+      "relativeOutputPath": "graphs.png",
+      "fullPage": true,
+      "waitUntil": "domcontentloaded",
+      "waitForSelector": "",
+      "delayMs": 250,
+      "navigationTimeoutMs": 15000,
+      "selectorTimeoutMs": 5000,
+      "viewport": {
+        "width": 1440,
+        "height": 1024
+      },
+      "actions": [
+        {
+          "type": "click",
+          "selector": "#graph-main-tab",
+          "delayMs": 250
+        }
+      ]
+    },
+    {
+      "name": "portfolio",
+      "url": "http://localhost:3003/",
+      "outputPath": "/Users/thomassalomon/Library/Mobile Documents/com~apple~CloudDocs/Documents/_OFFICE/Projects-GIT/25-12-16 NodeAnalyzer/app/public/screenshots/portfolio.png",
+      "relativeOutputPath": "portfolio.png",
+      "fullPage": true,
+      "waitUntil": "domcontentloaded",
+      "waitForSelector": "",
+      "delayMs": 250,
+      "navigationTimeoutMs": 15000,
+      "selectorTimeoutMs": 5000,
+      "viewport": {
+        "width": 1440,
+        "height": 1024
+      },
+      "actions": [
+        {
+          "type": "click",
+          "selector": "#graph-projects-tab",
+          "delayMs": 250
+        }
+      ]
+    },
+    {
+      "name": "overview",
+      "url": "http://localhost:3003/",
+      "outputPath": "/Users/thomassalomon/Library/Mobile Documents/com~apple~CloudDocs/Documents/_OFFICE/Projects-GIT/25-12-16 NodeAnalyzer/app/public/screenshots/overview.png",
+      "relativeOutputPath": "overview.png",
+      "fullPage": true,
+      "waitUntil": "domcontentloaded",
+      "waitForSelector": "",
+      "delayMs": 250,
+      "navigationTimeoutMs": 15000,
+      "selectorTimeoutMs": 5000,
+      "viewport": {
+        "width": 1440,
+        "height": 1024
+      },
+      "actions": [
+        {
+          "type": "click",
+          "selector": "#app-overview-tab",
+          "delayMs": 250
+        }
+      ]
+    },
+    {
+      "name": "git",
+      "url": "http://localhost:3003/",
+      "outputPath": "/Users/thomassalomon/Library/Mobile Documents/com~apple~CloudDocs/Documents/_OFFICE/Projects-GIT/25-12-16 NodeAnalyzer/app/public/screenshots/git.png",
+      "relativeOutputPath": "git.png",
+      "fullPage": true,
+      "waitUntil": "domcontentloaded",
+      "waitForSelector": "",
+      "delayMs": 250,
+      "navigationTimeoutMs": 15000,
+      "selectorTimeoutMs": 5000,
+      "viewport": {
+        "width": 1440,
+        "height": 1024
+      },
+      "actions": [
+        {
+          "type": "click",
+          "selector": "#app-git-tab",
+          "delayMs": 250
+        }
+      ]
+    }
+  ],
+  "focusFiles": [
+    {
+      "file": "app/lib/buildMetricsFromEntrypoint.js",
+      "hotspotScore": 0.8776586340087416,
+      "complexity": 103,
+      "lines": 1197,
+      "lastTouchedAt": "2026-03-28T12:58:47.000Z",
+      "group": "code",
+      "layer": "app"
+    },
+    {
+      "file": "app/routes/analyze.js",
+      "hotspotScore": 0.8438846185261659,
+      "complexity": 73,
+      "lines": 989,
+      "lastTouchedAt": "2026-03-29T22:04:35.000Z",
+      "group": "code",
+      "layer": "http"
+    },
+    {
+      "file": "app/lib/autoMode.js",
+      "hotspotScore": 0.708930459278908,
+      "complexity": 93,
+      "lines": 793,
+      "lastTouchedAt": "2026-03-27T22:29:20.000Z",
+      "group": "code",
+      "layer": "app"
+    },
+    {
+      "file": "app/lib/parseAst.js",
+      "hotspotScore": 0.6570546242374738,
+      "complexity": 200,
+      "lines": 936,
+      "lastTouchedAt": "2026-03-06T16:11:57.000Z",
+      "group": "code",
+      "layer": "parse"
+    },
+    {
+      "file": "app/lib/nodeClassification.js",
+      "hotspotScore": 0.585120835272771,
+      "complexity": 72,
+      "lines": 372,
+      "lastTouchedAt": "2026-03-05T23:23:18.000Z",
+      "group": "code",
+      "layer": "app"
+    },
+    {
+      "file": "app/lib/resolveImports.js",
+      "hotspotScore": 0.5721816620663198,
+      "complexity": 45,
+      "lines": 379,
+      "lastTouchedAt": "2026-03-28T11:16:05.000Z",
+      "group": "code",
+      "layer": "resolve"
+    },
+    {
+      "file": "app/routes/readme.js",
+      "hotspotScore": 0.5648790303043842,
+      "complexity": 60,
+      "lines": 358,
+      "lastTouchedAt": "2026-03-29T22:04:35.000Z",
+      "group": "code",
+      "layer": "http"
+    },
+    {
+      "file": "app/lib/analyze/portfolioHistory.js",
+      "hotspotScore": 0.55628250227211,
+      "complexity": 147,
+      "lines": 636,
+      "lastTouchedAt": "2026-03-29T22:04:35.000Z",
+      "group": "code",
+      "layer": "app"
+    },
+    {
+      "file": "app/lib/parseFile.js",
+      "hotspotScore": 0.46768100590338246,
+      "complexity": 27,
+      "lines": 190,
+      "lastTouchedAt": "2026-03-28T11:16:05.000Z",
+      "group": "code",
+      "layer": "parse"
+    },
+    {
+      "file": "app/lib/graphStore.js",
+      "hotspotScore": 0.459188001741055,
+      "complexity": 58,
+      "lines": 265,
+      "lastTouchedAt": "2026-03-28T12:58:47.000Z",
+      "group": "code",
+      "layer": "graph"
+    }
+  ],
+  "analysis": {
+    "nodeCount": 750,
+    "linkCount": 1013,
+    "hotspotCount": 10
+  }
+}

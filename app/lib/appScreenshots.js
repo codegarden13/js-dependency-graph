@@ -48,6 +48,19 @@ function normalizeRelativePath(filePath) {
   return String(filePath || "").replace(/\\/g, "/").trim();
 }
 
+function isPathInsideDir(rootAbs, targetAbs) {
+  const relative = path.relative(rootAbs, targetAbs);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function safeJsonRead(fileAbs, fallback = null) {
+  try {
+    return JSON.parse(fs.readFileSync(fileAbs, "utf8"));
+  } catch {
+    return fallback;
+  }
+}
+
 function sanitizeScreenshotName(name, fallback = "page") {
   const safe = String(name || "").trim().toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
@@ -69,8 +82,31 @@ function resolveManifestPath(appRootAbs) {
   return normalizeFsPath(path.join(resolveAppAssetsDirAbs(appRootAbs), DEFAULT_MANIFEST_FILENAME));
 }
 
-function resolveScreenshotsDirAbs(appRootAbs) {
+export function resolveScreenshotsDirAbs(appRootAbs) {
   return normalizeFsPath(path.resolve(appRootAbs, DEFAULT_SCREENSHOTS_DIR));
+}
+
+function deriveScreenshotLabel(page, relativeOutputPath) {
+  const name = String(page?.name || "").trim();
+  if (name) return name;
+
+  const fileBase = path.basename(
+    String(relativeOutputPath || ""),
+    path.extname(String(relativeOutputPath || ""))
+  );
+  return fileBase || "screenshot";
+}
+
+function buildScreenshotPublicUrl(appId, relativeOutputPath) {
+  const safeAppId = encodeURIComponent(String(appId || "").trim());
+  const safeRelativePath = normalizeRelativePath(relativeOutputPath)
+    .split("/")
+    .filter(Boolean)
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+
+  if (!safeAppId || !safeRelativePath) return "";
+  return `/apps/${safeAppId}/screenshots/files/${safeRelativePath}`;
 }
 
 function buildDefaultPages(app) {
@@ -294,6 +330,63 @@ export function writeLatestPuppetierManifest({ appId, app, appRootAbs, source = 
     generatedAt: new Date().toISOString(),
     source
   });
+}
+
+export function resolveAppScreenshotFile(appRootAbs, relativeOutputPath) {
+  const screenshotsDirAbs = resolveScreenshotsDirAbs(appRootAbs);
+  const safeRelativePath = normalizeRelativePath(relativeOutputPath).replace(/^\/+/, "");
+  if (!safeRelativePath) return "";
+
+  const fileAbs = normalizeFsPath(path.resolve(screenshotsDirAbs, safeRelativePath));
+  return isPathInsideDir(screenshotsDirAbs, fileAbs) ? fileAbs : "";
+}
+
+export function readLatestScreenshotsGallery({ appId, appRootAbs }) {
+  const manifestPath = resolveManifestPath(appRootAbs);
+  const screenshotsDirAbs = resolveScreenshotsDirAbs(appRootAbs);
+  const manifest = safeJsonRead(manifestPath, null);
+  const pages = Array.isArray(manifest?.pages) ? manifest.pages : [];
+  const items = [];
+
+  for (const [index, page] of pages.entries()) {
+    const outputPath = resolveScreenshotOutputPath(page, index, screenshotsDirAbs);
+    if (!isPathInsideDir(screenshotsDirAbs, outputPath)) continue;
+    if (!fs.existsSync(outputPath)) continue;
+
+    let stat = null;
+    try {
+      stat = fs.statSync(outputPath);
+    } catch {
+      stat = null;
+    }
+
+    if (!stat?.isFile?.()) continue;
+
+    const relativeOutputPath = normalizeRelativePath(path.relative(screenshotsDirAbs, outputPath));
+    items.push({
+      name: deriveScreenshotLabel(page, relativeOutputPath),
+      pageUrl: String(page?.url || ""),
+      relativeOutputPath,
+      imageUrl: buildScreenshotPublicUrl(appId, relativeOutputPath),
+      modifiedAt: stat.mtime.toISOString(),
+      sizeBytes: Number(stat.size || 0) || 0
+    });
+  }
+
+  items.sort((left, right) => {
+    const leftEpoch = new Date(left.modifiedAt).getTime();
+    const rightEpoch = new Date(right.modifiedAt).getTime();
+    if (leftEpoch !== rightEpoch) return rightEpoch - leftEpoch;
+    return String(left.relativeOutputPath || "").localeCompare(String(right.relativeOutputPath || ""));
+  });
+
+  return {
+    appId: String(appId || ""),
+    source: String(manifest?.source || ""),
+    generatedAt: String(manifest?.generatedAt || ""),
+    screenshotsDirAbs,
+    items
+  };
 }
 
 function loadPuppeteer() {

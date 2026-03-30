@@ -67,6 +67,75 @@ body {
   gap: 12px;
 }
 
+.graphAccordion {
+  display: grid;
+  gap: 12px;
+}
+
+.graphAccordionItem {
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 14px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.graphAccordionButton {
+  align-items: flex-start;
+  gap: 12px;
+  background: rgba(248, 249, 250, 0.82);
+}
+
+.graphAccordionButton:not(.collapsed) {
+  color: inherit;
+  background: rgba(248, 249, 250, 0.92);
+  box-shadow: none;
+}
+
+.graphAccordionButton:focus {
+  box-shadow: inset 0 0 0 1px rgba(183, 121, 31, 0.22);
+}
+
+.graphAccordionButton::after {
+  margin-top: 4px;
+}
+
+.graphAccordionHeading {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.graphAccordionTitle {
+  font-size: 0.96rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.graphAccordionMeta {
+  font-size: 0.82rem;
+  color: #6c757d;
+  line-height: 1.4;
+}
+
+.graphAccordionBody {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+  gap: 14px;
+  align-items: start;
+  padding: 14px;
+}
+
+.graphAccordionMain,
+.graphAccordionSide {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.graphAccordionSide {
+  align-self: start;
+}
+
 .graphPanelCard {
   display: grid;
   gap: 10px;
@@ -107,6 +176,14 @@ body {
 .graphPanelCanvas > svg {
   position: absolute;
   inset: 0;
+}
+
+.graphPanelEmpty {
+  display: grid;
+  place-items: center;
+  min-height: 220px;
+  padding: 18px;
+  text-align: center;
 }
 
 .graphPanelFooter {
@@ -450,6 +527,87 @@ body {
   gap: 10px;
 }
 
+.portfolioProjectsColumns {
+  display: grid;
+  gap: 16px;
+  align-items: start;
+}
+
+.portfolioProjectsColumn {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.portfolioProjectsColumnHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 12px;
+  background: rgba(248, 249, 250, 0.78);
+}
+
+.portfolioProjectsColumnTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.portfolioProjectsColumnDot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  flex: 0 0 9px;
+}
+
+.portfolioProjectsColumnCount {
+  min-width: 2rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.portfolioProjectsColumn.tone-online .portfolioProjectsColumnDot {
+  background: #16a34a;
+}
+
+.portfolioProjectsColumn.tone-online .portfolioProjectsColumnCount {
+  color: #166534;
+  background: rgba(22, 163, 74, 0.12);
+}
+
+.portfolioProjectsColumn.tone-offline .portfolioProjectsColumnDot {
+  background: #dc2626;
+}
+
+.portfolioProjectsColumn.tone-offline .portfolioProjectsColumnCount {
+  color: #b91c1c;
+  background: rgba(220, 38, 38, 0.1);
+}
+
+.portfolioProjectsColumnList {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.portfolioProjectsColumnEmpty {
+  padding: 14px;
+  border: 1px dashed rgba(0, 0, 0, 0.14);
+  border-radius: 12px;
+  background: rgba(248, 249, 250, 0.7);
+  color: #6c757d;
+  font-size: 0.85rem;
+}
+
 .portfolioSortBar {
   display: flex;
   justify-content: space-between;
@@ -596,12 +754,13 @@ body {
 .portfolioAppStatus {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
   padding: 2px 8px;
   border-radius: 999px;
   font-size: 0.8rem;
   font-weight: 600;
-  line-height: 1;
+  line-height: 1.2;
 }
 
 .portfolioAppStatus.is-online {
@@ -619,6 +778,11 @@ body {
   height: 8px;
   border-radius: 999px;
   flex: 0 0 8px;
+}
+
+.portfolioAppStatusEndpoint {
+  font-weight: 500;
+  opacity: 0.88;
 }
 
 .portfolioAppStatus.is-online .portfolioAppStatusDot {
@@ -735,6 +899,40 @@ body {
 @media (max-width: 1199.98px) {
   .portfolioTopGrid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (min-width: 1680px) {
+  .portfolioProjectsColumns {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .portfolioProjectsColumn .portfolioProjectTopRow {
+    grid-template-columns: 1fr;
+  }
+
+  .portfolioProjectsColumn .portfolioProjectToggleHeader {
+    grid-template-columns: 1fr;
+  }
+
+  .portfolioProjectsColumn .portfolioProjectMetricsRail {
+    justify-content: flex-start;
+  }
+
+  .portfolioProjectsColumn .portfolioMetricGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .portfolioProjectsColumn .portfolioProjectToolbar {
+    justify-content: flex-start;
+  }
+
+  .portfolioProjectsColumn .portfolioProjectScore {
+    align-items: flex-start;
+  }
+
+  .portfolioProjectsColumn .portfolioProjectActions {
+    justify-content: start;
   }
 }
 
@@ -935,6 +1133,64 @@ body {
   background: #fff;
 }
 
+.workspaceAppScreenshots {
+  display: grid;
+  gap: 10px;
+}
+
+.workspaceAppScreenshotsHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.workspaceAppScreenshotsRail {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(220px, 220px);
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.workspaceAppScreenshotCard {
+  display: grid;
+  gap: 8px;
+  text-decoration: none;
+  color: inherit;
+}
+
+.workspaceAppScreenshotThumb {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 12px;
+  background: rgba(248, 249, 250, 0.9);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+}
+
+.workspaceAppScreenshotName {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.workspaceAppScreenshotMeta {
+  font-size: 11px;
+  color: #6c757d;
+  line-height: 1.3;
+}
+
+.workspaceAppScreenshotsEmpty {
+  padding: 14px;
+  border: 1px dashed rgba(0, 0, 0, 0.14);
+  border-radius: 12px;
+  background: rgba(248, 249, 250, 0.7);
+}
+
 .workspaceAppFrameEmpty {
   display: grid;
   place-items: center;
@@ -957,6 +1213,14 @@ body {
 @media (max-width: 767px) {
   .graphsPanelGrid {
     grid-template-columns: 1fr;
+  }
+
+  .graphAccordionBody {
+    grid-template-columns: 1fr;
+  }
+
+  .workspaceAppScreenshotsRail {
+    grid-auto-columns: minmax(180px, 82vw);
   }
 
   .graphPanelCardDrift {
@@ -1034,6 +1298,39 @@ body {
 
 .appInfoCommitSubject {
   min-width: 280px;
+}
+
+.gitHistoryChartCard {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 12px;
+  border: 1px solid rgba(37, 99, 235, 0.12);
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(239, 246, 255, 0.92));
+}
+
+.gitHistoryChartHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.gitHistoryChartFrame {
+  min-height: 220px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 10px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.gitHistoryChartSvg {
+  display: block;
+  width: 100%;
+  height: 220px;
 }
 
 .appInfoPath {

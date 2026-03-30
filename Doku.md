@@ -5,6 +5,7 @@ Diese Dokumentation basiert auf dem tatsächlich vorhandenen Codebestand der App
 Fremdbibliotheken und generierte Artefakte sind im technischen Modulverzeichnis nicht als eigene Module geführt. Ausgenommen sind daher insbesondere `d3.v7.min.js`, `bootstrap.bundle.min.js`, `bootstrap.min.css` sowie die generierten Dateien unter den Output-Verzeichnissen.
 
 <a id="toc-fachlich"></a>
+
 ## Fachliches Inhaltsverzeichnis
 
 - [1. Zweck und Positionierung](#fachlich-zweck)
@@ -14,25 +15,44 @@ Fremdbibliotheken und generierte Artefakte sind im technischen Modulverzeichnis 
 - [5. Abgrenzung](#fachlich-abgrenzung)
 
 <a id="toc-technisch"></a>
+
 ## Technisches Inhaltsverzeichnis
 
-- [6. Systemkontext und Laufzeitbild](#technisch-systemkontext)
-- [7. Komponentenübersicht](#technisch-komponenten)
-- [8. HTTP-Schnittstellen](#technisch-schnittstellen)
-- [9. Analyse-Pipeline und Datenfluss](#technisch-pipeline)
-- [10. Artefakte, Datenformate und Speicherorte](#technisch-artefakte)
-- [11. Modul-TOC](#technisch-module)
-- [11.1 Backend Bootstrap und Konfiguration](#modul-backend-bootstrap)
-- [11.2 HTTP-Routen](#modul-routes)
-- [11.3 Backend Analysekern](#modul-backend-kern)
-- [11.4 Frontend Shell und Zusatzansichten](#modul-frontend-shell)
-- [11.5 CodeGraph Renderer](#modul-codegraph)
-- [11.6 Styles und Inhaltsassets](#modul-style-assets)
-- [12. Technische Besonderheiten und aktueller Stand](#technisch-besonderheiten)
+- [NodeAnalyzer Dokumentation](#nodeanalyzer-dokumentation)
+  - [Fachliches Inhaltsverzeichnis](#fachliches-inhaltsverzeichnis)
+  - [Technisches Inhaltsverzeichnis](#technisches-inhaltsverzeichnis)
+  - [1. Zweck und Positionierung](#1-zweck-und-positionierung)
+  - [2. Zielgruppen und Nutzen](#2-zielgruppen-und-nutzen)
+  - [3. Fachlicher Ablauf](#3-fachlicher-ablauf)
+  - [4. Fachliche Objekte und Ergebnisse](#4-fachliche-objekte-und-ergebnisse)
+  - [5. Abgrenzung](#5-abgrenzung)
+  - [6. Systemkontext und Laufzeitbild](#6-systemkontext-und-laufzeitbild)
+  - [7. Komponentenübersicht](#7-komponentenübersicht)
+  - [8. HTTP-Schnittstellen](#8-http-schnittstellen)
+    - [Wichtige Response-Eigenschaften](#wichtige-response-eigenschaften)
+  - [9. Analyse-Pipeline und Datenfluss](#9-analyse-pipeline-und-datenfluss)
+    - [Detailfluss pro Schicht](#detailfluss-pro-schicht)
+    - [Graph-Modell](#graph-modell)
+  - [10. Artefakte, Datenformate und Speicherorte](#10-artefakte-datenformate-und-speicherorte)
+    - [Datenformate](#datenformate)
+    - [Betriebsrelevante Hinweise](#betriebsrelevante-hinweise)
+  - [11. Modul-TOC](#11-modul-toc)
+    - [11.1 Backend Bootstrap und Konfiguration](#111-backend-bootstrap-und-konfiguration)
+    - [11.2 HTTP-Routen](#112-http-routen)
+    - [11.3 Backend Analysekern](#113-backend-analysekern)
+    - [11.4 Frontend Shell und Zusatzansichten](#114-frontend-shell-und-zusatzansichten)
+    - [11.5 CodeGraph Renderer](#115-codegraph-renderer)
+    - [11.6 Styles und Inhaltsassets](#116-styles-und-inhaltsassets)
+  - [12. Technische Besonderheiten und aktueller Stand](#12-technische-besonderheiten-und-aktueller-stand)
+    - [Technisches Fazit](#technisches-fazit)
+  - [addon](#addon)
+  - [Farbzuordnung Daten](#farbzuordnung-daten)
+  - [Edgebreite](#edgebreite)
 
 ---
 
 <a id="fachlich-zweck"></a>
+
 ## 1. Zweck und Positionierung
 
 NodeAnalyzer ist ein webbasiertes Werkzeug zur **statischen Struktur- und Architektur-Analyse** von JavaScript-/TypeScript-Projekten. Die App analysiert ein konfiguriertes Zielsystem über dessen Entrypoint, leitet daraus Abhängigkeiten, Funktionsknoten, Strukturknoten und ergänzende Artefakte ab und stellt das Ergebnis interaktiv dar.
@@ -49,6 +69,7 @@ Fachlich verfolgt die Anwendung vier Kernziele:
 Die App ist damit kein Ersatz für Quellcode, IDE oder klassische Dokumentation, sondern ein **strukturorientiertes Analyse- und Navigationswerkzeug**.
 
 <a id="fachlich-zielgruppen"></a>
+
 ## 2. Zielgruppen und Nutzen
 
 | Zielgruppe | Fachlicher Nutzen | Typische Fragestellungen |
@@ -66,6 +87,7 @@ Besonders nützlich ist NodeAnalyzer bei:
 - Projekten, bei denen Dokumentation und Quellrealität regelmäßig auseinanderlaufen
 
 <a id="fachlich-ablauf"></a>
+
 ## 3. Fachlicher Ablauf
 
 Der fachliche Prozess der App sieht aus Anwendersicht wie folgt aus:
@@ -82,6 +104,7 @@ Der fachliche Prozess der App sieht aus Anwendersicht wie folgt aus:
 Fachlich wichtig ist dabei: Die App analysiert immer **den Zustand des Quellbestands**, nicht das Laufzeitverhalten des Systems.
 
 <a id="fachlich-objekte"></a>
+
 ## 4. Fachliche Objekte und Ergebnisse
 
 | Fachliches Objekt | Bedeutung | Entsteht aus |
@@ -102,6 +125,7 @@ Die wichtigsten fachlichen Ergebnisse sind:
 - dokumentationsnahe Zusatzinformationen aus README-Dateien und Dateikommentaren
 
 <a id="fachlich-abgrenzung"></a>
+
 ## 5. Abgrenzung
 
 NodeAnalyzer arbeitet bewusst innerhalb klarer Grenzen:
@@ -119,6 +143,7 @@ Die fachliche Abgrenzung spiegelt sich direkt in der technischen Architektur wid
 ---
 
 <a id="technisch-systemkontext"></a>
+
 ## 6. Systemkontext und Laufzeitbild
 
 NodeAnalyzer ist eine klassische Node-/Express-Webanwendung mit lokaler Analyse-Engine und browserseitiger D3-Visualisierung.
@@ -154,6 +179,7 @@ Laufzeitlich gibt es drei zentrale Betriebsachsen:
 | Live-Betrieb | Ein SSE-Kanal und ein Dateisystem-Watcher markieren Änderungen während einer aktiven Analyse. |
 
 <a id="technisch-komponenten"></a>
+
 ## 7. Komponentenübersicht
 
 | Komponente | Verantwortung | Wichtige Dateien |
@@ -169,6 +195,7 @@ Laufzeitlich gibt es drei zentrale Betriebsachsen:
 | Zusatzansichten | MRI-Sicht und Time-View | `graph_mriView.js`, `graph_timeView.js` |
 
 <a id="technisch-schnittstellen"></a>
+
 ## 8. HTTP-Schnittstellen
 
 | Methode / Pfad | Zweck | Eingaben | Antwort / Wirkung |
@@ -181,6 +208,7 @@ Laufzeitlich gibt es drei zentrale Betriebsachsen:
 | `GET /events` | Server-Sent Events für Live-Änderungen | keine | Stream mit `hello`, `analysis`, `fs-change`, `fs-watch-error` |
 | `GET /output/<datei>` | Persistierte Analyseartefakte ausliefern | Dateiname | JSON- oder CSV-Dateien aus dem Output-Verzeichnis |
 
+
 ### Wichtige Response-Eigenschaften
 
 | Thema | Beschreibung |
@@ -192,6 +220,7 @@ Laufzeitlich gibt es drei zentrale Betriebsachsen:
 | `runToken` | Dient zur Entkopplung alter und neuer Live-Events |
 
 <a id="technisch-pipeline"></a>
+
 ## 9. Analyse-Pipeline und Datenfluss
 
 Die Kernpipeline verläuft in der aktuellen Implementierung so:
@@ -240,6 +269,7 @@ UI wählt App
 Die UI verwendet dieses Modell direkt weiter. Die Architekturentscheidung lautet hier klar: **semantische Ableitungen werden überwiegend im Backend vorgenommen, das Frontend rendert vor allem**.
 
 <a id="technisch-artefakte"></a>
+
 ## 10. Artefakte, Datenformate und Speicherorte
 
 | Artefakt | Zweck | Typischer Speicherort | Primär genutzt von |
@@ -249,6 +279,7 @@ Die UI verwendet dieses Modell direkt weiter. Die Architekturentscheidung lautet
 | Zusätzliche CSV-Side-Artefakte | Parallel geschriebene modulbezogene CSV-Snapshots aus dem Graph-Builder | aktuell zusätzlich unter `public/output/*.csv` | derzeit kein eigener Haupt-API-Pfad |
 | Apps-Konfiguration | Analyseziele mit Root und Entry | `app/config/apps.json` | Backend und UI |
 | Help-/README-Markdown | Hilfe und Kontextdokumentation | `app/public/readme.md` bzw. Readmes im Zielprojekt | Seitenpanel / Help-Logik |
+
 
 ### Datenformate
 
@@ -265,11 +296,13 @@ Die UI verwendet dieses Modell direkt weiter. Die Architekturentscheidung lautet
 - Zusätzlich schreibt `buildMetricsFromEntrypoint.js` aktuell nicht-fatal weitere CSV-Snapshots nach `public/output`; dieser Pfad ist im Ist-Zustand parallel vorhanden.
 
 <a id="technisch-module"></a>
+
 ## 11. Modul-TOC
 
 Dieses Verzeichnis deckt die internen, laufzeitrelevanten Dateien der App außerhalb von `_doku` ab. Die Beschreibung ist bewusst knapp und auf Verantwortung sowie Einordnung fokussiert.
 
 <a id="modul-backend-bootstrap"></a>
+
 ### 11.1 Backend Bootstrap und Konfiguration
 
 | Modul | Verantwortung |
@@ -279,6 +312,7 @@ Dieses Verzeichnis deckt die internen, laufzeitrelevanten Dateien der App außer
 | `app/config/apps.json` | Fachliche Registry aller analysierbaren Zielsysteme mit `id`, `rootDir`, `entry` und optional `url`. |
 
 <a id="modul-routes"></a>
+
 ### 11.2 HTTP-Routen
 
 | Modul | Verantwortung |
@@ -291,6 +325,7 @@ Dieses Verzeichnis deckt die internen, laufzeitrelevanten Dateien der App außer
 | `app/routes/readme.md` | Begleitdokument zu den Routen; kein Runtime-Modul, aber Teil der in-repo-Dokumentation. |
 
 <a id="modul-backend-kern"></a>
+
 ### 11.3 Backend Analysekern
 
 | Modul | Verantwortung |
@@ -316,6 +351,7 @@ Dieses Verzeichnis deckt die internen, laufzeitrelevanten Dateien der App außer
 | `app/lib/analyze/csvExport.js` | Serialisiert Graphdaten in CSV-Strukturen. |
 
 <a id="modul-frontend-shell"></a>
+
 ### 11.4 Frontend Shell und Zusatzansichten
 
 | Modul | Verantwortung |
@@ -327,6 +363,7 @@ Dieses Verzeichnis deckt die internen, laufzeitrelevanten Dateien der App außer
 | `app/public/assets/js/graph_mriView.js` | Zusatzvisualisierung auf Basis des neuesten CSV-Snapshots, fokussiert auf Modulgröße, Fan-Out und Hotspots. |
 
 <a id="modul-codegraph"></a>
+
 ### 11.5 CodeGraph Renderer
 
 | Modul | Verantwortung |
@@ -346,6 +383,7 @@ Dieses Verzeichnis deckt die internen, laufzeitrelevanten Dateien der App außer
 | `app/public/assets/js/codeGraph/ui.tooltip.js` | Reine DOM-Helfer für Tooltip-Erzeugung, Positionierung und Sichtbarkeit. |
 
 <a id="modul-style-assets"></a>
+
 ### 11.6 Styles und Inhaltsassets
 
 | Modul | Verantwortung |
@@ -355,6 +393,7 @@ Dieses Verzeichnis deckt die internen, laufzeitrelevanten Dateien der App außer
 | `app/public/readme.md` | Aktueller Inhalt der Help-Datei; wird serverseitig über `/help` bzw. teilweise über `/readme` ausgeliefert. |
 
 <a id="technisch-besonderheiten"></a>
+
 ## 12. Technische Besonderheiten und aktueller Stand
 
 | Thema | Aktueller Stand |
@@ -377,3 +416,25 @@ Die App ist architektonisch klar aufgeteilt in:
 3. eine **vergleichsweise dünne, aber modulare Frontend-Visualisierung**.
 
 Besonders stark ist die Lösung dort, wo statische Struktur, README-Kontext, Git-Historie und Live-Dateisystemereignisse zu einem gemeinsamen Navigationsbild verbunden werden. Ausbaupotenzial liegt vor allem in der Konsolidierung einzelner Output- und UI-Platzhalterpfade.
+
+
+
+
+## addon
+
+## Farbzuordnung Daten
+Aktuell gilt im Backend diese Zuordnung über Dateiendungen:
+
+doc → türkis: .md, .txt, siehe nodeClassification.js (line 48) und nodeClassification.js (line 66)
+data → orange: .json, .jsonc, .csv, .tsv, .yml, .yaml, .sql, .env, siehe nodeClassification.js (line 49) und nodeClassification.js (line 67)
+image → violett: .png, .jpg, .jpeg, .gif, .svg, .webp, .ico, siehe nodeClassification.js (line 50) und nodeClassification.js (line 68)
+Diese Gruppe wird dem Node beim Normalisieren gesetzt, siehe nodeClassification.js (line 307). Im Renderer wird dann für die Kante auf den target-Node geschaut: Wenn dessen group doc|data|image ist, bekommt die Edge die entsprechende Resource-Farbe. Wenn stattdessen nur kind === "asset" oder type === "asset" vorliegt, fällt sie auf die generische Asset-Farbe zurück, siehe render.encoders.js (line 176) und render.encoders.js (line 186). Die aktuellen Farben selbst stehen in render.encoders.js (line 77).
+## Edgebreite
+Die Breite der Edge hängt vom numerischen Gewicht ab. Dafür werden der Reihe nach _weight, weight, count, value, strength, calls, uses gelesen; wenn nichts da ist, fällt es auf 1 zurück, siehe render.encoders.js (line 505). Dieses Gewicht wird logarithmisch mit Referenz 12 normalisiert, siehe render.encoders.js (line 483). Für Resource-Edges liegt die sichtbare Breite dann nur zwischen 0.4 und 1, siehe render.encoders.js (line 86) und render.encoders.js (line 667). Für normale Edges liegt sie zwischen 1 und 4; _changed-Edges werden direkt auf 4 gesetzt, siehe render.encoders.js (line 83) und render.encoders.js (line 677).
+
+Praktisch heißt das: code-metrics.csv ist bei dir data und müsste deshalb orange gerendert werden.
+
+
+
+
+

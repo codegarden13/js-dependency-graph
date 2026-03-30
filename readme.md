@@ -1,203 +1,81 @@
-# appFlow - my personal code design UI.
+# NodeAnalyzer - my personal code design UI.
 
-Interactive Architecture & Dependency Visualization for Complex JavaScript & TypeScript Systems.
+Interactive architecture and dependency visualization for complex JavaScript and TypeScript systems.
 
 <video src="assets/NodeTimeline.mp4" controls width="700" title="NodeAnalyzer Timeline (startup)"></video>
 
+If a codebase grows for years, structure gets blurry. Dependencies spread, complexity hides in corners, and refactoring turns into guesswork.
+
+NodeAnalyzer makes the static structure visible again, so you can decide with data instead of intuition.
+
+---
+⚠️ *This project has moved to a commercial model. The version on GitHub is a limited / legacy version.*
+
+![screenshot](assets/screenshot01.png)
+---
 
 ## Why
 
-Large and long-lived codebases tend to lose architectural transparency over time.  
-Dependencies grow implicitly, complexity increases, and structural risks remain hidden.
+If you lead a team, inherit an older codebase, or want a clearer picture of your own project, this helps you:
 
-NodeAnalyzer makes architecture visible again — supporting informed technical decision-making, refactoring strategy, and risk assessment.
+- see the real dependency structure instead of the assumed one
+- spot hotspots, complexity clusters and risky modules
+- support onboarding and refactoring with actual structure data
+- connect code, assets and README context in one view
 
-![screenshot](assets/NodeAnalyzer_ScS02.png)
+## What it does
 
----
+NodeAnalyzer starts from an entrypoint and builds an interactive graph of:
 
-## Value Proposition
+- files and functions
+- imports and dependencies
+- assets like HTML, CSS, JSON, CSV and images
+- README files in folders
+- basic metrics like LOC and complexity
 
-NodeAnalyzer helps technical leaders and teams:
+It focuses on static structure, not runtime behavior.
 
-- Understand dependency structures instead of assumed ones
-- Detect architectural hotspots and complexity clusters
-- Make refactoring decisions based on structural data
-- Reduce onboarding time for new developers
-- Create a shared architectural understanding across teams
----
-<details><summary><strong>Example Use Cases </strong>
-<br>(Developers, teams, CTO, Tech Lead)</summary>
+It does not replace documentation. It supports it by showing structural reality.
 
-## Devteam Leader / You ?
-**Scenario:** Everyone wants a (Live) dashboard about the current status of the teams projects - including structure, done and missing documentation and more.
-If someone from the team changes something in the common (remote) project, it gets visible for everybody.
-To see urgent ToDos, take this livechart: ![chart MRI](assets/graph_MRI.png)
+It also does not replace your existing tools. I use it to adapt ideas from paid tools like CodeScene to my own workflow and NodeAnalyzer learning journey.
 
-## CTO / Tech Lead Perspective
+## Typical use
 
-**Scenario:**  
-A product team plans a major feature extension in a 4+ year old codebase. Delivery pressure is high, but architectural side effects are unclear.
+- **Dev Lead / You:** Get a live picture of the current state of your projects and see where the urgent technical work sits.
+- **CTO / Tech Lead:** Check where complexity, coupling and hotspots make changes risky before a bigger feature or refactor starts.
 
-**Questions typically raised:**
+## Projects
 
-- Which modules are central and highly coupled?
-- Where are complexity hotspots that may slow down development?
-- Which parts of the system are safe to modify?
-- How will this change affect cross-team ownership boundaries?
+Targets are configured centrally in [app/config/apps.json](/Users/thomassalomon/Library/Mobile%20Documents/com~apple~CloudDocs/Documents/_OFFICE/Projects-GIT/25-12-16%20NodeAnalyzer/app/config/apps.json).
 
-**How NodeAnalyzer supports the decision:**
-
-- Visualizes real dependency structures instead of assumed ones
-- Highlights structural hotspots before changes are implemented
-- Provides measurable complexity indicators (LOC, basic metrics)
-- Creates a shared architectural view for technical discussions
-
-Result: architectural decisions are based on structural data, not intuition.
-
-</details>
-
-
-
----
-
-<details><summary><strong>Purpose: </strong><br>Helps teams - <strong> evaluate architectural structure, detect structural risks and understand dependency complexity in existing codebases.</strong></summary>
-
-
-AST-based (Babel) static analysis engine for JavaScript and TypeScript systems, designed for engineering teams who require architectural clarity:
-
-- Architectural transparency
-- Shared system understanding
-- Documentation support
-- Structural risk visibility
-
-The tool focuses on **static structure**, not runtime behavior. It supports:
-
-- Onboarding
-- Refactoring decisions
-- Risk analysis
-- Technical debt visibility
-- Cross-team understanding
-
-It does not replace documentation — it *supports* it by exposing structural reality.
-It does not replace your tools. I just try to adopt features from **payed tools** like CodesScene to me personal needs and to my **NodeAnalyzer learning journey**
-
-</details>
-
----
-
-<details>
-<summary><strong>Features: </strong><br>Automated structural analysis, dependency graph generation, complexity metrics and architectural hotspot detection.</summary>
-
-NodeAnalyzer analyzes JavaScript / TypeScript applications from their entrypoint and generates a D3-based interactive architecture graph containing:
-
-- Project structure with Modules, Functions, File header comments
-- Import / dependency relationships
-- Heuristic asset detection (HTML, CSS, JSON, CSV, etc.), rendered README.md files (README discovery per folder)
-- LOC and basic complexity metrics
-
-Key capabilities:
-
-- Automated dependency graph generation
-- Structural complexity evaluation
-- Identification of architectural hotspots
-- Asset and documentation linkage
-- JSON export for further processing or integration
-
-Physical location of analyzed projects is irrelevant. Targets are defined centrally via configuration. 
-
-
-</details>
-
----
-
-<details>
-<summary><strong>Output: </strong><br>Structured JSON file (tmp) for the current interactive graph.</summary>
-
-```
-app/public/output/code-structure.json
-```
-
-Example:
-
-```json
-{
-  "meta": { "entry": "app/index.js" },
-  "nodes": [...],
-  "links": [...]
-}
-```
-
-- **nodes** → files, functions, assets
-- **links / edges** → dependency relationships
-
-</details>
-
----
-
-<details>
-
-<summary><strong>Tech Stack and Architecture</strong><br></summary>
-
-- Node.js
-- Express
-- D3.js (Graph Rendering)
-- realtime JSON about architecture model of the targeted app
-
-
-## Architecture
-
-NodeAnalyzer follows a layered architecture:
-
-- Static analysis module
-- Graph transformation layer
-- Interactive visualization layer
-- JSON export service
-
-</details>
-
----
-
-<details>
-<summary><strong>Projects Configuration: </strong><br>app/config/apps.json.</summary>
-
-Each target contains:
+Each app usually defines:
 
 - `id`
 - `name`
 - `rootDir`
-- `url` (optional)
+- `entry`
+- `url`
 
-apps.json may reside locally or on a shared team location.
+## Output
 
-</details>
+Analysis artifacts are written to [app/public/output](/Users/thomassalomon/Library/Mobile%20Documents/com~apple~CloudDocs/Documents/_OFFICE/Projects-GIT/25-12-16%20NodeAnalyzer/app/public/output).
 
----
+The current graph model is exported as JSON and can be reused for further processing.
 
-<details>
-<summary><strong>Installation</strong><br>Local setup for analysis and visualization.</summary>
+## Start
 
 Requirements:
 
-- Node.js (>= 18 recommended)
+- Node.js 18+
 - npm
-
-Install dependencies once:
 
 ```bash
 npm install
-```
-
-Start the server locally:
-
-```bash
 node app/server.js
 ```
 
-Open in browser:
+Open:
 
-```
+```text
 http://localhost:3003
 ```
-
-</details>

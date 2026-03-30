@@ -4,6 +4,8 @@ import fetch from "node-fetch";
 
 import { OUTPUT_DIR } from "../projectPaths.js";
 import { normalizeId } from "../stringUtils.js";
+import { resolveAppRootAbs } from "../appsRegistry.js";
+import { collectGitHeadInfo } from "../appInfo.js";
 
 const CODE_FILE_EXT_RE = /\.(js|mjs|cjs|ts|tsx|jsx)$/i;
 const CODE_METRICS_SUFFIX = "-code-metrics.csv";
@@ -14,10 +16,10 @@ const MODULE_PRIORITY_WEIGHTS = Object.freeze({
   codeLines: 0.2
 });
 
-export async function buildPortfolioHistory(apps) {
+export async function buildPortfolioHistory(apps, options = {}) {
   const configuredApps = Array.isArray(apps) ? apps : [];
   const historyFilesByAppId = groupHistoryFilesByAppId(listAllHistoryFiles());
-  const availabilityByAppId = await probeAppAvailability(configuredApps);
+  const availabilityByAppId = await probeAppAvailability(configuredApps, options);
 
   return {
     generatedAt: new Date().toISOString(),
@@ -33,6 +35,8 @@ function buildConfiguredAppHistory(app, historyFilesByAppId, availabilityByAppId
 
   const { history, latestModules } = buildAppHistory(appId, historyFilesByAppId.get(appId) || []);
   const latest = history[history.length - 1] || null;
+  const appRootAbs = resolveAppRootAbs(app);
+  const git = appRootAbs ? collectGitHeadInfo(appRootAbs) : { available: false, repoRootAbs: "", head: null };
 
   return {
     appId,
@@ -43,25 +47,60 @@ function buildConfiguredAppHistory(app, historyFilesByAppId, availabilityByAppId
     latest,
     history,
     latestModules,
+    analyze: buildAnalyzeStatus(latest, git),
     availability: availabilityByAppId?.get(appId) || buildOfflineAvailability()
   };
 }
 
-async function probeAppAvailability(apps) {
+function buildAnalyzeStatus(latest, git) {
+  const latestRunEpoch = readIsoDateEpoch(latest?.timestamp);
+  const head = git?.head || null;
+  const headEpoch = readIsoDateEpoch(head?.committedAt);
+  const pending = Boolean(
+    git?.available &&
+    head &&
+    headEpoch !== null &&
+    (latestRunEpoch === null || headEpoch > latestRunEpoch)
+  );
+
+  if (!pending) {
+    return {
+      pending: false,
+      label: "Analyze",
+      title: "Run analysis for this app."
+    };
+  }
+
+  const shortSha = String(head?.shortSha || "").trim();
+  const committedAt = String(head?.committedAt || "").trim();
+  const shaPart = shortSha ? ` for commit ${shortSha}` : "";
+  const atPart = committedAt ? ` (${committedAt})` : "";
+
+  return {
+    pending: true,
+    label: "Analyze pending",
+    title: `A newer commit is waiting for analysis${shaPart}${atPart}.`
+  };
+}
+
+async function probeAppAvailability(apps, options = {}) {
   const entries = await Promise.all(
     (apps || []).map(async (app) => {
       const appId = normalizeId(app?.id);
       if (!appId) return null;
-      return [appId, await probeSingleAppAvailability(app?.url)];
+      return [appId, await probeSingleAppAvailability(app?.url, options)];
     })
   );
 
   return new Map(entries.filter(Boolean));
 }
 
-async function probeSingleAppAvailability(url) {
+async function probeSingleAppAvailability(url, options = {}) {
   const safeUrl = String(url || "").trim();
   if (!safeUrl) return buildOfflineAvailability();
+  if (matchesRequestOrigin(safeUrl, options?.requestUrl)) {
+    return buildReachableAvailability();
+  }
 
   try {
     const headResponse = await fetchAppUrl(safeUrl, "HEAD");
@@ -80,6 +119,47 @@ async function probeSingleAppAvailability(url) {
   } catch {
     return buildOfflineAvailability();
   }
+}
+
+function matchesRequestOrigin(appUrl, requestUrl) {
+  const current = safeParseUrl(requestUrl);
+  const target = safeParseUrl(appUrl, requestUrl);
+  if (!current || !target) return false;
+
+  return (
+    normalizeProtocol(current) === normalizeProtocol(target) &&
+    normalizeUrlPort(current) === normalizeUrlPort(target) &&
+    normalizeLoopbackHost(current.hostname) === normalizeLoopbackHost(target.hostname)
+  );
+}
+
+function safeParseUrl(url, baseUrl = undefined) {
+  const safeUrl = String(url || "").trim();
+  if (!safeUrl) return null;
+
+  try {
+    return baseUrl ? new URL(safeUrl, baseUrl) : new URL(safeUrl);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeProtocol(url) {
+  return String(url?.protocol || "").trim().toLowerCase();
+}
+
+function normalizeUrlPort(url) {
+  const explicitPort = Number(url?.port || 0);
+  if (Number.isInteger(explicitPort) && explicitPort > 0) return String(explicitPort);
+  return normalizeProtocol(url) === "https:" ? "443" : "80";
+}
+
+function normalizeLoopbackHost(hostname = "") {
+  const safeHost = String(hostname || "").trim().toLowerCase();
+  if (safeHost === "localhost" || safeHost === "127.0.0.1" || safeHost === "::1" || safeHost === "[::1]") {
+    return "loopback";
+  }
+  return safeHost;
 }
 
 async function fetchAppUrl(url, method) {

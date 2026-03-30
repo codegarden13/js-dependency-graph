@@ -2,6 +2,7 @@ import express from "express";
 import fs from "node:fs";
 
 import { resolveAppRootAbs } from "../lib/appsRegistry.js";
+import { readLatestScreenshotsGallery, resolveAppScreenshotFile } from "../lib/appScreenshots.js";
 import { getScreenshotJob, startScreenshotJob } from "../lib/screenshotJobs.js";
 import {
   resolveConfiguredApp,
@@ -62,8 +63,52 @@ function handleGetScreenshotJob(req, res) {
   return res.json(job);
 }
 
+function handleGetLatestScreenshots(req, res) {
+  try {
+    const appResult = resolveScreenshotApp(req);
+    if (!appResult.ok) return sendBadRequest(res, appResult.message);
+
+    const rootResult = validateScreenshotRoot(appResult.app);
+    if (!rootResult.ok) return sendBadRequest(res, rootResult.message);
+
+    res.set("cache-control", "no-store");
+    return res.json(readLatestScreenshotsGallery({
+      appId: appResult.appId,
+      appRootAbs: rootResult.appRootAbs
+    }));
+  } catch (error) {
+    return sendServerError(res, error, "Could not load latest screenshots.");
+  }
+}
+
+function handleGetScreenshotFile(req, res) {
+  try {
+    const appResult = resolveScreenshotApp(req);
+    if (!appResult.ok) return sendBadRequest(res, appResult.message);
+
+    const rootResult = validateScreenshotRoot(appResult.app);
+    if (!rootResult.ok) return sendBadRequest(res, rootResult.message);
+
+    const relativeOutputPath = String(req?.params?.[0] || "").trim();
+    if (!relativeOutputPath) {
+      return sendBadRequest(res, "Missing screenshot file path.");
+    }
+
+    const fileAbs = resolveAppScreenshotFile(rootResult.appRootAbs, relativeOutputPath);
+    if (!fileAbs || !fs.existsSync(fileAbs) || !fs.statSync(fileAbs).isFile()) {
+      return sendJsonError(res, 404, "Screenshot file not found.", "Screenshot file not found.");
+    }
+
+    return res.sendFile(fileAbs);
+  } catch (error) {
+    return sendServerError(res, error, "Could not load screenshot file.");
+  }
+}
+
 router.post("/screenshots", handleCreateScreenshots);
 router.post("/apps/:appId/screenshots", handleCreateScreenshots);
+router.get("/apps/:appId/screenshots/latest", handleGetLatestScreenshots);
+router.get("/apps/:appId/screenshots/files/*", handleGetScreenshotFile);
 router.get("/screenshots/jobs/:jobId", handleGetScreenshotJob);
 
 export default router;
