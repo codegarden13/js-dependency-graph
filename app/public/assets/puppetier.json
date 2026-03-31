@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "generator": "NodeAnalyzer",
   "source": "analyze",
-  "generatedAt": "2026-03-30T17:03:22.903Z",
+  "generatedAt": "2026-03-30T21:32:53.859Z",
   "app": {
     "id": "nodeanalyzer",
     "name": "NodeAnalyzer (It's me). I test codebases.",
@@ -42,10 +42,10 @@
       "actions": []
     },
     {
-      "name": "app-view",
+      "name": "portfolio",
       "url": "http://localhost:3003/",
-      "outputPath": "/Users/thomassalomon/Library/Mobile Documents/com~apple~CloudDocs/Documents/_OFFICE/Projects-GIT/25-12-16 NodeAnalyzer/app/public/screenshots/app-view.png",
-      "relativeOutputPath": "app-view.png",
+      "outputPath": "/Users/thomassalomon/Library/Mobile Documents/com~apple~CloudDocs/Documents/_OFFICE/Projects-GIT/25-12-16 NodeAnalyzer/app/public/screenshots/portfolio.png",
+      "relativeOutputPath": "portfolio.png",
       "fullPage": true,
       "waitUntil": "domcontentloaded",
       "waitForSelector": "",
@@ -59,7 +59,7 @@
       "actions": [
         {
           "type": "click",
-          "selector": "#app-view-tab",
+          "selector": "#graph-projects-tab",
           "delayMs": 250
         }
       ]
@@ -88,10 +88,10 @@
       ]
     },
     {
-      "name": "portfolio",
+      "name": "app-view",
       "url": "http://localhost:3003/",
-      "outputPath": "/Users/thomassalomon/Library/Mobile Documents/com~apple~CloudDocs/Documents/_OFFICE/Projects-GIT/25-12-16 NodeAnalyzer/app/public/screenshots/portfolio.png",
-      "relativeOutputPath": "portfolio.png",
+      "outputPath": "/Users/thomassalomon/Library/Mobile Documents/com~apple~CloudDocs/Documents/_OFFICE/Projects-GIT/25-12-16 NodeAnalyzer/app/public/screenshots/app-view.png",
+      "relativeOutputPath": "app-view.png",
       "fullPage": true,
       "waitUntil": "domcontentloaded",
       "waitForSelector": "",
@@ -105,7 +105,7 @@
       "actions": [
         {
           "type": "click",
-          "selector": "#graph-projects-tab",
+          "selector": "#app-view-tab",
           "delayMs": 250
         }
       ]
@@ -160,7 +160,7 @@
   "focusFiles": [
     {
       "file": "app/lib/buildMetricsFromEntrypoint.js",
-      "hotspotScore": 0.8776586340087416,
+      "hotspotScore": 0.8572290658408428,
       "complexity": 103,
       "lines": 1197,
       "lastTouchedAt": "2026-03-28T12:58:47.000Z",
@@ -169,16 +169,16 @@
     },
     {
       "file": "app/routes/analyze.js",
-      "hotspotScore": 0.8438846185261659,
-      "complexity": 73,
-      "lines": 989,
-      "lastTouchedAt": "2026-03-29T22:04:35.000Z",
+      "hotspotScore": 0.8326097596414074,
+      "complexity": 68,
+      "lines": 964,
+      "lastTouchedAt": "2026-03-30T21:27:45.000Z",
       "group": "code",
       "layer": "http"
     },
     {
       "file": "app/lib/autoMode.js",
-      "hotspotScore": 0.708930459278908,
+      "hotspotScore": 0.6924284360742983,
       "complexity": 93,
       "lines": 793,
       "lastTouchedAt": "2026-03-27T22:29:20.000Z",
@@ -187,7 +187,7 @@
     },
     {
       "file": "app/lib/parseAst.js",
-      "hotspotScore": 0.6570546242374738,
+      "hotspotScore": 0.6417601330586188,
       "complexity": 200,
       "lines": 936,
       "lastTouchedAt": "2026-03-06T16:11:57.000Z",
@@ -195,8 +195,17 @@
       "layer": "parse"
     },
     {
+      "file": "app/lib/analyze/portfolioHistory.js",
+      "hotspotScore": 0.604884058421563,
+      "complexity": 147,
+      "lines": 636,
+      "lastTouchedAt": "2026-03-30T21:30:15.000Z",
+      "group": "code",
+      "layer": "app"
+    },
+    {
       "file": "app/lib/nodeClassification.js",
-      "hotspotScore": 0.585120835272771,
+      "hotspotScore": 0.5715007721554476,
       "complexity": 72,
       "lines": 372,
       "lastTouchedAt": "2026-03-05T23:23:18.000Z",
@@ -205,7 +214,7 @@
     },
     {
       "file": "app/lib/resolveImports.js",
-      "hotspotScore": 0.5721816620663198,
+      "hotspotScore": 0.5588627886266391,
       "complexity": 45,
       "lines": 379,
       "lastTouchedAt": "2026-03-28T11:16:05.000Z",
@@ -214,7 +223,7 @@
     },
     {
       "file": "app/routes/readme.js",
-      "hotspotScore": 0.5648790303043842,
+      "hotspotScore": 0.5517301427881646,
       "complexity": 60,
       "lines": 358,
       "lastTouchedAt": "2026-03-29T22:04:35.000Z",
@@ -222,36 +231,27 @@
       "layer": "http"
     },
     {
-      "file": "app/lib/analyze/portfolioHistory.js",
-      "hotspotScore": 0.55628250227211,
-      "complexity": 147,
-      "lines": 636,
-      "lastTouchedAt": "2026-03-29T22:04:35.000Z",
+      "file": "app/lib/appsRegistry.js",
+      "hotspotScore": 0.47302869493178745,
+      "complexity": 72,
+      "lines": 380,
+      "lastTouchedAt": "2026-03-30T21:30:15.000Z",
       "group": "code",
       "layer": "app"
     },
     {
       "file": "app/lib/parseFile.js",
-      "hotspotScore": 0.46768100590338246,
+      "hotspotScore": 0.4567946309271642,
       "complexity": 27,
       "lines": 190,
       "lastTouchedAt": "2026-03-28T11:16:05.000Z",
       "group": "code",
       "layer": "parse"
-    },
-    {
-      "file": "app/lib/graphStore.js",
-      "hotspotScore": 0.459188001741055,
-      "complexity": 58,
-      "lines": 265,
-      "lastTouchedAt": "2026-03-28T12:58:47.000Z",
-      "group": "code",
-      "layer": "graph"
     }
   ],
   "analysis": {
-    "nodeCount": 750,
-    "linkCount": 1013,
+    "nodeCount": 774,
+    "linkCount": 1070,
     "hotspotCount": 10
   }
 }

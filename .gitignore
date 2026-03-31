@@ -24,4 +24,6 @@ node_modules/
 # output files
 app/public/output/
 
+# local freeze backups
+/backups/
 
